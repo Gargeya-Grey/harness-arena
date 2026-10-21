@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://model-testing.local/schemas/annotation.schema.json",
+  "title": "HumanAnnotation",
+  "description": "Append-only human review record. One JSON object per line in annotations/human@1.jsonl.",
+  "type": "object",
+  "required": [
+    "annotation_id",
+    "run_id",
+    "case_id",
+    "config_id",
+    "repeat",
+    "reviewer",
+    "created_at",
+    "scale",
+    "value",
+    "notes",
+    "pair_id",
+    "pair_choice",
+    "pair_config_id",
+    "revealed",
+    "supersedes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "annotation_id": { "type": "string" },
+    "run_id": { "type": "string" },
+    "case_id": { "type": "string" },
+    "config_id": { "type": "string" },
+    "repeat": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "reviewer": { "type": "string" },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "scale": { "const": "1-5" },
+    "value": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 5
+    },
+    "notes": { "type": "string" },
+    "pair_id": { "type": ["string", "null"] },
+    "pair_choice": {
+      "enum": ["A", "B", "tie", null]
+    },
+    "pair_config_id": { "type": ["string", "null"] },
+    "revealed": { "type": "boolean" },
+    "supersedes": { "type": ["string", "null"] }
+  }
+}

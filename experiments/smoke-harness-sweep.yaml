@@ -1,0 +1,38 @@
+id: smoke-harness-sweep
+description: >
+  The smoke suite through every installed harness. Claude Haiku 5.5 runs through
+  both Claude Code and Command Code, so that pair is a controlled harness comparison.
+suite: smoke
+prompt: qa-single-turn
+repeats: 3
+
+# Each target is one model key run through one harness. Run one harness only with
+# `node lab run experiments/smoke-harness-sweep.yaml --harness codex`.
+targets:
+  - model: claude-haiku-5.5
+    harness: claude-code
+  - model: claude-haiku-5.5
+    harness: command-code
+  - model: deepseek-v4.1-flash-max
+    harness: command-code
+  - model: gpt-6-luna-low
+    harness: codex
+  # Gemini CLI is supported (harness: gemini-cli), but its free sign-in tier now refuses
+  # headless clients. Set GEMINI_API_KEY to use it; until then Gemini runs through Command Code.
+  - model: gemini-3.8-flash
+    harness: command-code
+
+# isolated: each run gets an empty temp folder, so no harness reads this repo's
+# AGENTS.md or files into its prompt. Use `repo` to measure that overhead on purpose.
+workdir: isolated
+timeout_s: 300
+
+evaluators:
+  # Correct answer, ignoring case, quotes and trailing punctuation.
+  - id: normalized-match
+    version: "1"
+    dimension: quality
+  # Byte-exact after trim: did the model obey "no punctuation, one word"?
+  - id: exact-match
+    version: "1"
+    dimension: format

@@ -1,0 +1,37 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Language caches (harness added later)
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+
+# Dashboard local state
+.cache/
+/annotations/
+
+# Note: results/ is intentionally committed - runs are evidence.
+
+# Command Code keeps its notes about the user here; they are personal, not project files.
+.commandcode/
+
+# Harness event streams describe the machine they ran on (setup, folders, sessions).
+# The runner redacts them, but they stay local: raw.jsonl and scores/ are the evidence.
+/results/*/harness-events.ndjson
+
+# Other harnesses' local notes and settings, and stray run logs.
+.claude/
+.codex/
+.gemini/
+*.log
+*.err

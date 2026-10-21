@@ -1,0 +1,14 @@
+id: smoke-baseline
+description: Direct API baseline on the smoke suite (needs OPENAI_API_KEY and ANTHROPIC_API_KEY).
+suite: smoke
+prompt: qa-basic
+repeats: 3
+targets:
+  - model: gpt-4o-mini
+    harness: openai-api
+  - model: claude-haiku
+    harness: anthropic-api
+evaluators:
+  - id: exact-match
+    version: "1"
+    dimension: quality

@@ -1,0 +1,11 @@
+{"type":"event","event":{"type":"run_start","sessionId":"85f49f06-54d5-45ba-926a-a3db25fd73c5"}}
+{"type":"event","event":{"type":"turn_start","turnNumber":1}}
+{"type":"event","event":{"type":"message_start"}}
+{"type":"event","event":{"type":"model_request_start","model":"google/gemini-3.8-flash"}}
+{"type":"event","event":{"type":"model_trace","traceId":"26bec8d6682d7cd39698bfb0fd3b4807"}}
+{"type":"event","event":{"type":"text_delta","delta":"4"}}
+{"type":"event","event":{"type":"message_update","content":[{"type":"text","text":"4"}]}}
+{"type":"event","event":{"type":"model_request_end","model":"google/gemini-3.8-flash","usage":{"inputTokens":18488,"outputTokens":64,"cacheReadTokens":0,"cacheWriteTokens":0},"stopReason":"STOP"}}
+{"type":"event","event":{"type":"message_end","content":[{"type":"text","text":"4"}]}}
+{"type":"event","event":{"type":"turn_end","turnNumber":1,"hadToolCalls":false,"usage":{"inputTokens":18488,"outputTokens":64,"cacheReadTokens":0,"cacheWriteTokens":0}}}
+{"type":"result","subtype":"success","sessionId":"85f49f06-54d5-45ba-926a-a3db25fd73c5","stopReason":"end_turn","usage":{"inputTokens":18488,"outputTokens":64,"cacheReadTokens":0,"cacheWriteTokens":0},"durationMs":5566,"finalText":"4"}

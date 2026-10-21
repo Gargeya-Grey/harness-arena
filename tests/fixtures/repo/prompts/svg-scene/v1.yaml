@@ -1,0 +1,7 @@
+version: "1"
+messages:
+  - role: user
+    content: |
+      Generate a single SVG file. Return only the SVG markup.
+      The root element must have width="{{width}}" height="{{height}}" and viewBox="0 0 {{width}} {{height}}".
+      Requirements: {{brief}}

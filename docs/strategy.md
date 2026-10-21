@@ -1,0 +1,111 @@
+# Model testing strategy
+
+## Scope (phase 1)
+
+- Hosted models, called through a **harness**: a coding CLI (Claude Code, Codex, Command Code, Gemini CLI) or a direct API. The same model through two harnesses is two configurations.
+- Deterministic tasks where a correct answer can be checked mechanically.
+- One repo holding inputs, runs, and reports so every comparison is auditable.
+
+Non-goals until the basics work: local models, LLM-as-judge, databases.
+
+## Principles
+
+1. **Inputs are versioned; outputs are immutable.** Cases, prompts, model configs, and experiment definitions each have an identity and a version. Once a run is written, nothing in `results/` is edited by hand - a changed input means a new version and a new run.
+2. **Every run is self-describing.** `run.json` contains everything needed to reproduce it: exact model snapshots, parameters, prompt version, suite version, content hashes, evaluator versions, harness commit, timestamp.
+3. **Raw and derived are separate.** Model responses (`raw.jsonl`) are evidence. Scores (`scores/`) are computed from evidence. Aggregates in `reports/` are computed from scores. Each layer can be regenerated without touching the one below.
+4. **One row per observation.** JSONL everywhere: one case per line, one response per line, one score per line. Easy to diff, stream, load into pandas, and append to.
+5. **Stable IDs.** The same `case_id`, `model_key`, and prompt version mean the same thing forever. IDs are never reused or renumbered.
+
+## What lives where
+
+| Path | Purpose | Mutability |
+|---|---|---|
+| `configs/models.yaml` | Registry of models: provider, exact snapshot, params, pricing | versioned in git |
+| `datasets/<suite>/suite.yaml` | Suite identity and defaults | bump `version` on change |
+| `datasets/<suite>/cases.jsonl` | Test cases, one JSON object per line | bump `version` on change |
+| `prompts/<prompt>/prompt.yaml` | Prompt identity, current version, variables | metadata only |
+| `prompts/<prompt>/vN.yaml` | Frozen template for version N | never edited; add `vN+1` |
+| `experiments/<name>.yaml` | Declared matrix: suite, prompt, targets (model x harness), repeats, evaluators | new file for new comparison |
+| `results/<run_id>/run.json` | Run manifest | written once; `status` updated |
+| `results/<run_id>/raw.jsonl` | Every response with latency, tokens, cost, errors | append-only |
+| `results/<run_id>/harness-events.ndjson` | Optional raw harness event stream when the harness exposes one. Redacted, and kept out of git (`.gitignore`): it describes the machine | immutable local sidecar |
+| `results/<run_id>/scores/<evaluator>@<version>.jsonl` | Evaluator output per response | regenerable |
+| `reports/` | Comparison tables/charts | regenerable |
+| `schemas/` | JSON Schema contracts for all of the above | versioned in git |
+
+## Identifiers
+
+- `case_id` - `<suite>-<slug>` (e.g. `smoke-001`). Stable for the life of the suite.
+- `model_key` - key in `configs/models.yaml` (e.g. `gpt-4o-mini`). Maps to one exact provider snapshot.
+- `prompt_id` + `version` - e.g. `qa-basic`, `"1"`.
+- `run_id` - `YYYYMMDDTHHMMSSZ__<suite>__<experiment>__<rand6>` (e.g. `20261021T143000Z__smoke__smoke-baseline__a1b2c3`). Filesystem-safe on Windows, sorts chronologically.
+- `repeat` - 0-based index of repeated execution of the same case/model pair.
+- `config_id` - `<model_key>__<harness>-<version>__<effort|default>` (e.g. `claude-haiku-5.5__claude-code-2.1.306__default`). Derived from the run; never written by hand.
+
+Every file loaded from disk is recorded with a SHA-256 in the manifest, so a run identifies the *bytes* it used, not just a label:
+
+- suite: SHA-256 of the `suite.yaml` bytes followed by the `cases.jsonl` bytes;
+- prompt: SHA-256 of the frozen `vN.yaml` bytes;
+- experiment: SHA-256 of the experiment file, in `run.json` `notes`.
+
+## Storage conventions
+
+- UTF-8, LF line endings. JSONL is one compact JSON object per line, no pretty printing.
+- Timestamps are ISO 8601 UTC with a trailing `Z`.
+- Responses are stored verbatim; no truncation. Only normalized provider fields are kept (`text`, `finish_reason`), not the full raw payload.
+- Costs are computed at run time from usage and the registry pricing active then, so historical numbers stay stable when prices change.
+
+## Run lifecycle
+
+1. **Declare** - write or choose an experiment file naming suite, prompt, targets, repeats, and evaluators. An optional `cases` list runs a subset and records exactly which cases were executed.
+2. **Snapshot** - `node lab run` checks every reference before any call, then writes one `run.json` per harness with `status: running`, including verbatim experiment content and content hashes.
+3. **Execute** - for each repeat x case x model, call the harness and append one line to `raw.jsonl`. Failures are rows with `error` set, not dropped. The harness's own event stream goes to `harness-events.ndjson`. Before it is written, `lab/lib/redact.mjs` drops the keys that describe the user's setup (connectors, plugins, skills, memory paths, `gitStatus`) and replaces the home folder with `~`; the response text, skill names and error messages in `raw.jsonl` get the same path redaction.
+4. **Score** - evaluators read `raw.jsonl` plus case expectations and write `scores/<evaluator>@<version>.jsonl`.
+5. **Report** - aggregate scripts read scores and raw timing/usage into `reports/`. Never hand-edit a report.
+6. **Close** - set `status` to `completed` or `failed`.
+
+A run that fails partway is still a valid artifact: `status: failed`, partial rows kept. Re-running the experiment creates a new `run_id`.
+
+## Dimensions we compare
+
+| Dimension | Computed from | Metrics |
+|---|---|---|
+| Quality | scores | mean score, pass rate |
+| Reliability | scores across repeats | agreement rate, score variance |
+| Latency | raw `latency_ms` | p50, p95, max |
+| Cost | usage + registry pricing | USD per case, USD per suite |
+| Token usage | raw `usage` | avg input/output tokens |
+| Format compliance | format evaluator | % responses matching required shape |
+| Error rate | raw `error` | failed calls / total calls |
+
+Quality and reliability are deliberately separate: a model can be right on average but inconsistent across repeats.
+
+## Harnesses
+
+- **One run per harness.** An experiment with targets in three harnesses writes three runs. Each `run.json` records the harness name, version, entry point, access method, platform, and settings.
+- **Isolated workdir.** By default each CLI call runs in an empty folder under the OS temp folder, initialised as its own git repository (`workdir_git_fence` in the run settings). Harnesses look upward for a repository root to read `git status`, `AGENTS.md` or `CLAUDE.md`. Without the fence they climb out of the temp folder into any repository above it, for example a home folder under git. `workdir: repo` runs inside this repository on purpose.
+- **User-level configuration still applies.** A CLI harness loads its own global settings, instructions and tools (for example `~/.claude/CLAUDE.md`). That overhead is part of what is measured; it shows as input tokens.
+- **Params that a harness cannot apply are recorded, not hidden.** CLI harnesses do not forward `temperature` or `max_tokens`; each row lists them in `metadata.params_not_applied`. A requested effort that the harness cannot set is recorded as not applied.
+- **Usage is normalized.** `input_tokens` counts every prompt token, cached ones included. `cache_read_tokens` and `cache_write_tokens` are the parts of it that were read from or written to a cache. Adapters convert each harness's fields to this shape (Anthropic and Claude Code report cache tokens apart from input; the adapter adds them).
+- **Cost** = (uncached input x input rate + cache reads x read rate + cache writes x write rate + output x output rate) / 1,000,000. A cache rate missing from the registry defaults to the input rate. For subscription harnesses the cost is API-equivalent, not a bill.
+- **Errors are typed.** `error.type` is `auth`, `timeout`, `network_error`, `missing_credentials`, `no_result`, `harness_error`, or a provider type. An error row is never scored, so a failed call never counts as a wrong answer.
+
+## Comparability rules
+
+- Pin exact model snapshots (`gpt-4o-mini-2024-07-18`), never moving aliases.
+- Within a comparison, hold suite version, prompt version, evaluator versions, and decoding params constant. Changing one means a new experiment and a new run.
+- Temperature defaults to 0. Reliability is measured with repeats, not raised temperature, unless temperature itself is the variable.
+- Never compare scores produced by different evaluator versions.
+- Results are append-only. If a run is wrong, mark it failed and rerun; don't patch JSONL.
+- Partial or aborted runs are excluded from reports unless explicitly flagged. A declared `cases` subset is partial by design; compare it only against runs using the same subset.
+
+## Adding things
+
+- **New suite** - new folder with `suite.yaml` and `cases.jsonl`. Bump `version` whenever cases change.
+- **New model** - add a registry entry with exact snapshot and pricing. Pricing is required for cost metrics.
+- **New prompt version** - add `vN.yaml`, point `prompt.yaml` at it, and reference the new version in the next experiment. Old runs keep their version.
+- **New evaluator** - give it an `id`, `version`, and `dimension`; write scores to `scores/<id>@<version>.jsonl`.
+
+## Deliberately postponed
+
+Retries/backoff, request caching, parallel execution, multi-turn cases, LLM-as-judge evaluators, DB storage, and local/self-hosted models. Start with JSONL + git; add infrastructure only when volume forces it.

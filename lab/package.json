@@ -1,0 +1,11 @@
+{
+  "name": "model-lab",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Runs experiments through harness CLIs and provider APIs and writes schema-valid evidence.",
+  "type": "module",
+  "main": "cli.mjs",
+  "engines": {
+    "node": ">=20"
+  }
+}

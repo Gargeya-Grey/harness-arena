@@ -1,0 +1,5 @@
+id: qa-basic
+current: "1"
+description: Answer a short question with a single word or number.
+variables:
+  - question

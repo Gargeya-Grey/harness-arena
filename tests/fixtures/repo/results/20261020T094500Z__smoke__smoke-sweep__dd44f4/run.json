@@ -1,0 +1,94 @@
+{
+  "run_id": "20261020T094500Z__smoke__smoke-sweep__dd44f4",
+  "created_at": "2026-10-20T09:45:00.000Z",
+  "finished_at": "2026-10-20T09:46:32.161Z",
+  "status": "completed",
+  "suite": {
+    "id": "smoke",
+    "version": "0.1.0",
+    "sha256": "914111bee2181b6f0b3c7b533695906908b5f8db9a00b84b8f957724f38a5051"
+  },
+  "prompt": {
+    "id": "qa-single-turn",
+    "version": "1",
+    "sha256": "713c379c7c1fb39c69fe8851ee0cb96bfeb9b32d4914b1923245e6d9e603eb90"
+  },
+  "experiment": {
+    "id": "smoke-sweep",
+    "description": "Fixture sweep: one smoke suite through six harnesses.",
+    "suite": "smoke",
+    "prompt": "qa-single-turn",
+    "repeats": 3,
+    "targets": [
+      {
+        "model": "claude-haiku",
+        "harness": "claude-code"
+      },
+      {
+        "model": "claude-haiku",
+        "harness": "anthropic-api"
+      },
+      {
+        "model": "gpt-4o-mini",
+        "harness": "openai-api"
+      },
+      {
+        "model": "gpt-5-mini-high",
+        "harness": "codex"
+      },
+      {
+        "model": "deepseek-v4.1-flash-max",
+        "harness": "command-code"
+      },
+      {
+        "model": "gemini-2.5-flash",
+        "harness": "gemini-cli"
+      }
+    ],
+    "evaluators": [
+      {
+        "id": "exact-match",
+        "version": "1",
+        "dimension": "quality"
+      }
+    ]
+  },
+  "models": [
+    {
+      "model_key": "gpt-5-mini-high",
+      "provider": "openai",
+      "model": "gpt-5-mini-2025-08-07",
+      "params": {
+        "reasoning_effort": "high"
+      },
+      "context_window": 400000,
+      "reasoning_effort": "high",
+      "pricing": {
+        "input_per_1m": 0.25,
+        "output_per_1m": 2,
+        "cache_read_per_1m": 0.025
+      }
+    }
+  ],
+  "repeats": 3,
+  "evaluators": [
+    {
+      "id": "exact-match",
+      "version": "1",
+      "dimension": "quality"
+    }
+  ],
+  "harness": {
+    "name": "codex",
+    "version": "0.163.0",
+    "entrypoint": "headless",
+    "access_method": "subscription",
+    "platform": "win32",
+    "session_id": null,
+    "settings": {
+      "sandbox": "read-only",
+      "workdir": "isolated"
+    }
+  },
+  "notes": "Synthetic fixture run for tests and UI work. Not evidence."
+}

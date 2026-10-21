@@ -1,0 +1,28 @@
+{
+  "board_id": "smoke-DeepSeek-V4.1-Flash",
+  "title": "smoke · DeepSeek V4.1 Flash",
+  "created_at": "2026-10-21T11:03:19.782Z",
+  "updated_at": "2026-10-21T11:03:19.782Z",
+  "context": {
+    "suite": "smoke",
+    "prompt": "qa-single-turn",
+    "cases": [
+      "smoke-001"
+    ],
+    "repeats": 1
+  },
+  "treatment_axis": "model",
+  "configs": [
+    "deepseek-v4.1-flash-max__command-code-1.86.3__max"
+  ],
+  "view": {
+    "charts": [
+      "scorecard",
+      "quality-cost",
+      "reliability",
+      "latency",
+      "errors"
+    ],
+    "theme": "dark"
+  }
+}

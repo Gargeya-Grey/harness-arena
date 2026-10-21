@@ -1,0 +1,4 @@
+{"case_id":"smoke-001","input":{"question":"What is 2 + 2?"},"expected":"4","tags":["arithmetic"]}
+{"case_id":"smoke-002","input":{"question":"What is the capital of France?"},"expected":"Paris","tags":["geography"]}
+{"case_id":"smoke-003","input":{"question":"How many days are in a leap year?"},"expected":"366","tags":["calendar"]}
+{"case_id":"smoke-004","input":{"question":"What color do you get by mixing blue and yellow?"},"expected":"green","tags":["color"]}

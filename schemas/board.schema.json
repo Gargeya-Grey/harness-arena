@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://model-testing.local/schemas/board.schema.json",
+  "title": "ComparisonBoard",
+  "description": "A saved comparison selection. Boards store references, never copied results.",
+  "type": "object",
+  "required": [
+    "board_id",
+    "title",
+    "created_at",
+    "updated_at",
+    "context",
+    "treatment_axis",
+    "configs",
+    "view"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "board_id": { "type": "string" },
+    "title": { "type": "string" },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "context": {
+      "type": "object",
+      "required": ["suite", "prompt", "cases", "repeats"],
+      "additionalProperties": false,
+      "properties": {
+        "suite": { "type": "string" },
+        "prompt": { "type": "string" },
+        "cases": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "repeats": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "treatment_axis": { "type": "string" },
+    "configs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "view": { "type": "object" }
+  }
+}

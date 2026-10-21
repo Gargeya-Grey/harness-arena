@@ -1,0 +1,1 @@
+{"run_id":"20261021T080428Z__smoke__smoke-command-code__900ca7","case_id":"smoke-001","model_key":"deepseek-v4.1-flash-max","repeat":0,"evaluator_id":"exact-match","evaluator_version":"1","dimension":"quality","value":1,"passed":true,"details":{"expected":"4","actual":"4","normalization":"trim"}}

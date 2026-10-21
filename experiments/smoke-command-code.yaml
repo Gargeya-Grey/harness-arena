@@ -1,0 +1,14 @@
+id: smoke-command-code
+description: First run - Command Code headless, DeepSeek V4.1 Flash, max effort.
+suite: smoke
+prompt: qa-single-turn
+repeats: 1
+cases:
+  - smoke-001
+harness: command-code
+models:
+  - deepseek-v4.1-flash-max
+evaluators:
+  - id: exact-match
+    version: "1"
+    dimension: quality

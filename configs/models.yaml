@@ -1,0 +1,89 @@
+# Model registry. One key per model variant we test.
+# model_key is the stable identifier used in results, scores, and reports.
+# Never rename or repurpose a key; add a new one instead.
+#
+# Fields
+#   provider, model      Exact provider snapshot or id. Pin snapshots where the provider offers them.
+#   display_name         Label in the dashboard.
+#   context_window       Tokens, for reference.
+#   reasoning_effort     Part of the variant's identity: a different effort is a different key.
+#   harness_models       Optional. The id a harness expects when it differs from `model`.
+#   params               Decoding params. Only API harnesses forward them; CLI harnesses
+#                        record them as "not applied" in each raw row.
+#   pricing              USD per 1M tokens. Required: cost is computed from it at run time.
+#                        cache_read/cache_write default to the input rate when absent.
+#
+# Prices change. Verify them before trusting cost comparisons; each entry says when and
+# where its price was read.
+
+models:
+  deepseek-v4.1-flash-max:
+    provider: deepseek
+    model: deepseek/deepseek-v4.1-flash
+    display_name: DeepSeek V4.1 Flash
+    context_window: 1000000
+    reasoning_effort: max
+    params:
+      temperature: 0
+      max_tokens: 64
+    pricing: # read 2026-10-21 from the first run's notes; verify
+      input_per_1m: 0.15
+      output_per_1m: 0.60
+      cache_read_per_1m: 0.003
+
+  gpt-4o-mini:
+    provider: openai
+    model: gpt-4o-mini-2024-07-18
+    display_name: GPT-4o mini
+    params:
+      temperature: 0
+      max_tokens: 64
+    pricing:
+      input_per_1m: 0.15
+      output_per_1m: 0.60
+
+  claude-haiku:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+    display_name: Claude Haiku 4.5
+    params:
+      temperature: 0
+      max_tokens: 64
+    pricing:
+      input_per_1m: 1.00
+      output_per_1m: 5.00
+
+  claude-haiku-5.5:
+    provider: anthropic
+    model: claude-haiku-5-5
+    display_name: Claude Haiku 5.5
+    context_window: 1000000
+    # No temperature: this model rejects non-default sampling values.
+    params:
+      max_tokens: 1024
+    pricing: # Anthropic list price for prompts up to 100K tokens, read 2026-10-21
+      input_per_1m: 0.10
+      output_per_1m: 0.50
+
+  gpt-6-luna-low:
+    provider: openai
+    model: gpt-6-luna
+    display_name: GPT-6 Luna
+    reasoning_effort: low
+    params: {}
+    pricing: # secondary sources (pricing aggregators), read 2026-10-21; verify on openai.com
+      input_per_1m: 0.10
+      output_per_1m: 0.50
+      cache_read_per_1m: 0.01
+
+  gemini-3.8-flash:
+    provider: google
+    model: gemini-3.8-flash
+    display_name: Gemini 3.8 Flash
+    harness_models:
+      command-code: google/gemini-3.8-flash
+    params: {}
+    pricing: # introductory rate until 2026-12-31 per secondary sources, read 2026-10-21; verify
+      input_per_1m: 0.75
+      output_per_1m: 3.75
+      cache_read_per_1m: 0.075

@@ -1,0 +1,14 @@
+Loaded cached credentials.
+{
+  "session_id": "synthetic-session",
+  "response": "4",
+  "stats": {
+    "models": {
+      "gemini-3.8-flash": {
+        "api": { "totalRequests": 1, "totalErrors": 0, "totalLatencyMs": 812 },
+        "tokens": { "prompt": 9120, "candidates": 1, "total": 9150, "cached": 4000, "thoughts": 29, "tool": 0 }
+      }
+    },
+    "tools": { "totalCalls": 0, "totalSuccess": 0, "totalFail": 0 }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://model-testing.local/schemas/score.schema.json",
+  "title": "Score",
+  "description": "One evaluator verdict for one raw result. One JSON object per line in scores/<evaluator>@<version>.jsonl.",
+  "type": "object",
+  "required": [
+    "run_id",
+    "case_id",
+    "model_key",
+    "repeat",
+    "evaluator_id",
+    "evaluator_version",
+    "dimension",
+    "value"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": { "type": "string" },
+    "case_id": { "type": "string" },
+    "model_key": { "type": "string" },
+    "repeat": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "evaluator_id": { "type": "string" },
+    "evaluator_version": { "type": "string" },
+    "dimension": { "type": "string" },
+    "value": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "passed": { "type": ["boolean", "null"] },
+    "details": { "type": "object" }
+  }
+}

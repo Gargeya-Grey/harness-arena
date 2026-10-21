@@ -1,0 +1,11 @@
+Warning: True color (24-bit) support not detected. Using a terminal with true color enabled will result in a better visual experience.
+Error authenticating: IneligibleTierError: This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products: https://antigravity.google
+    at throwIneligibleOrProjectIdError (file:///gemini-cli/bundle/chunk.js:273244:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  ineligibleTiers: [
+    {
+      reasonCode: 'UNSUPPORTED_CLIENT',
+      tierId: 'free-tier'
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "model-lab-dashboard",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Local, private comparison dashboard for model test runs.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --check public/app.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

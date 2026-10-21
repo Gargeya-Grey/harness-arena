@@ -1,0 +1,4 @@
+id: svg-scene
+current: "1"
+description: Generate one SVG document.
+variables: [brief, width, height]

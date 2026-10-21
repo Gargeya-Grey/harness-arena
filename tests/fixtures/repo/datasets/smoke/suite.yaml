@@ -1,0 +1,7 @@
+id: smoke
+version: "0.1.0"
+description: >
+  Minimal sanity suite. Short questions with single-token answers, used to
+  validate the harness, schemas, and reporting before adding harder suites.
+defaults:
+  repeats: 3

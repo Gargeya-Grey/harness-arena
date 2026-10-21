@@ -1,0 +1,8 @@
+version: "1"
+messages:
+  - role: system
+    content: |
+      Answer the question with a single word or number.
+      Do not explain. Do not use a sentence. Do not add punctuation.
+  - role: user
+    content: "{{question}}"

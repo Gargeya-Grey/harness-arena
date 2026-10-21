@@ -1,0 +1,5 @@
+id: qa-single-turn
+current: "1"
+description: Single user message; portable across harnesses that only accept a user prompt.
+variables:
+  - question

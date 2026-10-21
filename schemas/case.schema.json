@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://model-testing.local/schemas/case.schema.json",
+  "title": "TestCase",
+  "description": "One test case. One JSON object per line in cases.jsonl.",
+  "type": "object",
+  "required": ["case_id", "input", "tags"],
+  "additionalProperties": false,
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "input": {
+      "type": "object",
+      "description": "Values for the prompt template variables.",
+      "additionalProperties": true
+    },
+    "expected": {
+      "type": ["string", "number", "boolean", "object", "array", "null"],
+      "description": "Reference answer used by evaluators."
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Optional per-case prompt id override."
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "metadata": {
+      "type": "object"
+    }
+  }
+}

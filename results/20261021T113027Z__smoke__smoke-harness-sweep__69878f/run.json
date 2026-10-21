@@ -1,0 +1,118 @@
+{
+  "run_id": "20261021T113027Z__smoke__smoke-harness-sweep__69878f",
+  "created_at": "2026-10-21T11:30:27.112Z",
+  "finished_at": "2026-10-21T11:30:42.571Z",
+  "status": "completed",
+  "suite": {
+    "id": "smoke",
+    "version": "0.1.0",
+    "sha256": "914111bee2181b6f0b3c7b533695906908b5f8db9a00b84b8f957724f38a5051"
+  },
+  "prompt": {
+    "id": "qa-single-turn",
+    "version": "1",
+    "sha256": "713c379c7c1fb39c69fe8851ee0cb96bfeb9b32d4914b1923245e6d9e603eb90"
+  },
+  "experiment": {
+    "id": "smoke-harness-sweep",
+    "description": "The smoke suite through every installed harness. Claude Haiku 5.5 runs through both Claude Code and Command Code, so that pair is a controlled harness comparison.\n",
+    "suite": "smoke",
+    "prompt": "qa-single-turn",
+    "repeats": 1,
+    "targets": [
+      {
+        "model": "claude-haiku-5.5",
+        "harness": "claude-code"
+      },
+      {
+        "model": "claude-haiku-5.5",
+        "harness": "command-code"
+      },
+      {
+        "model": "deepseek-v4.1-flash-max",
+        "harness": "command-code"
+      },
+      {
+        "model": "gpt-6-luna-low",
+        "harness": "codex"
+      },
+      {
+        "model": "gemini-3.8-flash",
+        "harness": "gemini-cli"
+      }
+    ],
+    "workdir": "isolated",
+    "timeout_s": 300,
+    "evaluators": [
+      {
+        "id": "normalized-match",
+        "version": "1",
+        "dimension": "quality"
+      },
+      {
+        "id": "exact-match",
+        "version": "1",
+        "dimension": "format"
+      }
+    ],
+    "cases": [
+      "smoke-001"
+    ]
+  },
+  "models": [
+    {
+      "model_key": "claude-haiku-5.5",
+      "provider": "anthropic",
+      "model": "claude-haiku-5-5",
+      "params": {},
+      "context_window": 1000000,
+      "reasoning_effort": null,
+      "pricing": {
+        "input_per_1m": 0.1,
+        "output_per_1m": 0.5
+      }
+    },
+    {
+      "model_key": "deepseek-v4.1-flash-max",
+      "provider": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "params": {
+        "reasoning_effort": "max"
+      },
+      "context_window": 1000000,
+      "reasoning_effort": "max",
+      "pricing": {
+        "input_per_1m": 0.15,
+        "output_per_1m": 0.6,
+        "cache_read_per_1m": 0.003
+      }
+    }
+  ],
+  "repeats": 1,
+  "evaluators": [
+    {
+      "id": "normalized-match",
+      "version": "1",
+      "dimension": "quality"
+    },
+    {
+      "id": "exact-match",
+      "version": "1",
+      "dimension": "format"
+    }
+  ],
+  "harness": {
+    "name": "command-code",
+    "version": "1.86.3",
+    "entrypoint": "headless",
+    "access_method": "subscription",
+    "platform": "win32",
+    "session_id": null,
+    "settings": {
+      "workdir": "isolated",
+      "timeout_s": 300,
+      "persist_sessions": false
+    }
+  },
+  "notes": "Run by lab command-code; experiment file sha256 8cb728428472c6f581fb95da832bcfc21abdad6cecf112d1359f967fa3ba1d4f."
+}

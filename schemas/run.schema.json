@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://model-testing.local/schemas/run.schema.json",
+  "title": "RunManifest",
+  "description": "Immutable record of everything needed to reproduce a run.",
+  "type": "object",
+  "required": [
+    "run_id",
+    "created_at",
+    "status",
+    "suite",
+    "prompt",
+    "experiment",
+    "models",
+    "repeats",
+    "harness"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "pattern": "^[0-9]{8}T[0-9]{6}Z__[a-z0-9-]+__[a-z0-9-]+__[a-z0-9]{6}$"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finished_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["running", "completed", "failed"]
+    },
+    "suite": { "$ref": "#/$defs/artifactRef" },
+    "prompt": { "$ref": "#/$defs/artifactRef" },
+    "experiment": {
+      "type": "object",
+      "description": "Verbatim copy of the experiment definition used."
+    },
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["model_key", "provider", "model", "params"],
+        "additionalProperties": false,
+        "properties": {
+          "model_key": { "type": "string" },
+          "provider": { "type": "string" },
+          "model": { "type": "string" },
+          "params": { "type": "object" },
+          "context_window": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "reasoning_effort": {
+            "type": ["string", "null"]
+          },
+          "pricing": { "type": "object" }
+        }
+      }
+    },
+    "repeats": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "evaluators": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "version", "dimension"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "version": { "type": "string" },
+          "dimension": { "type": "string" }
+        }
+      }
+    },
+    "harness": {
+      "type": "object",
+      "description": "The client that executed the model calls.",
+      "required": ["name", "version", "entrypoint", "access_method"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "entrypoint": {
+          "type": "string",
+          "enum": ["interactive", "headless", "ide", "api"]
+        },
+        "access_method": {
+          "type": "string",
+          "enum": ["subscription", "api_key", "byok", "local"]
+        },
+        "platform": { "type": "string" },
+        "session_id": { "type": ["string", "null"] },
+        "settings": {
+          "type": "object",
+          "description": "Harness-level settings such as reasoning effort or max turns."
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "notes": { "type": "string" }
+  },
+  "$defs": {
+    "artifactRef": {
+      "type": "object",
+      "required": ["id", "version", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "version": { "type": "string" },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    }
+  }
+}

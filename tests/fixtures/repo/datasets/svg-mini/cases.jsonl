@@ -1,0 +1,2 @@
+{"case_id":"svg-mini-sun","input":{"brief":"A yellow sun: one circle, eight rays.","width":256,"height":256},"expected":null,"tags":["svg"]}
+{"case_id":"svg-mini-house","input":{"brief":"A house: beige body, red triangular roof, brown door.","width":256,"height":256},"expected":null,"tags":["svg"]}

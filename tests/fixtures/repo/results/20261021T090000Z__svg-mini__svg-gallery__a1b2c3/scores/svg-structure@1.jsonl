@@ -1,0 +1,2 @@
+{"run_id":"20261021T090000Z__svg-mini__svg-gallery__a1b2c3","case_id":"svg-mini-sun","model_key":"claude-haiku","repeat":0,"evaluator_id":"svg-structure","evaluator_version":"1","dimension":"format","value":1,"passed":true,"details":{"checks":["parses","root-svg","viewbox","no-script"]}}
+{"run_id":"20261021T090000Z__svg-mini__svg-gallery__a1b2c3","case_id":"svg-mini-house","model_key":"claude-haiku","repeat":0,"evaluator_id":"svg-structure","evaluator_version":"1","dimension":"format","value":1,"passed":true,"details":{"checks":["parses","root-svg","viewbox","no-script"]}}
