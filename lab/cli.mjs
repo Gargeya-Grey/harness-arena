@@ -9,7 +9,7 @@ import { scoreCommand } from './commands/score.mjs';
 import { validateCommand } from './commands/validate.mjs';
 import { doctorCommand, reportCommand, runsCommand } from './commands/info.mjs';
 
-const HELP = `Model Lab: run the same suite through any harness or API, then compare.
+const HELP = `Model Lab: run the same suite through any CLI harness, then compare.
 
 Usage: node lab <command> [options]
 
@@ -22,14 +22,13 @@ Commands
       --dry-run             Show what would run; call nothing, write nothing
   score <run-id>... | --all   Recompute scores from raw.jsonl (no API calls)
   validate                Check inputs and every stored record against schemas/
-  doctor                  Show which harnesses are installed or have keys here
+  doctor                  Show which harnesses are installed here (built-in and configs/harnesses.yaml)
   runs                    List runs, newest first
   report [--write]        Markdown comparison per context (to stdout, or reports/comparison.md)
   dashboard [--port n]    Start the local dashboard (default http://127.0.0.1:4317)
 
 Environment
   LAB_ROOT                Data root (default: this repository). Tests use tests/fixtures/repo.
-  ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, DEEPSEEK_API_KEY   For the *-api harnesses.
 `;
 
 async function main(argv) {
@@ -75,7 +74,7 @@ async function main(argv) {
     case 'validate':
       return validateCommand(root);
     case 'doctor':
-      await doctorCommand();
+      await doctorCommand({ root });
       return 0;
     case 'runs':
       runsCommand(root);

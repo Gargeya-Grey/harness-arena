@@ -1,0 +1,1 @@
+{"run_id":"20261104T123639Z__smoke__smoke-opencode__a81bae","case_id":"smoke-002","model_key":"beam-free","repeat":0,"evaluator_id":"exact-match","evaluator_version":"1","dimension":"format","value":1,"passed":true,"details":{"expected":"Paris","actual":"Paris","normalization":"trim"}}

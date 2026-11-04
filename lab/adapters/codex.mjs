@@ -1,19 +1,16 @@
 // OpenAI Codex CLI: `codex exec --json`, read-only sandbox, prompt on stdin.
 
-import { cliVersion, flattenMessages, jsonLines, runProcess, stderrError, stderrTail } from './process.mjs';
+import { defineCli } from './cli.mjs';
+import { jsonLines, stderrError, stderrTail } from './process.mjs';
 
 const BIN = 'codex';
 const TOOL_ITEMS = new Set(['command_execution', 'mcp_tool_call', 'web_search', 'file_change', 'tool_call']);
 
-export default {
+export default defineCli({
   name: 'codex',
-  kind: 'cli',
-  entrypoint: 'headless',
-  access_method: 'subscription',
-  supports_effort: true,
-  supports_decoding: false,
-
-  detect: async () => ({ version: await cliVersion(BIN) }),
+  bin: BIN,
+  supportsEffort: true,
+  stdin: ({ prompt }) => prompt,
 
   args({ model, effort, cwd, persist }) {
     const args = ['exec', '--json', '--skip-git-repo-check', '-s', 'read-only', '--color', 'never', '-m', model];
@@ -71,15 +68,4 @@ export default {
       extra: { reasoning_output_tokens: usage?.reasoning_output_tokens ?? null },
     };
   },
-
-  async call({ model, messages, effort, cwd, timeoutMs, persist = false }) {
-    const { prompt } = flattenMessages(messages);
-    const run = await runProcess(BIN, this.args({ model, effort, cwd, persist }), { cwd, input: prompt, timeoutMs });
-    if (run.error) return { error: run.error, wall_ms: run.ms, events: [] };
-    return { ...this.parse(run), wall_ms: run.ms, stderr: run.stderr };
-  },
-
-  applied({ effort }) {
-    return effort ? { reasoning_effort: effort } : {};
-  },
-};
+});

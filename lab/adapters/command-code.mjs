@@ -1,19 +1,16 @@
 // Command Code headless: `cmdc -p <prompt> --output-format json`, an NDJSON
 // event stream that ends with a `result` line.
 
-import { cliVersion, flattenMessages, jsonLines, runProcess, stderrError, stderrTail } from './process.mjs';
+import { defineCli } from './cli.mjs';
+import { jsonLines, stderrError, stderrTail } from './process.mjs';
 
 const BIN = 'cmdc';
 
-export default {
+export default defineCli({
   name: 'command-code',
-  kind: 'cli',
-  entrypoint: 'headless',
-  access_method: 'subscription',
-  supports_effort: true,
-  supports_decoding: false,
-
-  detect: async () => ({ version: await cliVersion(BIN) }),
+  bin: BIN,
+  supportsEffort: true,
+  isolation: { args: ['--no-skills'], note: 'Skips skill discovery. User settings and memory still load.' },
 
   args({ model, effort, prompt, persist, maxTurns }) {
     const args = ['-p', prompt, '--model', model, '--output-format', 'json', '--skip-onboarding', '--no-auto-update'];
@@ -75,15 +72,4 @@ export default {
       extra: {},
     };
   },
-
-  async call({ model, messages, effort, cwd, timeoutMs, persist = false, maxTurns = null }) {
-    const { prompt } = flattenMessages(messages);
-    const run = await runProcess(BIN, this.args({ model, effort, prompt, persist, maxTurns }), { cwd, timeoutMs });
-    if (run.error) return { error: run.error, wall_ms: run.ms, events: [] };
-    return { ...this.parse(run), wall_ms: run.ms, stderr: run.stderr };
-  },
-
-  applied({ effort }) {
-    return effort ? { reasoning_effort: effort } : {};
-  },
-};
+});

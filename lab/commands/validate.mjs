@@ -6,7 +6,7 @@ import path from 'node:path';
 import { listDirs, listFiles, readJson, readJsonl } from '../lib/fsutil.mjs';
 import { SchemaSet } from '../lib/schema.mjs';
 import { loadPrompt, loadRegistry, loadSuite, loadYamlFile, paths, resolveExperiment } from '../lib/repo.mjs';
-import { ADAPTERS } from '../adapters/index.mjs';
+import { harnessesFile, loadAdapters, readDeclared } from '../adapters/index.mjs';
 import { getEvaluator } from '../evaluators/index.mjs';
 
 export function validateRepo(root) {
@@ -18,15 +18,25 @@ export function validateRepo(root) {
   const report = (file, message) => problems.push(`${rel(file)}: ${message}`);
   const check = (schema, value, file) => schemas.validate(schema, value).forEach((error) => report(file, error));
 
+  let adapters = loadAdapters(null);
+  try {
+    readDeclared(root).problems.forEach((problem) => report(harnessesFile(root), problem));
+    adapters = loadAdapters(root);
+  } catch (error) {
+    report(harnessesFile(root), error.message);
+  }
+
   let registry = {};
   try {
     registry = loadRegistry(root);
     for (const [key, entry] of Object.entries(registry)) {
       if (!/^[a-z0-9][a-z0-9.-]*$/.test(key)) report(p.registry, `model_key "${key}" should be lowercase letters, digits, dots and dashes`);
       if (!entry.provider || !entry.model) report(p.registry, `${key}: needs provider and model`);
-      if (typeof entry.pricing?.input_per_1m !== 'number' || typeof entry.pricing?.output_per_1m !== 'number') report(p.registry, `${key}: pricing.input_per_1m and pricing.output_per_1m are required for cost`);
+      if (entry.pricing != null && (typeof entry.pricing.input_per_1m !== 'number' || typeof entry.pricing.output_per_1m !== 'number')) {
+        report(p.registry, `${key}: pricing needs both input_per_1m and output_per_1m, or leave pricing out`);
+      }
       for (const harness of Object.keys(entry.harness_models || {})) {
-        if (!ADAPTERS[harness]) report(p.registry, `${key}: harness_models names unknown harness "${harness}"`);
+        if (!adapters[harness]) report(p.registry, `${key}: harness_models names unknown harness "${harness}"`);
       }
     }
   } catch (error) {
@@ -73,7 +83,8 @@ export function validateRepo(root) {
       const experiment = loadYamlFile(abs);
       const { targets, problems: targetProblems } = resolveExperiment(experiment, registry);
       targetProblems.forEach((message) => report(abs, message));
-      for (const target of targets) if (target.harness && !ADAPTERS[target.harness]) report(abs, `unknown harness "${target.harness}"; known: ${Object.keys(ADAPTERS).join(', ')}`);
+      for (const target of targets) if (target.harness && !adapters[target.harness]) report(abs, `unknown harness "${target.harness}"; known: ${Object.keys(adapters).join(', ')}`);
+      if (experiment.user_config != null && !['loaded', 'isolated'].includes(experiment.user_config)) report(abs, `user_config must be "loaded" or "isolated"`);
       const suite = suites.get(experiment.suite);
       if (!suite) report(abs, `suite "${experiment.suite}" not found`);
       let prompt = null;

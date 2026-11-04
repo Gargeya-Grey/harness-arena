@@ -8,13 +8,14 @@
 #   context_window       Tokens, for reference.
 #   reasoning_effort     Part of the variant's identity: a different effort is a different key.
 #   harness_models       Optional. The id a harness expects when it differs from `model`.
-#   params               Decoding params. Only API harnesses forward them; CLI harnesses
-#                        record them as "not applied" in each raw row.
-#   pricing              USD per 1M tokens. Required: cost is computed from it at run time.
+#                        OpenCode ids name the provider inside OpenCode: <provider>/<model>.
+#   params               Decoding params. CLI harnesses cannot forward them, so each raw
+#                        row lists them as "not applied"; they document intent only.
+#   pricing              Optional. USD per 1M tokens, for an API-equivalent cost column.
+#                        Leave it out for subscription or free models: cost shows as n/a.
 #                        cache_read/cache_write default to the input rate when absent.
 #
-# Prices change. Verify them before trusting cost comparisons; each entry says when and
-# where its price was read.
+# Prices change. Each pricing entry says when and where it was read.
 
 models:
   deepseek-v4.1-flash-max:
@@ -30,28 +31,6 @@ models:
       input_per_1m: 0.15
       output_per_1m: 0.60
       cache_read_per_1m: 0.003
-
-  gpt-4o-mini:
-    provider: openai
-    model: gpt-4o-mini-2024-07-18
-    display_name: GPT-4o mini
-    params:
-      temperature: 0
-      max_tokens: 64
-    pricing:
-      input_per_1m: 0.15
-      output_per_1m: 0.60
-
-  claude-haiku:
-    provider: anthropic
-    model: claude-haiku-4-5-20251001
-    display_name: Claude Haiku 4.5
-    params:
-      temperature: 0
-      max_tokens: 64
-    pricing:
-      input_per_1m: 1.00
-      output_per_1m: 5.00
 
   claude-haiku-5.5:
     provider: anthropic
@@ -69,6 +48,8 @@ models:
     provider: openai
     model: gpt-6-luna
     display_name: GPT-6 Luna
+    harness_models:
+      opencode: openai/gpt-6-luna # through the ChatGPT sign-in inside OpenCode
     reasoning_effort: low
     params: {}
     pricing: # secondary sources (pricing aggregators), read 2026-10-21; verify on openai.com
@@ -87,3 +68,9 @@ models:
       input_per_1m: 0.75
       output_per_1m: 3.75
       cache_read_per_1m: 0.075
+
+  beam-free:
+    provider: opencode
+    model: opencode/beam-free
+    display_name: Beam (free)
+    params: {}

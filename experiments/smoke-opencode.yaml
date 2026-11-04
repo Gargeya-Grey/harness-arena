@@ -1,0 +1,31 @@
+id: smoke-opencode
+description: >
+  OpenCode on the smoke suite. GPT-6 Luna runs through Codex and through OpenCode
+  (ChatGPT sign-in), so that pair is a controlled harness comparison. Beam is a free
+  OpenCode model. It asks for an isolated user setup; Codex and OpenCode have no flags
+  for that today, so their runs record user_config loaded.
+suite: smoke
+prompt: qa-single-turn
+repeats: 3
+
+targets:
+  - model: gpt-6-luna-low
+    harness: codex
+  - model: gpt-6-luna-low
+    harness: opencode
+  - model: beam-free
+    harness: opencode
+
+workdir: isolated
+# isolated: a harness with isolation flags skips the user's own instructions, skills or
+# MCP servers. The run records the exact flags under harness.settings.
+user_config: isolated
+timeout_s: 300
+
+evaluators:
+  - id: normalized-match
+    version: "1"
+    dimension: quality
+  - id: exact-match
+    version: "1"
+    dimension: format

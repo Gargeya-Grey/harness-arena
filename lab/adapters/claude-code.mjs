@@ -1,19 +1,23 @@
 // Claude Code headless: `claude -p --output-format stream-json --verbose`.
 // The prompt goes in on stdin. Usage comes from the final `result` event.
 
-import { cliVersion, flattenMessages, jsonLines, runProcess, stderrError, stderrTail } from './process.mjs';
+import { defineCli } from './cli.mjs';
+import { jsonLines, stderrError, stderrTail } from './process.mjs';
 
 const BIN = 'claude';
 
-export default {
+export default defineCli({
   name: 'claude-code',
-  kind: 'cli',
-  entrypoint: 'headless',
-  access_method: 'subscription',
-  supports_effort: true,
-  supports_decoding: false,
-
-  detect: async () => ({ version: await cliVersion(BIN) }),
+  bin: BIN,
+  supportsEffort: true,
+  stdin: ({ user }) => user,
+  // Measured 2026-11-04: drops user MCP servers and skills (34,525 to 29,316 prompt
+  // tokens on a one-word reply); built-in plugins and the base prompt still load.
+  // --bare would skip more, but it accepts only ANTHROPIC_API_KEY, not a subscription.
+  isolation: {
+    args: ['--setting-sources', 'project,local', '--strict-mcp-config', '--disable-slash-commands'],
+    note: 'Skips user settings, MCP servers, skills and slash commands. Built-in plugins still load.',
+  },
 
   args({ model, effort, system, persist }) {
     const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', model];
@@ -67,15 +71,4 @@ export default {
       extra: { model_usage: result?.modelUsage ?? null, tools_available: init.tools?.length ?? null },
     };
   },
-
-  async call({ model, messages, effort, cwd, timeoutMs, persist = false }) {
-    const { system, user } = flattenMessages(messages);
-    const run = await runProcess(BIN, this.args({ model, effort, system, persist }), { cwd, input: user, timeoutMs });
-    if (run.error) return { error: run.error, wall_ms: run.ms, events: [] };
-    return { ...this.parse(run), wall_ms: run.ms, stderr: run.stderr };
-  },
-
-  applied({ effort }) {
-    return effort ? { reasoning_effort: effort } : {};
-  },
-};
+});

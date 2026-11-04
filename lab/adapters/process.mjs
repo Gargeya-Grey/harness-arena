@@ -22,9 +22,15 @@ export function resolveCommand(name) {
       const shim = path.join(dir, `${name}.cmd`);
       if (fs.existsSync(shim)) {
         const text = fs.readFileSync(shim, 'utf8');
-        const match = /"%dp0%\\([^"]+\.(?:m?js|cjs))"/i.exec(text);
-        if (match) {
-          found = { command: process.execPath, prefix: [path.join(dir, match[1])] };
+        const script = /"%dp0%\\([^"]+\.(?:m?js|cjs))"/i.exec(text);
+        if (script) {
+          found = { command: process.execPath, prefix: [path.join(dir, script[1])] };
+          break;
+        }
+        // A shim around a native binary (OpenCode 2.x). npm shims also name node.exe; skip it.
+        const binary = [...text.matchAll(/"%dp0%\\([^"]+\.exe)"/gi)].map((m) => m[1]).find((file) => !/(^|\\)node\.exe$/i.test(file));
+        if (binary) {
+          found = { command: path.join(dir, binary), prefix: [] };
           break;
         }
       }

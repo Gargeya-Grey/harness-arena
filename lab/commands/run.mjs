@@ -16,6 +16,7 @@ import { extractSvg } from '../evaluators/index.mjs';
 import { scoreRun } from './score.mjs';
 
 const DEFAULT_TIMEOUT_S = 300;
+const USER_CONFIG = new Set(['loaded', 'isolated']);
 
 // An isolated workdir gets its own empty git repository. Harnesses look upward
 // for a repo root (git status, AGENTS.md, CLAUDE.md); without this fence a temp
@@ -36,6 +37,8 @@ export function planExperiment(root, file, { harness: onlyHarness, models: onlyM
   const experiment = parseYaml(text, path.basename(file));
   const registry = loadRegistry(root);
   const { targets, problems } = resolveExperiment(experiment, registry);
+  const userConfig = experiment.user_config ?? 'loaded';
+  if (!USER_CONFIG.has(userConfig)) problems.push(`user_config must be "loaded" or "isolated", got "${userConfig}"`);
   if (problems.length) throw new Error(`${path.basename(file)}:\n  ${problems.join('\n  ')}`);
   const suite = loadSuite(root, experiment.suite);
   const prompt = loadPrompt(root, experiment.prompt, experiment.prompt_version);
@@ -54,7 +57,7 @@ export function planExperiment(root, file, { harness: onlyHarness, models: onlyM
   for (const target of targets) {
     if (onlyHarness && target.harness !== onlyHarness) continue;
     if (onlyModels && !onlyModels.includes(target.model)) continue;
-    getAdapter(target.harness);
+    getAdapter(target.harness, root);
     if (!groups.has(target.harness)) groups.set(target.harness, []);
     if (!groups.get(target.harness).includes(target.model)) groups.get(target.harness).push(target.model);
   }
@@ -75,6 +78,7 @@ export function planExperiment(root, file, { harness: onlyHarness, models: onlyM
     timeoutMs: Number(experiment.timeout_s ?? DEFAULT_TIMEOUT_S) * 1000,
     workdirMode: experiment.workdir === 'repo' ? 'repo' : 'isolated',
     persist: Boolean(experiment.persist_sessions),
+    userConfig,
     maxTurns: experiment.max_turns ?? null,
     artifact: suite.meta.artifact || experiment.artifact || null,
   };
@@ -111,14 +115,13 @@ function writeArtifact(runDir, kind, row, text, harness) {
 }
 
 async function runHarness(root, plan, harnessName, modelKeys, { log, signal }) {
-  const adapter = getAdapter(harnessName);
+  const adapter = getAdapter(harnessName, root);
   const detected = await adapter.detect();
-  if (adapter.kind === 'cli' && !detected.version) {
+  if (!detected.version) {
     throw new Error(`${harnessName}: CLI not found or "--version" failed. Install it or remove its targets.`);
   }
-  if (adapter.kind === 'api' && detected.credentials === false) {
-    throw new Error(`${harnessName}: ${adapter.key_env} is not set.`);
-  }
+  const isolated = plan.userConfig === 'isolated';
+  const isolationArgs = isolated ? adapter.isolation?.args || [] : [];
   const models = modelKeys.map((key) => modelPlan(plan, adapter, key));
   const runId = `${runStamp()}__${plan.suite.id}__${plan.experiment.id}__${crypto.randomBytes(3).toString('hex')}`;
   const runDir = path.join(paths(root).results, runId);
@@ -158,6 +161,10 @@ async function runHarness(root, plan, harnessName, modelKeys, { log, signal }) {
         ...(plan.workdirMode === 'isolated' ? { workdir_git_fence: fenced } : {}),
         timeout_s: plan.timeoutMs / 1000,
         persist_sessions: plan.persist,
+        // Did the harness load the user's own setup (instructions, skills, MCP servers)?
+        // "isolated" lists the exact flags that kept it out; no flags means it loaded.
+        user_config: isolationArgs.length ? 'isolated' : 'loaded',
+        ...(isolated ? { user_config_requested: 'isolated', user_config_flags: isolationArgs, user_config_note: adapter.isolation?.note || '' } : {}),
         ...(plan.maxTurns ? { max_turns: plan.maxTurns } : {}),
       },
     },
@@ -165,6 +172,7 @@ async function runHarness(root, plan, harnessName, modelKeys, { log, signal }) {
   };
   writeJson(path.join(runDir, 'run.json'), manifest);
   log(`\n${runId}\n  harness ${adapter.name} ${detected.version} · ${models.length} model(s) · ${plan.cases.length} case(s) · ${plan.repeats} repeat(s) · workdir ${plan.workdirMode}`);
+  if (isolated && !isolationArgs.length) log(`  note: ${adapter.name} cannot skip the user setup; it loads, and the run records user_config loaded`);
   for (const m of models) {
     if (m.requestedEffort && !m.effort) log(`  note: ${adapter.name} has no effort control; ${m.modelKey} runs at the harness default, not "${m.requestedEffort}"`);
     if (m.notApplied.length) log(`  note: ${adapter.name} does not forward ${m.notApplied.join(', ')} for ${m.modelKey}; harness defaults apply`);
@@ -200,6 +208,7 @@ async function runHarness(root, plan, harnessName, modelKeys, { log, signal }) {
             timeoutMs: plan.timeoutMs,
             persist: plan.persist,
             maxTurns: plan.maxTurns,
+            isolated: isolationArgs.length > 0,
           });
         } catch (error) {
           // An adapter bug becomes an error row; it must not leave the run "running".
@@ -243,7 +252,7 @@ async function runHarness(root, plan, harnessName, modelKeys, { log, signal }) {
               typeof output === 'number' && result.model_request_duration_ms ? Number((output / (result.model_request_duration_ms / 1000)).toFixed(4)) : null,
             turn_count: result.turn_count ?? null,
             harness_reported_cost_usd: result.harness_cost_usd ?? null,
-            system_prompt_injected: adapter.kind === 'cli',
+            system_prompt_injected: true,
             workdir: plan.workdirMode,
             ...(result.extra && Object.keys(result.extra).length ? { harness_extra: result.extra } : {}),
           },
@@ -282,10 +291,11 @@ export async function runCommand(root, file, options = {}) {
   log(`Experiment ${plan.experiment.id}: suite ${plan.suite.id} ${plan.suite.version}, prompt ${plan.prompt.id} v${plan.prompt.version}, ${totalCalls} call(s) across ${plan.groups.size} harness(es)`);
   if (options.dryRun) {
     for (const [harness, models] of plan.groups) {
-      const adapter = getAdapter(harness);
+      const adapter = getAdapter(harness, root);
+      const flags = plan.userConfig === 'isolated' ? adapter.isolation?.args || [] : [];
       for (const key of models) {
         const m = modelPlan(plan, adapter, key);
-        log(`  ${harness}: ${key} → model "${m.harnessModel}", effort ${m.effort ?? 'default'}, params ${JSON.stringify(m.applied)}${m.notApplied.length ? `, not forwarded: ${m.notApplied.join(', ')}` : ''}`);
+        log(`  ${harness}: ${key} → model "${m.harnessModel}", effort ${m.effort ?? 'default'}, user setup ${flags.length ? `skipped (${flags.join(' ')})` : 'loaded'}${m.notApplied.length ? `, not forwarded: ${m.notApplied.join(', ')}` : ''}`);
       }
     }
     log('Dry run: nothing was called or written.');
