@@ -150,3 +150,60 @@ test('dry run calls nothing and writes nothing', async (t) => {
   assert.equal(fs.readdirSync(path.join(root, 'results')).length, before);
   assert.ok(lines.some((line) => /Dry run/.test(line)));
 });
+
+test('user_config isolated: the flags reach the call, the run records them, and the config is its own', async (t) => {
+  const root = tempRoot();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const seen = [];
+  const harness = fakeHarness('fake-iso', () => '4');
+  const call = harness.call;
+  harness.isolation = { args: ['--no-user-setup'], env: {}, note: 'Fake isolation.' };
+  harness.call = async (options) => (seen.push(options.isolated), call(options));
+  ADAPTERS['fake-iso'] = harness;
+  t.after(() => delete ADAPTERS['fake-iso']);
+
+  const file = experiment(root, 'fake-iso');
+  fs.appendFileSync(file, 'user_config: isolated\n');
+  const [isolated] = await runCommand(root, file, { log: () => {}, repeats: 1, cases: ['smoke-001'] });
+  const settings = readJson(path.join(isolated.runDir, 'run.json')).harness.settings;
+  assert.equal(settings.user_config, 'isolated');
+  assert.deepEqual(settings.user_config_flags, ['--no-user-setup']);
+  assert.deepEqual(seen, [true, true]);
+
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('user_config: isolated\n', ''));
+  const [loaded] = await runCommand(root, file, { log: () => {}, repeats: 1, cases: ['smoke-001'] });
+  assert.equal(readJson(path.join(loaded.runDir, 'run.json')).harness.settings.user_config, 'loaded');
+  assert.deepEqual(seen, [true, true, false, false]);
+
+  assert.deepEqual(validateRepo(root).problems, []);
+  const state = buildState(root);
+  assert.ok(state.configs['claude-haiku__fake-iso-0.0.1__default__isolated']);
+  assert.ok(state.configs['claude-haiku__fake-iso-0.0.1__default']);
+  const context = state.contexts.find((c) => c.config_ids.includes('claude-haiku__fake-iso-0.0.1__default__isolated'));
+  assert.ok(context.config_ids.includes('claude-haiku__fake-iso-0.0.1__default'), 'both setups sit in one context');
+});
+
+test('user_config isolated on a harness with no isolation flags records loaded', async (t) => {
+  const root = tempRoot();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  ADAPTERS['fake-noiso'] = fakeHarness('fake-noiso', () => '4');
+  t.after(() => delete ADAPTERS['fake-noiso']);
+  const file = experiment(root, 'fake-noiso');
+  fs.appendFileSync(file, 'user_config: isolated\n');
+  const lines = [];
+  const [result] = await runCommand(root, file, { log: (line) => lines.push(line), repeats: 1, cases: ['smoke-001'] });
+  const settings = readJson(path.join(result.runDir, 'run.json')).harness.settings;
+  assert.equal(settings.user_config, 'loaded');
+  assert.equal(settings.user_config_requested, 'isolated');
+  assert.ok(lines.some((line) => /cannot skip the user setup/.test(line)));
+});
+
+test('an unknown user_config value stops the run before any call', async (t) => {
+  const root = tempRoot();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  ADAPTERS['fake-bad'] = fakeHarness('fake-bad', () => '4');
+  t.after(() => delete ADAPTERS['fake-bad']);
+  const file = experiment(root, 'fake-bad');
+  fs.appendFileSync(file, 'user_config: clean\n');
+  await assert.rejects(runCommand(root, file, { log: () => {} }), /user_config must be "loaded" or "isolated"/);
+});

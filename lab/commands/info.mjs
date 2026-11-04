@@ -3,28 +3,35 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { ADAPTERS } from '../adapters/index.mjs';
+import { loadAdapters, readDeclared } from '../adapters/index.mjs';
 import { resolveCommand } from '../adapters/process.mjs';
 import { buildState } from '../lib/state.mjs';
 import { paths } from '../lib/repo.mjs';
 
 const pad = (value, width) => String(value).padEnd(width);
 
-export async function doctorCommand({ log = console.log } = {}) {
+export async function doctorCommand({ root, log = console.log } = {}) {
   log(`Node ${process.version} on ${process.platform}\n`);
-  log(`${pad('harness', 16)}${pad('kind', 6)}${pad('status', 14)}detail`);
+  log(`${pad('harness', 16)}${pad('source', 10)}${pad('status', 12)}${pad('isolation', 11)}detail`);
   const rows = await Promise.all(
-    Object.values(ADAPTERS).map(async (adapter) => {
+    Object.values(loadAdapters(root)).map(async (adapter) => {
       const detected = await adapter.detect();
-      if (adapter.kind === 'cli') {
-        const where = resolveCommand({ 'claude-code': 'claude', codex: 'codex', 'command-code': 'cmdc', 'gemini-cli': 'gemini' }[adapter.name]);
-        return [adapter, detected.version ? 'ready' : 'not found', detected.version ? `v${detected.version} · ${where ? (where.prefix[0] || where.command) : ''}` : 'install the CLI and sign in'];
-      }
-      return [adapter, detected.credentials ? 'ready' : 'no key', detected.credentials ? `${adapter.key_env} set` : `set ${adapter.key_env}`];
+      const where = resolveCommand(adapter.bin);
+      const detail = detected.version ? `v${detected.version} · ${where ? where.prefix[0] || where.command : ''}` : `install "${adapter.bin}" and sign in`;
+      return [adapter, detected.version ? 'ready' : 'not found', adapter.isolation?.args.length ? 'partial' : 'none', detail];
     }),
   );
-  for (const [adapter, status, detail] of rows) log(`${pad(adapter.name, 16)}${pad(adapter.kind, 6)}${pad(status, 14)}${detail}`);
-  log('\nCLI harnesses use your own sign-in (subscription). Run each once interactively if a call fails with an auth error.');
+  for (const [adapter, status, isolation, detail] of rows) {
+    log(`${pad(adapter.name, 16)}${pad(adapter.declared ? 'declared' : 'built-in', 10)}${pad(status, 12)}${pad(isolation, 11)}${detail}`);
+  }
+  try {
+    for (const problem of readDeclared(root).problems) log(`configs/harnesses.yaml: ${problem}`);
+  } catch (error) {
+    log(`configs/harnesses.yaml: ${error.message}`);
+  }
+  log('\nEach harness uses your own sign-in. Run it once by hand if a call fails with an auth error.');
+  log('isolation: what "user_config: isolated" can keep out. partial = some of your setup still loads. none = all of it loads.');
+  log('Connect another CLI: add it to configs/harnesses.yaml.');
 }
 
 export function runsCommand(root, { log = console.log } = {}) {

@@ -46,6 +46,13 @@ function initTheme() {
 }
 
 function initNav() {
+  // A wrapped app bar is taller than 56px. Keep sticky rails, drawers and
+  // answer-grid height in sync rather than letting them slide under its tabs.
+  const bar = document.querySelector('.navbar');
+  const syncHeight = () => document.documentElement.style.setProperty('--bar-h', `${Math.ceil(bar.getBoundingClientRect().height)}px`);
+  syncHeight();
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(syncHeight).observe(bar);
+  else window.addEventListener('resize', syncHeight);
   document.querySelectorAll('.navbar nav a').forEach((a) => {
     a.addEventListener('click', (event) => {
       event.preventDefault();

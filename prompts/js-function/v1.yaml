@@ -1,0 +1,14 @@
+version: "1"
+messages:
+  - role: user
+    content: |
+      Write a JavaScript function named {{name}}.
+
+      Signature: {{signature}}
+      Behaviour: {{task}}
+
+      Rules:
+      - Reply in text only. Do not use tools, do not run code and do not create files.
+      - Reply with one ```js code block that defines the function {{name}}.
+      - Use plain JavaScript: no TypeScript, no imports, no require, no external packages.
+      - The function must not print anything.

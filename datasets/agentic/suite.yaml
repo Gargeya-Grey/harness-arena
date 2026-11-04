@@ -1,0 +1,10 @@
+id: agentic
+version: "1.0.2"
+description: >
+  Agent tasks. Each case copies a small starter project into the run's isolated
+  workdir; the agent edits files and may run commands there. The runner stores
+  the final workspace as evidence, and the workspace-tests evaluator runs a
+  hidden check against it in a sandboxed Node process. Score is the share of
+  hidden tests passed.
+defaults:
+  repeats: 3

@@ -1,0 +1,13 @@
+{
+  "probes": {
+    "two words": "hello-world",
+    "punctuation and spaces": "hello-world",
+    "digits": "top-10-tips",
+    "runs of dashes collapse": "a-b",
+    "only separators gives empty": "",
+    "underscores and dots separate": "file-name-v2"
+  },
+  "files": {
+    "test/slugify.test.mjs": { "same_as_starter": true }
+  }
+}

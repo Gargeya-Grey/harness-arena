@@ -20,13 +20,22 @@ export function humanizeModel(value) {
     .join(' ');
 }
 
-/** `<model_key>__<harness>-<version>__<effort or default>`; computed, never stored. */
-export function configId(modelKey, harness, effort) {
+/**
+ * `<model_key>__<harness>-<version>__<effort or default>`, plus `__isolated` when the
+ * harness ran without the user's own setup. Computed, never stored.
+ */
+export function configId(modelKey, harness, effort, userConfig = 'loaded') {
   return [
     safeSegment(modelKey),
     `${safeSegment(harness?.name)}-${safeSegment(harness?.version)}`,
     safeSegment(effort || 'default'),
+    ...(userConfig === 'isolated' ? ['isolated'] : []),
   ].join('__');
+}
+
+/** Runs written before the setting existed loaded the user's setup. */
+export function userConfigOf(manifest) {
+  return manifest?.harness?.settings?.user_config === 'isolated' ? 'isolated' : 'loaded';
 }
 
 export function contextKey(manifest, caseIds) {
@@ -53,6 +62,7 @@ export function comparisonMode(configs) {
   if (varies((c) => `${c.harness.name}@${c.harness.version}`)) axes.push('harness');
   if (varies((c) => c.effort || 'default')) axes.push('effort');
   if (varies((c) => `${c.params?.temperature ?? ''}|${c.params?.max_tokens ?? ''}`)) axes.push('decoding');
+  if (varies((c) => c.user_config || 'loaded')) axes.push('setup');
   if (!axes.length) return { mode: 'replicate', axes };
   return { mode: axes.length === 1 ? 'controlled' : 'descriptive', axes };
 }
@@ -63,12 +73,16 @@ function buildConfig(manifest, modelKey, raw, registry) {
   const harness = manifest.harness || {};
   const effort = entry.reasoning_effort || raw?.request?.params?.reasoning_effort || null;
   const displayName = registered.display_name || humanizeModel(entry.model || modelKey);
+  const userConfig = userConfigOf(manifest);
+  const setup = userConfig === 'isolated' ? ' · isolated' : '';
   return {
-    id: configId(modelKey, harness, effort),
+    id: configId(modelKey, harness, effort, userConfig),
     model_key: modelKey,
     display_name: displayName,
-    short_label: `${displayName} · ${harness.name || 'unknown'}${effort ? ` · ${effort}` : ''}`,
-    label: `${displayName} · ${harness.name || 'unknown'} ${harness.version || ''}${effort ? ` · ${effort}` : ''}`.replace(/\s+/g, ' ').trim(),
+    short_label: `${displayName} · ${harness.name || 'unknown'}${effort ? ` · ${effort}` : ''}${setup}`,
+    label: `${displayName} · ${harness.name || 'unknown'} ${harness.version || ''}${effort ? ` · ${effort}` : ''}${setup}`.replace(/\s+/g, ' ').trim(),
+    user_config: userConfig,
+    user_config_flags: harness.settings?.user_config_flags || [],
     provider: entry.provider || registered.provider || 'unknown',
     model: entry.model || registered.model || modelKey,
     harness: {

@@ -164,7 +164,8 @@ export function comparison(cfgs) {
   if (differs((c) => `${c.harness.name}@${c.harness.version}`)) axes.push('harness');
   if (differs((c) => c.effort ?? '')) axes.push('effort');
   if (differs(decodingOf)) axes.push('decoding');
-  if (axes.length === 0) return { mode: 'replicate', axes, text: 'Replicate', note: 'Same model, harness, effort and decoding.' };
+  if (differs((c) => c.user_config || 'loaded')) axes.push('setup');
+  if (axes.length === 0) return { mode: 'replicate', axes, text: 'Replicate', note: 'Same model, harness, effort, decoding and user setup.' };
   if (axes.length === 1) return { mode: 'controlled', axes, text: `Controlled: ${axes[0]}`, note: 'One axis differs. Other axes are held constant.' };
   return { mode: 'descriptive', axes, text: `Descriptive: ${axes.join(', ')}`, note: 'Causal claims are not supported.' };
 }

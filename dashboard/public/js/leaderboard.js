@@ -171,8 +171,7 @@ export function renderLeaderboard() {
     return;
   }
   const obsN = rows.reduce((s, r) => s + (r.agg ? r.agg.n || 0 : 0), 0);
-  note.textContent = `n = ${obsN} observations. Cost is API-equivalent and not billed.`;
-  const label = chartNames(rows.map((r) => r.cfg));
+  note.textContent = `n = ${obsN} observations. Cost is API-equivalent and not billed. Green = best in column.`;
   const shown = sortedRows(rows);
   const parts = verdictParts(rows);
   const allThin = parts.length > 0 && parts.every((p) => p.thin);
@@ -187,14 +186,14 @@ export function renderLeaderboard() {
     const aria = active ? (S.sort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
     const arrow = active ? (S.sort.dir === 'asc' ? '↑' : '↓') : '';
     const text = col.sub ? `${col.label} ${col.sub}` : col.label;
-    return html`<th scope="col" class="${col.text ? 'col-text' : 'col-num'}" aria-sort="${aria}">
+    return html`<th scope="col" class="${col.text ? 'col-text' : 'col-num'} metric-${col.key}" aria-sort="${aria}" aria-label="Sort by ${text}">
       <button type="button" class="th-sort" data-act="sort" data-key="${col.key}" data-fk="sort:${col.key}" aria-label="Sort by ${text}">${col.label}<span aria-hidden="true">${arrow}</span></button>
-      ${col.sub ? html`<span class="th-sub">${col.sub}</span>` : ''}
+      ${col.sub ? html`<span class="th-sub" aria-hidden="true">${col.sub}</span>` : ''}
     </th>`;
   });
   const body = shown.map((r) => html`<tr>
-    <th scope="row" class="row-head" data-label="Configuration"><div class="row-id"><span class="lt" aria-hidden="true">${letterOf(r.cfg.id)}</span><span><span class="cell-name" title="${label.get(r.cfg.id)}">${label.get(r.cfg.id)}</span><span class="cell-sub">${cfgShort(r.cfg)}</span></span></div></th>
-    ${COLUMNS.slice(1).map((col) => html`<td data-label="${col.label}${col.sub ? ` (${col.sub})` : ''}"${r.best[col.key] ? raw(' class="is-best"') : ''}>${CELLS[col.key](r)}${r.best[col.key] ? html`<span class="sr"> (best in column)</span>` : ''}</td>`)}
+    <th scope="row" class="row-head" data-label="Configuration"><div class="row-id"><span class="lt" aria-hidden="true">${letterOf(r.cfg.id)}</span><span><span class="cell-name">${r.cfg.display_name}</span><span class="cell-sub">${cfgShort(r.cfg)}</span></span></div></th>
+    ${COLUMNS.slice(1).map((col) => html`<td data-label="${col.label}${col.sub ? ` (${col.sub})` : ''}" class="col-num metric-${col.key}${r.best[col.key] ? ' is-best' : ''}">${CELLS[col.key](r)}${r.best[col.key] ? html`<span class="sr"> (best in column)</span>` : ''}</td>`)}
   </tr>`);
   const sortOptions = COLUMNS.map((col) => html`<option value="${col.key}"${sortKey === col.key ? raw(' selected') : ''}>${col.label}${col.sub ? ` (${col.sub})` : ''}</option>`);
   setHtml(

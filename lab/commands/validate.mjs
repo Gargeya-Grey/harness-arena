@@ -6,8 +6,9 @@ import path from 'node:path';
 import { listDirs, listFiles, readJson, readJsonl } from '../lib/fsutil.mjs';
 import { SchemaSet } from '../lib/schema.mjs';
 import { loadPrompt, loadRegistry, loadSuite, loadYamlFile, paths, resolveExperiment } from '../lib/repo.mjs';
-import { ADAPTERS } from '../adapters/index.mjs';
+import { harnessesFile, loadAdapters, readDeclared } from '../adapters/index.mjs';
 import { getEvaluator } from '../evaluators/index.mjs';
+import { listTree } from '../lib/workspace.mjs';
 
 export function validateRepo(root) {
   const p = paths(root);
@@ -18,15 +19,25 @@ export function validateRepo(root) {
   const report = (file, message) => problems.push(`${rel(file)}: ${message}`);
   const check = (schema, value, file) => schemas.validate(schema, value).forEach((error) => report(file, error));
 
+  let adapters = loadAdapters(null);
+  try {
+    readDeclared(root).problems.forEach((problem) => report(harnessesFile(root), problem));
+    adapters = loadAdapters(root);
+  } catch (error) {
+    report(harnessesFile(root), error.message);
+  }
+
   let registry = {};
   try {
     registry = loadRegistry(root);
     for (const [key, entry] of Object.entries(registry)) {
       if (!/^[a-z0-9][a-z0-9.-]*$/.test(key)) report(p.registry, `model_key "${key}" should be lowercase letters, digits, dots and dashes`);
       if (!entry.provider || !entry.model) report(p.registry, `${key}: needs provider and model`);
-      if (typeof entry.pricing?.input_per_1m !== 'number' || typeof entry.pricing?.output_per_1m !== 'number') report(p.registry, `${key}: pricing.input_per_1m and pricing.output_per_1m are required for cost`);
+      if (entry.pricing != null && (typeof entry.pricing.input_per_1m !== 'number' || typeof entry.pricing.output_per_1m !== 'number')) {
+        report(p.registry, `${key}: pricing needs both input_per_1m and output_per_1m, or leave pricing out`);
+      }
       for (const harness of Object.keys(entry.harness_models || {})) {
-        if (!ADAPTERS[harness]) report(p.registry, `${key}: harness_models names unknown harness "${harness}"`);
+        if (!adapters[harness]) report(p.registry, `${key}: harness_models names unknown harness "${harness}"`);
       }
     }
   } catch (error) {
@@ -47,6 +58,35 @@ export function validateRepo(root) {
         if (seen.has(item.case_id)) report(file, `duplicate case_id ${item.case_id}`);
         seen.add(item.case_id);
         if (!String(item.case_id).startsWith(`${name}-`)) report(file, `case_id ${item.case_id} should start with "${name}-"`);
+        const workspace = item.input?.workspace;
+        if (workspace != null) {
+          if (typeof workspace !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(workspace)) report(file, `line ${index + 1}: input.workspace must be a plain folder name`);
+          else if (!fs.existsSync(path.join(suite.dir, 'workspaces', workspace))) report(file, `line ${index + 1}: workspaces/${workspace} does not exist`);
+          else {
+            const others = [];
+            listTree(path.join(suite.dir, 'workspaces', workspace), undefined, others);
+            if (others.length) report(file, `line ${index + 1}: workspaces/${workspace} holds ${others.join(', ')}, which is not a regular file or folder`);
+          }
+        }
+        const checkName = item.expected?.check;
+        if (checkName != null) {
+          const checkDir = path.join(suite.dir, 'checks', String(checkName));
+          if (typeof checkName !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(checkName)) report(file, `line ${index + 1}: expected.check must be a plain folder name`);
+          else if (!fs.existsSync(path.join(checkDir, 'probe.mjs'))) report(file, `line ${index + 1}: checks/${checkName}/probe.mjs does not exist`);
+          else {
+            try {
+              const expected = readJson(path.join(checkDir, 'expected.json'));
+              const probes = expected?.probes ?? {};
+              const files = expected?.files ?? {};
+              if (typeof probes !== 'object' || Array.isArray(probes) || typeof files !== 'object' || Array.isArray(files)) report(file, `line ${index + 1}: checks/${checkName}/expected.json needs objects "probes" and "files"`);
+              else if (!Object.keys(probes).length && !Object.keys(files).length) report(file, `line ${index + 1}: checks/${checkName}/expected.json has no tests`);
+              for (const rel of Object.keys(files)) if (!/^[a-zA-Z0-9._-]+(\/[a-zA-Z0-9._-]+)*$/.test(rel) || rel.split('/').includes('..')) report(file, `line ${index + 1}: checks/${checkName}/expected.json file "${rel}" must be a plain relative path`);
+            } catch (error) {
+              report(file, `line ${index + 1}: checks/${checkName}/expected.json: ${error.message}`);
+            }
+          }
+          if (workspace == null) report(file, `line ${index + 1}: expected.check needs input.workspace`);
+        }
       });
     } catch (error) {
       report(path.join(p.datasets, name), error.message);
@@ -73,9 +113,14 @@ export function validateRepo(root) {
       const experiment = loadYamlFile(abs);
       const { targets, problems: targetProblems } = resolveExperiment(experiment, registry);
       targetProblems.forEach((message) => report(abs, message));
-      for (const target of targets) if (target.harness && !ADAPTERS[target.harness]) report(abs, `unknown harness "${target.harness}"; known: ${Object.keys(ADAPTERS).join(', ')}`);
+      for (const target of targets) if (target.harness && !adapters[target.harness]) report(abs, `unknown harness "${target.harness}"; known: ${Object.keys(adapters).join(', ')}`);
+      if (experiment.user_config != null && !['loaded', 'isolated'].includes(experiment.user_config)) report(abs, `user_config must be "loaded" or "isolated"`);
+      if (experiment.access != null && !['answer', 'edit'].includes(experiment.access)) report(abs, `access must be "answer" or "edit"`);
       const suite = suites.get(experiment.suite);
       if (!suite) report(abs, `suite "${experiment.suite}" not found`);
+      const usesWorkspace = suite && (experiment.cases || suite.cases.map((item) => item.case_id)).some((id) => suite.cases.find((entry) => entry.case_id === id)?.input?.workspace != null);
+      if ((experiment.access === 'edit' || usesWorkspace) && experiment.workdir === 'repo') report(abs, `workdir must be "isolated" when access is "edit" or a case has a workspace`);
+      if (usesWorkspace && experiment.access !== 'edit') report(abs, `access must be "edit": a case has a workspace, and without edit access the agent cannot change any file`);
       let prompt = null;
       try {
         prompt = loadPrompt(root, experiment.prompt, experiment.prompt_version);

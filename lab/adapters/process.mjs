@@ -22,9 +22,15 @@ export function resolveCommand(name) {
       const shim = path.join(dir, `${name}.cmd`);
       if (fs.existsSync(shim)) {
         const text = fs.readFileSync(shim, 'utf8');
-        const match = /"%dp0%\\([^"]+\.(?:m?js|cjs))"/i.exec(text);
-        if (match) {
-          found = { command: process.execPath, prefix: [path.join(dir, match[1])] };
+        const script = /"%dp0%\\([^"]+\.(?:m?js|cjs))"/i.exec(text);
+        if (script) {
+          found = { command: process.execPath, prefix: [path.join(dir, script[1])] };
+          break;
+        }
+        // A shim around a native binary (OpenCode 2.x). npm shims also name node.exe; skip it.
+        const binary = [...text.matchAll(/"%dp0%\\([^"]+\.exe)"/gi)].map((m) => m[1]).find((file) => !/(^|\\)node\.exe$/i.test(file));
+        if (binary) {
+          found = { command: path.join(dir, binary), prefix: [] };
           break;
         }
       }
@@ -59,7 +65,9 @@ export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, on
     let settled = false;
     const child = spawn(resolved.command, [...resolved.prefix, ...args], {
       cwd,
-      env: { ...process.env, ...env },
+      // spawn sets the real working folder but not PWD, and some CLIs (OpenCode on
+      // Windows) start their tools from PWD. Point it at cwd so the agent starts there.
+      env: { ...process.env, ...env, ...(cwd ? { PWD: path.resolve(cwd), INIT_CWD: path.resolve(cwd) } : {}) },
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });

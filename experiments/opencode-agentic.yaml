@@ -1,0 +1,24 @@
+id: opencode-agentic
+description: >
+  The agentic suite (agent tasks in starter projects, scored by hidden checks on the final files) through OpenCode, two free models.
+  Controlled: only the model differs. To compare other models, add
+  targets (each model key must be in configs/models.yaml).
+suite: agentic
+prompt: agent-task
+repeats: 3
+
+targets:
+  - model: beam-free
+    harness: opencode
+  - model: pulse-alpha-free
+    harness: opencode
+
+workdir: isolated
+user_config: isolated
+access: edit
+timeout_s: 900
+
+evaluators:
+  - id: workspace-tests
+    version: "1"
+    dimension: quality

@@ -1,19 +1,16 @@
 // Gemini CLI headless: `gemini -p <prompt> -o json`. It has no effort flag, so
 // a requested effort is reported as not applied.
 
-import { cliVersion, flattenMessages, lastJsonObject, runProcess, stderrError, stderrTail } from './process.mjs';
+import { defineCli } from './cli.mjs';
+import { lastJsonObject, stderrError, stderrTail } from './process.mjs';
 
 const BIN = 'gemini';
 
-export default {
+export default defineCli({
   name: 'gemini-cli',
-  kind: 'cli',
-  entrypoint: 'headless',
-  access_method: 'subscription',
-  supports_effort: false,
-  supports_decoding: false,
-
-  detect: async () => ({ version: await cliVersion(BIN) }),
+  bin: BIN,
+  supportsEffort: false,
+  edit: { args: ['--approval-mode', 'yolo'], note: 'Every tool, no approval prompts.' },
 
   args({ model, prompt }) {
     return ['-p', prompt, '-m', model, '-o', 'json', '--skip-trust'];
@@ -57,15 +54,4 @@ export default {
       extra: { thought_tokens: thoughts, models: Object.keys(models) },
     };
   },
-
-  async call({ model, messages, cwd, timeoutMs }) {
-    const { prompt } = flattenMessages(messages);
-    const run = await runProcess(BIN, this.args({ model, prompt }), { cwd, timeoutMs });
-    if (run.error) return { error: run.error, wall_ms: run.ms, events: [] };
-    return { ...this.parse(run), wall_ms: run.ms, stderr: run.stderr };
-  },
-
-  applied() {
-    return {};
-  },
-};
+});

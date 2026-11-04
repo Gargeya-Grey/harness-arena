@@ -2,15 +2,16 @@
 
 Orientation for anyone - human or agent - working in this repository.
 
-The repo runs the same test cases through different harnesses (coding CLIs and direct APIs) and models, then compares them side by side. Inputs (cases, prompts, model configs, experiments) are versioned; runs are immutable evidence; scores and reports are derived from runs. The CLI is `node lab`; it has no dependencies.
+The repo runs the same test cases through different CLI harnesses and models, using the owner's own sign-ins (no paid API calls), then compares them side by side. Inputs (cases, prompts, model configs, experiments) are versioned; runs are immutable evidence; scores and reports are derived from runs. The CLI is `node lab`; it has no dependencies.
 
 ## Vocabulary
 
 - **Suite** - a versioned set of test cases.
 - **Prompt version** - a frozen template that runs reference by id and version.
-- **Harness** - the program that makes the call: `claude-code`, `codex`, `command-code`, `gemini-cli`, or an `*-api` adapter.
+- **Harness** - the CLI that makes the call: built in (`claude-code`, `codex`, `command-code`, `gemini-cli`, `opencode`) or declared in `configs/harnesses.yaml`.
+- **User setup** - the owner's own harness configuration (global instructions, skills, MCP servers). An experiment sets `user_config: loaded` (default) or `isolated`; the run records the flags that kept it out.
 - **Target** - one model key through one harness, declared in an experiment.
-- **Configuration** - model + harness + harness version + effort; the unit the dashboard compares.
+- **Configuration** - model + harness + harness version + effort + user setup; the unit the dashboard compares.
 - **Experiment** - a declared comparison: suite, prompt, targets, repeats, evaluators.
 - **Run** - one execution of an experiment through one harness, stored under `results/<run_id>/`.
 - **Raw result** - one model response with latency, tokens, cost, and error.
@@ -20,14 +21,15 @@ The repo runs the same test cases through different harnesses (coding CLIs and d
 
 ```
 lab/cli.mjs               Entry point: node lab <command>
-lab/adapters/             One file per harness; index.mjs registers them
+lab/adapters/             cli.mjs is the one harness seam; one file per built-in harness; declared.mjs; index.mjs registers them
 lab/evaluators/index.mjs  Versioned evaluators
 lab/commands/             run, score, validate, doctor/runs/report
 lab/lib/                  yaml.mjs, schema.mjs (subsets), metrics.mjs, state.mjs (derived view)
 dashboard/server.mjs      Local server: /api/state, /api/artifact, annotations, boards
 dashboard/public/         Static UI, no build step
-configs/models.yaml       Model registry: exact id, params, pricing, harness_models
-datasets/<suite>/         suite.yaml + cases.jsonl (one case per line)
+configs/models.yaml       Model registry: exact id, params, optional pricing, harness_models
+configs/harnesses.yaml    CLI harnesses declared with no code
+datasets/<suite>/         suite.yaml + cases.jsonl (one case per line); agent suites add workspaces/ and checks/
 prompts/<prompt>/         prompt.yaml + frozen vN.yaml templates
 experiments/*.yaml        targets x suite x prompt x repeats x evaluators
 results/<run_id>/         Immutable run: run.json, raw.jsonl, scores/ (+ harness-events.ndjson, local only)
@@ -50,7 +52,7 @@ docs/dashboard-spec.md    Dashboard design: UI, data contract, visual system
 ## Invariants
 
 1. Treat `results/` as append-only evidence. A correction is a new run with a new `run_id`.
-2. Keep raw and derived separate: `raw.jsonl` holds model responses; scores and `reports/` are recomputed from it without new API calls.
+2. Keep raw and derived separate: `raw.jsonl` holds model responses; scores and `reports/` are recomputed from it without new model calls.
 3. Pin exact provider snapshots in `configs/models.yaml`. Give every params or effort variant its own `model_key`.
 4. Hold suite version, prompt version, evaluator versions, and decoding params constant within a comparison. Changing one means a new experiment and a new run.
 5. Reuse IDs exactly. `case_id` is `<suite>-<slug>`, `model_key` is a registry key, prompt versions are quoted strings (`"1"`). Never renumber or repurpose an ID.
@@ -66,6 +68,7 @@ docs/dashboard-spec.md    Dashboard design: UI, data contract, visual system
 1. Edit `datasets/<suite>/cases.jsonl`; keep `case_id` stable and unique.
 2. Bump `version` in `suite.yaml`.
 3. Give every case an `input` object matching the prompt's `variables`.
+4. For an agent task, set `input.workspace` to a folder in `datasets/<suite>/workspaces/` (the starter project) and `expected.check` to a folder in `datasets/<suite>/checks/` with `probe.mjs` (exports `probes: [{ name, run({ load }) }]`; each returns a value) and `expected.json` (`{ probes: { <name>: <value> }, files: { <path>: { exists, includes, same_as_starter } } }`). The agent never sees the check, and the sandbox never sees `expected.json`. Its experiment needs `access: edit` and `workdir: isolated`.
 
 Done when `node lab validate` passes.
 
@@ -79,11 +82,15 @@ Done when `node lab validate` passes and `node lab run <experiment> --dry-run` s
 
 ### Add a harness
 
-1. Copy the closest file in `lab/adapters/` (CLI: `codex.mjs`; API: `http-api.mjs`). Implement `detect`, `args` (CLI), `parse`, `call`, `applied`.
+First choice, no code: add an entry to `configs/harnesses.yaml` (the file documents every field). It covers a CLI that prints its answer as text, one JSON object, or JSON lines.
+
+A CLI that needs real parsing (answer spread over events, tool counts, usage summed over turns) gets a built-in adapter:
+
+1. Copy the closest file in `lab/adapters/` (`opencode.mjs` for JSON events). Give `defineCli` (`lab/adapters/cli.mjs`) a `bin`, `args`, `parse`, and, when the CLI has flags that skip the user setup, `isolation`.
 2. Register it in `lab/adapters/index.mjs`.
 3. Save one real output under `tests/fixtures/harness/` (remove local paths and private context) and add a parse test in `tests/adapters.test.mjs`.
 
-Done when `npm test` passes, `node lab doctor` lists it, and one live one-case run completes.
+Done when `npm test` and `node lab validate` pass, `node lab doctor` lists it as ready, and one live one-case run completes.
 
 ### Change a prompt
 

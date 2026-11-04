@@ -1,0 +1,5 @@
+id: agent-task
+current: "1"
+description: A coding task inside a starter project. The agent edits files in its working folder; a hidden check scores the result.
+variables:
+  - task

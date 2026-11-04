@@ -1,0 +1,5 @@
+id: reasoning-final-answer
+current: "1"
+description: One word problem; the reply may reason, then must end with an "Answer:" line (final-answer evaluator).
+variables:
+  - question

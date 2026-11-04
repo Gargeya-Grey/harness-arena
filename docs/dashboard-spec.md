@@ -296,8 +296,8 @@ Bind to `127.0.0.1` only. Reject requests with a non-local `Host` header. No ext
 - ≥1024px: the rail is a sticky 288px column.
 - <1024px: the rail collapses behind a "Lineup · N of 8 selected" toggle above the view.
 - ≥1200px: the inspector docks at 520px. While it is open the rail is hidden, so the view keeps its width. Below 1200px it is a drawer.
-- <900px: the app bar wraps; the view tabs take their own row.
-- The page never scrolls sideways. Wide tables scroll inside their own frame with a sticky first column.
+- <1120px: view tabs take their own row; below 900px the context picker also takes its own row. The action group never shrinks over the tabs.
+- The page never scrolls sideways. Tables respond to the workspace width (including when the inspector is docked), not just the viewport. Below 920px the leaderboard and answers become labeled record blocks; the leaderboard preserves every metric. Wider answers grids scroll inside their own frame with a sticky case column and a visible scroll hint for more than four configurations.
 
 ### 6.2 App bar and page head
 
@@ -324,7 +324,7 @@ Bind to `127.0.0.1` only. Reject requests with a non-local `Host` header. No ext
 **Overview**
 
 - KPI band: Best quality, Fastest p50, Lowest cost per pass, Error rate. Each tile shows the value, the winner's letter and name, and `n`. A tie shows every tied letter and "N-way tie". A missing count prints nothing, never NaN.
-- Leaderboard: one row per lineup entry. Quality with its 95% interval, pass rate, errors, p50, p95, cost, cost per pass, tokens. Best cells are marked; a findings box above states the winners and says when intervals overlap.
+- Leaderboard: one row per lineup entry. Quality with its 95% interval, pass rate, errors, p50, p95, cost, cost per pass, tokens. Numeric headers and values align right. Best cells are marked, with a visible green-value key; a findings box above states the winners and says when intervals overlap. On narrow workspaces each configuration becomes a labeled block with all eight metrics and the same sort control.
 - The quality-against-cost and latency charts.
 
 **Answers**
@@ -335,7 +335,7 @@ Bind to `127.0.0.1` only. Reject requests with a non-local `Host` header. No ext
 
 **Charts**
 
-1. Quality against cost: one point per configuration, 95% whiskers when `n >= 3`, log cost scale when the spread is wide. Labels are a letter badge plus the name, placed to avoid collisions; on a narrow plot the letter alone.
+1. Quality against cost: one point per configuration, 95% whiskers when `n >= 3`, log cost scale when the spread is wide. Letter callouts avoid points and confidence whiskers; a full-name legend sits below the plot and is included in SVG exports. Row charts wrap model and harness onto separate lines rather than truncating identities.
 2. Latency: p50 dot and p95 ring per configuration; toggle harness end-to-end or model request. Successful calls only.
 3. Tokens per call: input, cache read and output as small multiples, each on its own scale.
 4. Reliability: agreement across repeats of the same case.
@@ -345,11 +345,11 @@ Every chart card shows its `n`, a caption, and SVG and CSV exports.
 
 **Runs**
 
-- One row per run: start time, experiment and run id, harness, models, rows, errors, status. Status filter. A line states whether every record validates.
+- One row per run: start time, experiment, harness, models, rows, errors, status. Each experiment has an expandable Run details section containing the full run id, harness and models. Below 1000px of workspace, harness and models move into these details so status and counts remain visible; below 640px the rows stack with labels. Status filter. A line states whether every record validates.
 
 **Review**
 
-- Pick a case and start a blind review (§6.7).
+- Pick a case and start a blind review (§6.7). With no ratings, the start controls and actionable empty state sit side by side on wide workspaces, stacked on narrow ones.
 
 ### 6.6 Inspector
 
@@ -405,7 +405,7 @@ Every surface ships with:
 - **Error:** what failed, the file or endpoint, and a recovery action.
 - **No results:** charts explain the missing sample and offer to widen the context.
 - **Partial data:** explicit "not run", "unscored", and "failed" marks.
-- **Overflow:** long model names wrap; numbers use tabular figures; tables scroll horizontally with a sticky first column.
+- **Overflow:** long model names wrap with harness/version on a separate line; numbers use tabular figures and never truncate. Tables reflow as described in §6.1; wider comparisons scroll inside their own frame.
 - **Disabled:** incompatible configurations explain why on focus and hover.
 
 ### 6.11 Accessibility

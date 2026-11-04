@@ -79,3 +79,31 @@ test('CLI args never pass the prompt through a shell and pin the model', () => {
   const codex = getAdapter('codex').args({ model: 'gpt-6-luna', effort: 'low', cwd: '/tmp/x' });
   assert.ok(codex.includes('read-only'), 'codex runs in a read-only sandbox');
 });
+
+test('opencode: parses text, sums usage over steps, counts tools', () => {
+  const plain = getAdapter('opencode').parse({ stdout: fixture('opencode.stdout.jsonl'), stderr: '', code: 0 });
+  assert.equal(plain.error, null);
+  assert.equal(plain.text, '4');
+  assert.deepEqual(plain.usage, { input_tokens: 9164, output_tokens: 45, cache_read_tokens: 1600, cache_write_tokens: 0 });
+  assert.equal(plain.session_id, 'ses_e597f69bdffemk05t3rPBQ0EW1');
+  assert.equal(plain.finish_reason, 'stop');
+
+  const tools = getAdapter('opencode').parse({ stdout: fixture('opencode.tool.stdout.jsonl'), stderr: '', code: 0 });
+  assert.equal(tools.text, 'hello', 'the answer is the last message, not a tool round');
+  assert.equal(tools.tool_calls, 2);
+  assert.equal(tools.turn_count, 3);
+  assert.deepEqual(tools.usage, { input_tokens: 27714, output_tokens: 176, cache_read_tokens: 19968, cache_write_tokens: 0 });
+});
+
+test('opencode: an error event is a typed error, not an answer', () => {
+  const out = getAdapter('opencode').parse({ stdout: fixture('opencode.error.stdout.jsonl'), stderr: '', code: 1 });
+  assert.equal(out.text, null);
+  assert.deepEqual(out.error, { type: 'provider.no-route', message: 'Model unavailable: opencode/no-such-model' });
+});
+
+test('opencode: private server, provider/model#effort, prompt as one argument', () => {
+  const args = getAdapter('opencode').args({ model: 'openai/gpt-6-luna', effort: 'low', prompt: 'a "quoted"\nprompt' });
+  assert.deepEqual(args, ['run', '--standalone', '--format', 'json', '-m', 'openai/gpt-6-luna#low', '--', 'a "quoted"\nprompt']);
+  assert.equal(getAdapter('opencode').args({ model: 'opencode/beam-free', prompt: '-x' })[5], 'opencode/beam-free');
+  assert.deepEqual(getAdapter('opencode').args({ model: 'm', prompt: '-x' }).slice(-2), ['--', '-x'], 'a prompt that starts with a dash is never a flag');
+});

@@ -1,0 +1,8 @@
+id: reasoning
+version: "1.0.0"
+description: >
+  Short word problems with one checkable answer: arithmetic, rates, logic, dates
+  and counting. Several are classic traps where the first intuition is wrong.
+  A number answer is compared as a number; a word answer after normalising.
+defaults:
+  repeats: 3

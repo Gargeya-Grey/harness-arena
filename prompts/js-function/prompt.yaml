@@ -1,0 +1,7 @@
+id: js-function
+current: "1"
+description: Write one JavaScript function; the js-function evaluator runs it against hidden tests.
+variables:
+  - name
+  - signature
+  - task

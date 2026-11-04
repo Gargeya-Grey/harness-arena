@@ -1,0 +1,29 @@
+id: agentic-sweep
+description: >
+  The agentic suite through four harnesses, one model each. The agents may edit
+  files and run commands inside the run's isolated workdir (access: edit). The
+  final workspace is stored and a hidden check scores it. Descriptive: model and
+  harness both vary.
+suite: agentic
+prompt: agent-task
+repeats: 3
+
+targets:
+  - model: claude-haiku-5.5
+    harness: claude-code
+  - model: gpt-6-luna-low
+    harness: codex
+  - model: deepseek-v4.1-flash-max
+    harness: command-code
+  - model: beam-free
+    harness: opencode
+
+workdir: isolated
+user_config: isolated
+access: edit
+timeout_s: 900
+
+evaluators:
+  - id: workspace-tests
+    version: "1"
+    dimension: quality

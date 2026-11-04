@@ -1,0 +1,44 @@
+# Connect any CLI harness here, with no code. Built-in harnesses (claude-code, codex,
+# command-code, gemini-cli, opencode) live in lab/adapters/ and need no entry.
+# After you add one, `node lab doctor` lists it and `node lab validate` checks it.
+#
+# Fields
+#   bin             Command name on PATH. It is spawned without a shell.
+#   version_args    Optional. Default [--version]; the output must hold a version number.
+#   args            Argument list. Placeholders: {model}, {effort}, {cwd}, {prompt}.
+#                   "{prompt}" must be a whole argument. Put "--" before it when the CLI
+#                   accepts that, so a prompt that starts with "-" is never a flag.
+#                   Leave it out and set stdin: true to send the prompt on stdin instead.
+#                   Quote numbers ("3"): every argument is a string.
+#   stdin           Optional. true = the prompt goes on stdin.
+#   effort_args     Optional. Appended when the model entry sets reasoning_effort.
+#   isolation_args  Optional. Appended when the experiment sets user_config: isolated:
+#                   flags that keep your own settings, skills or MCP servers out of the call.
+#   isolation_note  Optional. What isolation_args keep out, and what still loads.
+#   edit_args       Optional. Appended when the experiment sets access: edit (agent tasks):
+#                   flags that let the CLI edit files and run commands without prompts.
+#   edit_note       Optional. What edit_args allow.
+#   output          text (stdout is the answer) | json (one object) | jsonl (one event per line).
+#   result          For json and jsonl: dotted paths into the result object.
+#     where         jsonl only: the last line whose fields match, e.g. { type: result }.
+#     text          Required for json and jsonl: the answer.
+#     input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, session_id,
+#     cost_usd, error   Optional.
+#
+# Example (commented out; the CLI is made up):
+#
+# harnesses:
+#   my-cli:
+#     bin: mycli
+#     args: [run, --json, --model, "{model}", "{prompt}"]
+#     effort_args: [--effort, "{effort}"]
+#     output: jsonl
+#     result:
+#       where: { type: result }
+#       text: result
+#       input_tokens: usage.input_tokens
+#       output_tokens: usage.output_tokens
+#       session_id: session_id
+#       error: error
+
+harnesses: {}

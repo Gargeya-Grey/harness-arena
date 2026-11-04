@@ -1,22 +1,21 @@
-// OpenAI Codex CLI: `codex exec --json`, read-only sandbox, prompt on stdin.
+// OpenAI Codex CLI: `codex exec --json`, prompt on stdin. Read-only sandbox, or
+// workspace-write for agent tasks (access: edit).
 
-import { cliVersion, flattenMessages, jsonLines, runProcess, stderrError, stderrTail } from './process.mjs';
+import { defineCli } from './cli.mjs';
+import { jsonLines, stderrError, stderrTail } from './process.mjs';
 
 const BIN = 'codex';
 const TOOL_ITEMS = new Set(['command_execution', 'mcp_tool_call', 'web_search', 'file_change', 'tool_call']);
 
-export default {
+export default defineCli({
   name: 'codex',
-  kind: 'cli',
-  entrypoint: 'headless',
-  access_method: 'subscription',
-  supports_effort: true,
-  supports_decoding: false,
+  bin: BIN,
+  supportsEffort: true,
+  edit: { args: ['-s', 'workspace-write'], note: 'Codex sandbox workspace-write: writes inside the call folder and, by Codex defaults, the temp folder.' },
+  stdin: ({ prompt }) => prompt,
 
-  detect: async () => ({ version: await cliVersion(BIN) }),
-
-  args({ model, effort, cwd, persist }) {
-    const args = ['exec', '--json', '--skip-git-repo-check', '-s', 'read-only', '--color', 'never', '-m', model];
+  args({ model, effort, cwd, persist, access }) {
+    const args = ['exec', '--json', '--skip-git-repo-check', ...(access === 'edit' ? [] : ['-s', 'read-only']), '--color', 'never', '-m', model];
     if (effort) args.push('-c', `model_reasoning_effort="${effort}"`);
     if (cwd) args.push('-C', cwd);
     if (!persist) args.push('--ephemeral');
@@ -71,15 +70,4 @@ export default {
       extra: { reasoning_output_tokens: usage?.reasoning_output_tokens ?? null },
     };
   },
-
-  async call({ model, messages, effort, cwd, timeoutMs, persist = false }) {
-    const { prompt } = flattenMessages(messages);
-    const run = await runProcess(BIN, this.args({ model, effort, cwd, persist }), { cwd, input: prompt, timeoutMs });
-    if (run.error) return { error: run.error, wall_ms: run.ms, events: [] };
-    return { ...this.parse(run), wall_ms: run.ms, stderr: run.stderr };
-  },
-
-  applied({ effort }) {
-    return effort ? { reasoning_effort: effort } : {};
-  },
-};
+});
