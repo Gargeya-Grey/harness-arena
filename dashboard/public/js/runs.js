@@ -22,17 +22,20 @@ export function renderRuns() {
       const badStatus = r.status !== 'completed';
       return html`<tr>
         <td data-label="Started"><button type="button" class="link-btn" data-act="open-run" data-run="${r.run_id}" data-fk="run:${r.run_id}" aria-label="Open run from ${dateTime(r.created_at)}, ${r.experiment_id || r.run_id}"><time class="mono" datetime="${r.created_at}">${dateTime(r.created_at)}</time></button></td>
-        <td data-label="Experiment">${r.experiment_id || html`<span class="muted">none</span>`}<span class="cell-sub mono">${r.run_id}</span></td>
-        <td data-label="Harness">${r.harness ? html`${r.harness.name} <span class="mono">${r.harness.version}</span>` : html`<span class="muted">unknown</span>`}</td>
-        <td data-label="Models">${(r.models || []).join(', ') || html`<span class="muted">none</span>`}</td>
-        <td data-label="Rows"><span class="num${incomplete ? ' bad' : ''}">${r.rows} / ${r.expected_rows}</span></td>
-        <td data-label="Errors"><span class="num${r.errors ? ' bad' : ''}">${r.errors}</span></td>
-        <td data-label="Status"><span class="pill${badStatus ? ' is-bad' : ''}">${r.status}</span></td>
+        <td data-label="Experiment">${r.experiment_id || html`<span class="muted">none</span>`}
+          <details class="run-details"><summary>Run details<span class="sr"> for ${r.run_id}</span></summary>
+            <dl><dt>Run ID</dt><dd class="mono">${r.run_id}</dd><dt>Harness</dt><dd>${r.harness ? html`${r.harness.name} <span class="mono">${r.harness.version}</span>` : 'unknown'}</dd><dt>Models</dt><dd>${(r.models || []).join(', ') || 'none'}</dd></dl>
+          </details></td>
+        <td data-label="Harness" class="run-harness">${r.harness ? html`${r.harness.name} <span class="mono">${r.harness.version}</span>` : html`<span class="muted">unknown</span>`}</td>
+        <td data-label="Models" class="run-models">${(r.models || []).join(', ') || html`<span class="muted">none</span>`}</td>
+        <td data-label="Rows" class="col-num"><span class="num${incomplete ? ' bad' : ''}">${r.rows} / ${r.expected_rows}</span></td>
+        <td data-label="Errors" class="col-num"><span class="num${r.errors ? ' bad' : ''}">${r.errors}</span></td>
+        <td data-label="Status" class="run-status"><span class="pill${badStatus ? ' is-bad' : ''}">${r.status}</span></td>
       </tr>`;
     });
     table = html`<div class="runs-wrap" role="region" aria-label="Runs table" tabindex="0"><table class="ledger ledger-runs">
       <caption class="sr">All runs, newest first</caption>
-      <thead><tr><th scope="col">Started (UTC)</th><th scope="col">Experiment</th><th scope="col">Harness</th><th scope="col">Models</th><th scope="col" class="col-num">Rows</th><th scope="col" class="col-num">Errors</th><th scope="col">Status</th></tr></thead>
+      <thead><tr><th scope="col">Started (UTC)</th><th scope="col">Experiment</th><th scope="col" class="run-harness">Harness</th><th scope="col" class="run-models">Models</th><th scope="col" class="col-num">Rows</th><th scope="col" class="col-num">Errors</th><th scope="col" class="run-status">Status</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;
   }
   const prob = problems.length

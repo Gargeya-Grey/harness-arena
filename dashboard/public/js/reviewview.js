@@ -61,6 +61,6 @@ export function renderReviewView() {
         <caption class="sr">Human ratings for this context, newest first</caption>
         <thead><tr><th scope="col">When (UTC)</th><th scope="col">Case</th><th scope="col">Configuration</th><th scope="col" class="col-num">Rating</th><th scope="col">Pairwise</th><th scope="col">Notes</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`
-    : html`<div class="empty">No ratings for this context yet.</div>`;
-  setHtml(host, html`${start}${table}`);
+    : html`<div class="empty review-empty"><strong>No ratings for this context yet.</strong><p>${cases.length ? 'Choose a case and start a blind review. Your saved ratings and notes will appear here, separate from machine scores.' : 'Add configurations with answers to the lineup to begin reviewing.'}</p></div>`;
+  setHtml(host, html`<div class="review-workspace${list.length ? '' : ' is-empty'}"><div class="review-start">${start}</div>${table}</div>`);
 }

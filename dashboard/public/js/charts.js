@@ -46,12 +46,14 @@ function wrap(text, maxChars) {
   return lines;
 }
 
-// Cut a label to a width, with an ellipsis. The full text goes into a <title>.
-function fit(text, maxW, mono = false) {
-  const s = String(text);
-  const per = mono ? MONO : CHAR;
-  const max = Math.max(1, Math.floor(maxW / per));
-  return s.length <= max ? s : `${s.slice(0, Math.max(1, max - 1))}…`;
+// Full identities on separate lines: model first, then harness/effort. Never
+// truncate two configurations of the same model to an indistinguishable name.
+function identityLines(c, name, maxW) {
+  const model = c.display_name || name;
+  const detail = name.startsWith(`${model} · `) ? name.slice(model.length + 3) : c.harness.name;
+  const maxChars = Math.max(8, Math.floor((maxW - BADGE) / CHAR));
+  const breakLong = (text) => String(text).replace(/(\S{8,})/g, (word) => word.match(new RegExp(`.{1,${maxChars}}`, 'gu')).join(' '));
+  return [model, detail].flatMap((s) => wrap(breakLong(s), maxChars));
 }
 
 const svgStart = (w, h, label) => `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(label)}">`;
@@ -61,18 +63,30 @@ const line = (x1, y1, x2, y2, cls) => `<line x1="${x1.toFixed(1)}" y1="${y1.toFi
 // The letter badge, drawn with its top-left corner at (x, y).
 const badge = (x, y, letter) => `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="19" height="19" rx="5" class="chart-lt-bg"/>${t(x + 9.5, y + 13.4, 'chart-lt', letter || '?', 'middle')}`;
 
-// One configuration label: badge and name on a baseline at y, cut to maxW.
+// One configuration label, wrapping at word boundaries to its allotted width.
 function nameLabel(x, y, c, name, maxW, best = false) {
-  const shown = fit(name, Math.max(30, maxW - BADGE));
-  return `<g>${shown !== name ? `<title>${esc(name)}</title>` : ''}${badge(x, y - 14, letterOf(c.id))}${t(x + BADGE, y, best ? 'chart-text chart-best' : 'chart-text', shown)}</g>`;
+  const lines = identityLines(c, name, maxW);
+  return `<g class="chart-identity">${badge(x, y - 14, letterOf(c.id))}${lines.map((s, i) => t(x + BADGE, y + i * LH, best ? 'chart-text chart-best' : 'chart-text', s)).join('')}</g>`;
 }
 
 // Row-chart frame. Wide: label column then plot. Narrow: label on its own line above the plot.
 function frame(w, valueW = 0) {
-  const stacked = w < 480;
-  const labelW = stacked ? 0 : clamp(Math.round(w * 0.3), 150, 230);
+  const stacked = w < 620 || w - valueW < 420;
+  const labelW = stacked ? 0 : clamp(Math.round(w * 0.34), 200, 280);
   const px = stacked ? 0 : labelW + 16;
   return { stacked, labelW, px, pw: Math.max(60, w - px - valueW - (valueW ? 12 : 0)) };
+}
+
+function rowLayout(rows, labelW, extra, minHeight = 0) {
+  let height = 0;
+  const layout = rows.map((r) => {
+    const labelH = identityLines(r.c, r.name, labelW).length * LH;
+    const y = height;
+    const h = Math.max(minHeight, labelH + extra);
+    height += h;
+    return { y, h, labelH };
+  });
+  return { layout, height };
 }
 
 function emptyChart(message) {
@@ -124,7 +138,8 @@ function drawScatter(w, cfgs, names) {
   const bestCost = bestItems.length ? Math.min(...bestItems.map((i) => i.a.mean_cost_usd)) : null;
   const best = new Set(bestItems.filter((i) => i.a.mean_cost_usd === bestCost).map((i) => i.c.id));
 
-  let g = svgStart(w, h, `Quality against mean cost per observation for ${items.length} configurations`);
+  const legend = rowLayout(items, w, 12);
+  let g = svgStart(w, h + 16 + legend.height, `Quality against mean cost per observation for ${items.length} configurations`);
   g += t(0, 11, 'chart-axis-text', 'quality');
   [0, 0.25, 0.5, 0.75, 1].forEach((v) => {
     g += line(m.l, yOf(v), w - m.r, yOf(v), 'chart-line');
@@ -135,18 +150,17 @@ function drawScatter(w, cfgs, names) {
     g += line(x, m.t + ph, x, m.t + ph + 4, 'chart-line-dark');
     g += t(x, m.t + ph + 18, 'chart-axis-text', `$${v.toFixed(tickD)}`, x < m.l + 24 ? 'start' : x > w - 30 ? 'end' : 'middle');
   });
-  g += t(w - m.r, h - 4, 'chart-axis-text', `mean cost per observation, USD${logScale ? ', log scale' : ''}`, 'end');
+  g += t(w - m.r, h - 4, 'chart-axis-text', `Mean cost / observation (USD${logScale ? ', log' : ''})`, 'end');
 
-  // Labels: badge then name. Try right and left, then shift up and down, until a spot touches no other label or mark.
-  // A narrow plot has no room for names: the letter alone marks each point, as in the lineup.
-  const compact = pw < 340;
-  const maxChars = Math.floor(clamp(pw * 0.42, 110, 220) / CHAR);
-  const marks = items.map((i) => ({ x: xOf(i.a.mean_cost_usd) - 7, y: yOf(i.a.mean_quality) - 7, w: 14, h: 14 }));
+  // Keep names in the legend, outside the plotting area. Callout letters avoid
+  // both points AND the full confidence whiskers, not just the point centres.
+  const marks = items.map((i) => {
+    const q = i.a.quality_ci || [i.a.mean_quality, i.a.mean_quality];
+    return { x: xOf(i.a.mean_cost_usd) - 7, y: Math.min(yOf(q[1]), yOf(i.a.mean_quality)) - 7, w: 14, h: Math.abs(yOf(q[0]) - yOf(q[1])) + 14 };
+  });
   const hit = (a, b, pad = 3) => a.x < b.x + b.w + pad && b.x < a.x + a.w + pad && a.y < b.y + b.h + pad && b.y < a.y + a.h + pad;
   const blocks = items.map((i, k) => {
-    const lines = compact ? [] : wrap(i.name, maxChars);
-    const bw = compact ? BADGE - 6 : BADGE + Math.max(...lines.map((s) => textW(s)));
-    return { i, k, lines, bw, bh: Math.max(20, lines.length * LH + 3), px: xOf(i.a.mean_cost_usd), py: yOf(i.a.mean_quality) };
+    return { i, k, bw: 20, bh: 20, px: xOf(i.a.mean_cost_usd), py: yOf(i.a.mean_quality) };
   });
   blocks.sort((a, b) => a.py - b.py || a.px - b.px);
   const placed = [];
@@ -185,14 +199,12 @@ function drawScatter(w, cfgs, names) {
     const isBest = best.has(b.i.c.id);
     const cy = b.rect.y + b.bh / 2;
     const edge = b.right ? b.rect.x : b.rect.x + b.rect.w;
-    if (Math.abs(cy - b.py) > 6) g += line(b.px + (b.right ? 5 : -5), b.py, b.right ? edge - 3 : edge + 3, cy, 'chart-line-dark');
+    g += line(b.px + (b.right ? 5 : -5), b.py, b.right ? edge - 3 : edge + 3, cy, 'chart-line-dark');
     g += `<circle cx="${b.px.toFixed(1)}" cy="${b.py.toFixed(1)}" r="5" class="${isBest ? 'chart-mark-best' : 'chart-mark'}"/>`;
-    const top = cy - (Math.max(1, b.lines.length) * LH) / 2;
-    g += badge(b.rect.x, top + LH * 0.8 - 14, letterOf(b.i.c.id));
-    b.lines.forEach((s, k) => {
-      g += t(b.rect.x + BADGE, top + LH * 0.8 + k * LH, isBest ? 'chart-text chart-best' : 'chart-text', s);
-    });
+    g += `<g class="chart-callout">${badge(b.rect.x, b.rect.y, letterOf(b.i.c.id))}</g>`;
   });
+
+  items.forEach((i, k) => { g += nameLabel(0, h + 30 + legend.layout[k].y, i.c, i.name, w, best.has(i.c.id)); });
 
   g += '</svg>';
   return { svg: g, meta, note: 'Whiskers show the 95% interval of mean quality when a configuration has 3 or more scored observations. Up and to the left is better.' };
@@ -216,9 +228,8 @@ function drawLatency(w, cfgs, names) {
   if (!have.length) return { ...emptyChart(model ? 'No model request times. This harness did not report them; switch to harness end-to-end.' : 'No latency data for the selected configurations.'), meta };
   const maxV = Math.max(...have.map((r) => (isNum(r.p95) ? r.p95 : r.p50)));
   const f = frame(w);
-  const rowH = f.stacked ? 56 : 44;
-  const plotY = f.stacked ? 40 : 22; // centre of the dot line inside a row
-  const h = rows.length * rowH + 26;
+  const { layout, height } = rowLayout(rows, f.stacked ? w : f.labelW, f.stacked ? 62 : 34);
+  const h = height + 26;
   const ticks = linearTicks(maxV * 1.05, Math.max(2, Math.floor(f.pw / 90)));
   const top = ticks[ticks.length - 1] || 1;
   const xOf = (v) => f.px + (v / top) * f.pw;
@@ -227,23 +238,23 @@ function drawLatency(w, cfgs, names) {
   let g = svgStart(w, h, `${model ? 'Model request' : 'Harness end-to-end'} latency, p50 to p95, per configuration`);
   ticks.forEach((v) => {
     const x = xOf(v);
-    g += line(x, 0, x, rows.length * rowH, 'chart-line');
-    g += t(x, rows.length * rowH + 17, 'chart-axis-text', v === 0 ? '0 s' : msText(v), v === 0 ? 'start' : x > w - 30 ? 'end' : 'middle');
+    g += line(x, 0, x, height, 'chart-line');
+    g += t(x, height + 17, 'chart-axis-text', v === 0 ? '0 s' : msText(v), v === 0 ? 'start' : x > w - 30 ? 'end' : 'middle');
   });
   rows.forEach((r, k) => {
-    const y = k * rowH;
+    const { y, labelH } = layout[k];
     const isBest = bestP50 !== null && !allEqual && r.p50 === bestP50;
     const values = isNum(r.p50) ? `p50 ${msText(r.p50)} · p95 ${isNum(r.p95) ? msText(r.p95) : NA}` : (model ? 'not reported' : 'no successful calls');
     if (f.stacked) {
-      g += nameLabel(0, y + 16, r.c, r.name, w - textW(values, true) - 12, isBest);
-      g += t(w, y + 16, 'chart-num', values, 'end');
+      g += nameLabel(0, y + 16, r.c, r.name, w, isBest);
+      g += t(BADGE, y + labelH + 18, 'chart-num', values);
     } else {
       g += nameLabel(0, y + 18, r.c, r.name, f.labelW, isBest);
-      g += t(BADGE, y + 34, 'chart-num', values);
+      g += t(BADGE, y + labelH + 18, 'chart-num', values);
     }
     if (!isNum(r.p50)) return;
     const hi = isNum(r.p95) ? r.p95 : r.p50;
-    const cy = y + plotY;
+    const cy = f.stacked ? y + labelH + 40 : y + labelH / 2;
     g += line(xOf(r.p50), cy, xOf(hi), cy, isBest ? 'chart-range-best' : 'chart-range');
     // The p95 ring goes first, so a p50 dot close to it stays visible on top.
     if (hi !== r.p50) g += `<circle cx="${xOf(hi).toFixed(1)}" cy="${cy}" r="5" class="${isBest ? 'chart-ring-best' : 'chart-ring'}"/>`;
@@ -277,15 +288,15 @@ function drawTokens(w, cfgs, names) {
   };
   let g;
   if (f.stacked) {
-    const blockH = 26 + metrics.length * 22 + 8;
+    const { layout, height } = rowLayout(rows, w, metrics.length * 22 + 18);
     const lw = 76;
     const vw = 56;
-    g = svgStart(w, rows.length * blockH, 'Mean input, cache read and output tokens per call, each on its own scale');
+    g = svgStart(w, height, 'Mean input, cache read and output tokens per call, each on its own scale');
     rows.forEach((r, k) => {
-      const y = k * blockH;
+      const { y, labelH } = layout[k];
       g += nameLabel(0, y + 16, r.c, r.name, w);
       metrics.forEach((mt, j) => {
-        const by = y + 26 + j * 22;
+        const by = y + labelH + 12 + j * 22;
         const v = r.a ? r.a[mt.key] : null;
         g += t(0, by + 11, 'chart-axis-text', mt.label);
         g += bar(lw, by + 4, Math.max(30, w - lw - vw - 8), v, mt.key);
@@ -294,14 +305,14 @@ function drawTokens(w, cfgs, names) {
     });
   } else {
     const headH = 22;
-    const rowH = 40;
+    const { layout, height } = rowLayout(rows, f.labelW, 18);
     const gap = 18;
     const colW = (w - f.px - gap * (metrics.length - 1)) / metrics.length;
-    g = svgStart(w, headH + rows.length * rowH, 'Mean input, cache read and output tokens per call, each on its own scale');
+    g = svgStart(w, headH + height, 'Mean input, cache read and output tokens per call, each on its own scale');
     metrics.forEach((mt, j) => { g += t(f.px + j * (colW + gap), 12, 'chart-axis-text', mt.label); });
     g += line(0, headH - 4, w, headH - 4, 'chart-line');
     rows.forEach((r, k) => {
-      const y = headH + k * rowH;
+      const y = headH + layout[k].y;
       g += nameLabel(0, y + 24, r.c, r.name, f.labelW);
       metrics.forEach((mt, j) => {
         const x = f.px + j * (colW + gap);
@@ -327,16 +338,16 @@ function drawReliability(w, cfgs, names) {
   if (!rows.length) return { ...emptyChart('No configurations selected.'), meta };
   const valueW = 48;
   const f = frame(w, valueW);
-  const rowH = f.stacked ? 46 : 34;
+  const { layout, height } = rowLayout(rows, f.stacked ? w : f.labelW, f.stacked ? 36 : 18);
   const top = firm.length > 1 ? Math.max(...firm.map((r) => r.a.reliability_agreement)) : null;
   const allEqual = firm.every((r) => r.a.reliability_agreement === firm[0].a.reliability_agreement);
-  let g = svgStart(w, rows.length * rowH, 'Agreement across repeats per configuration');
+  let g = svgStart(w, height, 'Agreement across repeats per configuration');
   rows.forEach((r, k) => {
-    const y = k * rowH;
+    const { y, labelH } = layout[k];
     const ok = firm.includes(r);
     const isBest = ok && top !== null && !allEqual && r.a.reliability_agreement === top;
-    const by = f.stacked ? y + 26 : y + 12;
-    g += nameLabel(0, f.stacked ? y + 16 : y + 21, r.c, r.name, f.stacked ? w - valueW : f.labelW, isBest);
+    const by = f.stacked ? y + labelH + 14 : y + labelH / 2;
+    g += nameLabel(0, y + 16, r.c, r.name, f.stacked ? w : f.labelW, isBest);
     if (ok) {
       const v = clamp(r.a.reliability_agreement, 0, 1);
       g += `<rect x="${f.px}" y="${by}" width="${f.pw.toFixed(1)}" height="8" rx="4" class="chart-track"/>`;
@@ -366,14 +377,14 @@ function drawErrors(w, cfgs, names) {
   const countText = (r) => `${r.ok} scored · ${r.err} error · ${r.uns} unscored`;
   const valueW = Math.ceil(Math.max(...rows.map((r) => textW(countText(r), true)))) + 8;
   const f = frame(w, valueW);
-  const rowH = f.stacked ? 46 : 34;
-  let g = svgStart(w, rows.length * rowH, 'Outcome counts per configuration: scored, error, unscored');
+  const { layout, height } = rowLayout(rows, f.stacked ? w : f.labelW, f.stacked ? 58 : 18);
+  let g = svgStart(w, height, 'Outcome counts per configuration: scored, error, unscored');
   g += '<defs><pattern id="hatch-uns" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="5" height="5" class="chart-hatch-bg"/><line x1="0" y1="0" x2="0" y2="5" class="chart-hatch-line"/></pattern></defs>';
   rows.forEach((r, k) => {
-    const y = k * rowH;
-    const by = f.stacked ? y + 26 : y + 11;
+    const { y, labelH } = layout[k];
+    const by = f.stacked ? y + labelH + 34 : y + labelH / 2;
     const bw = f.stacked ? w : f.pw;
-    g += nameLabel(0, f.stacked ? y + 16 : y + 21, r.c, r.name, f.stacked ? w - valueW : f.labelW);
+    g += nameLabel(0, y + 16, r.c, r.name, f.stacked ? w : f.labelW);
     g += `<rect x="${f.px}" y="${by}" width="${bw.toFixed(1)}" height="10" rx="3" class="chart-track"/>`;
     if (r.total > 0) {
       let x = f.px;
@@ -387,7 +398,7 @@ function drawErrors(w, cfgs, names) {
       seg(r.err, 'chart-error');
       seg(r.uns, 'chart-hatch-rect', ' fill="url(#hatch-uns)"');
     }
-    g += `<text x="${w}" y="${f.stacked ? y + 16 : y + 21}" class="chart-num" text-anchor="end">${r.ok} scored · <tspan class="${r.err ? 'chart-num chart-error-text' : 'chart-num'}">${r.err} error</tspan> · ${r.uns} unscored</text>`;
+    g += `<text x="${f.stacked ? 0 : w}" y="${f.stacked ? y + labelH + 18 : y + labelH / 2 + 9}" class="chart-num" text-anchor="${f.stacked ? 'start' : 'end'}">${r.ok} scored · <tspan class="${r.err ? 'chart-num chart-error-text' : 'chart-num'}">${r.err} error</tspan> · ${r.uns} unscored</text>`;
   });
   g += '</svg>';
   const legend = html`<div class="chart-legend"><span><span class="swatch"></span>scored</span><span><span class="swatch swatch-error"></span>error</span><span><span class="swatch swatch-unscored"></span>unscored</span></div>`;

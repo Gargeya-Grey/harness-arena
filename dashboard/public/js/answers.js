@@ -77,15 +77,17 @@ export function renderAnswers() {
     <span class="toolbar-count">Showing <span class="num">${rows.length}</span> of <span class="num">${allCases.length}</span> · <span class="num">${diffCount}</span> differ</span>
   </div>`;
 
-  const head = cfgs.map((x) => html`<th scope="col" class="col-cfg"><div class="row-id"><span class="lt" aria-hidden="true">${letterOf(x.id)}</span><span><span class="cell-name" title="${names.get(x.id)}">${names.get(x.id)}</span><span class="cell-sub">${cfgShort(x)}</span></span></div></th>`);
+  const identity = (x) => html`<div class="row-id"><span class="lt" aria-hidden="true">${letterOf(x.id)}</span><span><span class="cell-name">${x.display_name}</span><span class="cell-sub">${cfgShort(x)}</span></span></div>`;
+  const head = cfgs.map((x) => html`<th scope="col" class="col-cfg">${identity(x)}</th>`);
   const body = rows.map((caseId) => {
     const k = caseOf(caseId);
     const exp = k ? asText(k.expected) : '';
     const cells = cfgs.map((x) => {
       const list = filterRep(cellObs(caseId, x.id), S.rep);
       const label = names.get(x.id);
-      if (!list.length) return html`<td class="cell-none" data-label="${label}"><span class="cell-none-text">not run</span></td>`;
-      return html`<td data-label="${label}"><div class="strip">${list.map((o) => chipHtml(o, label, caseId))}</div>${excerpt(list)}</td>`;
+      const mobileHead = html`<div class="answer-identity">${identity(x)}</div>`;
+      if (!list.length) return html`<td class="cell-none" data-label="${label}">${mobileHead}<span class="cell-none-text">not run</span></td>`;
+      return html`<td data-label="${label}">${mobileHead}<div class="strip">${list.map((o) => chipHtml(o, label, caseId))}</div>${excerpt(list)}</td>`;
     });
     return html`<tr>
       <th scope="row" class="case-cell row-head" data-label="Case">
@@ -100,8 +102,8 @@ export function renderAnswers() {
   setHtml(
     host,
     html`${toolbar}${rows.length
-      ? html`<div class="grid-wrap" role="region" aria-label="Answers grid" tabindex="0">
-        <table class="ledger ledger-grid" style="--grid-min:${300 + cfgs.length * 230}px">
+      ? html`${cfgs.length > 4 ? html`<p class="table-hint label">Wide comparisons scroll horizontally. The case column stays in view.</p>` : ''}<div class="grid-wrap" role="region" aria-label="Answers grid" tabindex="0">
+        <table class="ledger ledger-grid" style="--grid-min:${210 + cfgs.length * 175}px">
           <caption class="sr">Answers by case (rows) and configuration (columns). Each cell lists every repeat as a button that opens the inspector, then the text of one answer.</caption>
           <thead><tr><th scope="col" class="case-col">Case, question, expected</th>${head}</tr></thead>
           <tbody>${body}</tbody>
