@@ -199,6 +199,9 @@ export function createJobs(root, { cliPath = CLI, env = process.env } = {}) {
       child,
       stops: 0,
     };
+    job.ended = new Promise((resolve) => {
+      job.resolveEnd = resolve;
+    });
     const onData = (key) => (chunk) => {
       const text = job.partial[key] + chunk;
       const cut = text.lastIndexOf('\n');
@@ -223,6 +226,7 @@ export function createJobs(root, { cliPath = CLI, env = process.env } = {}) {
       job.ended_at = isoNow();
       delete job.child;
       if (current === job) current = null;
+      job.resolveEnd();
     };
     child.on('error', (error) => done(null, error));
     child.on('close', (code) => done(code));
@@ -243,7 +247,7 @@ export function createJobs(root, { cliPath = CLI, env = process.env } = {}) {
     if (!job) throw Object.assign(new Error('No such job'), { status: 404 });
     if (!job.child) return summary(job);
     job.stops += 1;
-    if (job.command === 'run' && job.stops === 1) {
+    if (job.command === 'run' && !job.dry_run && job.stops === 1) {
       job.status = 'stopping';
       job.child.stdin.write('cancel\n');
     } else {
@@ -264,9 +268,18 @@ export function createJobs(root, { cliPath = CLI, env = process.env } = {}) {
     return { running: current ? current.id : null, jobs: [...jobs.values()].reverse().map(summary) };
   }
 
-  function shutdown() {
-    for (const job of jobs.values()) if (job.child) stop(job.id);
+  // Asks the running job to stop (a run finishes its current call) and resolves when it
+  // has ended. With now = true it ends the process tree at once.
+  function shutdown({ now = false } = {}) {
+    const live = [...jobs.values()].filter((job) => job.child);
+    for (const job of live) {
+      if (now) {
+        job.stops += 1;
+        killTree(job.child);
+      } else if (!job.stops) stop(job.id);
+    }
+    return Promise.all(live.map((job) => job.ended));
   }
 
-  return { start, stop, get, list, shutdown };
+  return { start, stop, get, list, shutdown, running: () => (current ? summary(current) : null) };
 }

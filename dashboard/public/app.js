@@ -33,6 +33,8 @@ function initTheme() {
   try {
     const saved = localStorage.getItem('theme');
     if (saved === 'light' || saved === 'dark') root.setAttribute('data-theme', saved);
+    // Inside the control page's Compare frame, start dark like the page around it.
+    else if (window.self !== window.top) root.setAttribute('data-theme', 'dark');
   } catch (e) { /* storage refused: the system setting applies */ }
   btn.addEventListener('click', () => {
     const next = shown() === 'dark' ? 'light' : 'dark';

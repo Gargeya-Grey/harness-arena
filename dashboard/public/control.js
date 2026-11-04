@@ -236,7 +236,12 @@ function watch(panel, id) {
   renderPanel(panel);
   pullLines(id).then(() => renderPanel(panel));
 }
-async function pullLines(id) {
+const pulling = new Map();
+function pullLines(id) {
+  if (!pulling.has(id)) pulling.set(id, fetchLines(id).finally(() => pulling.delete(id)));
+  return pulling.get(id);
+}
+async function fetchLines(id) {
   const cache = S.lines.get(id) || { next: 0, lines: [] };
   S.lines.set(id, cache);
   const data = await api('GET', `/api/jobs/${encodeURIComponent(id)}?since=${cache.next}`);
@@ -313,11 +318,14 @@ const renderAllPanels = () => Object.keys(S.panels).forEach(renderPanel);
 
 /* ---------- Polling ---------- */
 let timer = null;
+let polling = false;
 function schedule(ms) {
   clearTimeout(timer);
   timer = setTimeout(poll, ms);
 }
 async function poll() {
+  if (polling) return;
+  polling = true;
   try {
     const before = new Map(S.jobs.map((j) => [j.id, j.status]));
     const list = await api('GET', '/api/jobs');
@@ -350,6 +358,7 @@ async function poll() {
       paintRunCard(true);
     }
   }
+  polling = false;
   schedule(document.hidden ? 60000 : S.running ? 1000 : 4000);
 }
 document.addEventListener('visibilitychange', () => !document.hidden && schedule(0));
@@ -481,7 +490,7 @@ function pickExp() {
   const chips = [
     `<span class="chip muted">suite ${esc(e.suite)}</span>`,
     `<span class="chip muted">prompt ${esc(e.prompt)}</span>`,
-    `<span class="chip muted">${plural(e.repeats, 'repeat')}</span>`,
+    `<span class="chip muted">${esc(plural(e.repeats, 'repeat'))}</span>`,
     e.access === 'edit' ? '<span class="chip warn">agent task: edit access</span>' : '',
     `<span class="chip ${e.user_config === 'isolated' ? '' : 'muted'}">user setup ${esc(e.user_config)}</span>`,
   ].join('');
@@ -509,14 +518,17 @@ function chosenTargets() {
   if (!e) return [];
   return (e.targets || []).filter((t) => (!S.sel.harness || t.harness === S.sel.harness) && (!S.sel.models.size || S.sel.models.has(t.model)));
 }
+const repeatsOk = () => S.sel.repeats === '' || (Number.isInteger(Number(S.sel.repeats)) && Number(S.sel.repeats) >= 1 && Number(S.sel.repeats) <= 50);
 function countCalls() {
   const e = currentExp();
   if (!e) return 0;
   const cases = S.sel.cases.size || (e.cases || e.case_ids || []).length;
-  const repeats = Number(S.sel.repeats) || e.repeats || 1;
+  const repeats = S.sel.repeats === '' ? e.repeats || 1 : Number(S.sel.repeats);
   const targets = chosenTargets().length;
   const calls = targets * cases * repeats;
-  $('call-count').textContent = targets
+  $('call-count').textContent = !repeatsOk()
+    ? 'Repeats must be a whole number from 1 to 50.'
+    : targets
     ? `This run makes ${plural(calls, 'call')}: ${plural(targets, 'target')} × ${plural(cases, 'case')} × ${plural(repeats, 'repeat')}.`
     : 'No target matches this harness and these models.';
   disarm();
@@ -524,7 +536,7 @@ function countCalls() {
   return calls;
 }
 function syncRunButtons() {
-  const none = !chosenTargets().length;
+  const none = !chosenTargets().length || !repeatsOk();
   $('start-btn').disabled = none || Boolean(S.running);
   $('preview-btn').disabled = none || Boolean(S.running);
 }
@@ -553,7 +565,7 @@ document.addEventListener('click', (e) => {
   countCalls();
 });
 $('repeats').addEventListener('input', (e) => {
-  S.sel.repeats = e.target.value;
+  S.sel.repeats = e.target.value.trim();
   countCalls();
 });
 function runBody(dry) {
@@ -646,7 +658,14 @@ function renderHarnesses() {
       <div class="row-ctl"><span class="chip ${r.isolation === 'partial' ? '' : 'muted'}">isolation ${esc(r.isolation)}</span><span class="sr">${r.ready ? 'Ready' : 'Not found'}</span></div></li>`).join('');
     return;
   }
-  $('harness-note').textContent = doc ? 'Check finished; see the output' : 'Not checked yet';
+  // Another panel may hold an empty cache for this job, so compare line counts.
+  if (doc && (S.lines.get(doc.id)?.next ?? 0) < doc.lines) {
+    pullLines(doc.id).then(() => {
+      renderHarnesses();
+      renderMeters();
+    }).catch(() => {});
+  }
+  $('harness-note').textContent = doc ? 'Reading the last check' : 'Not checked yet';
   list.innerHTML = (S.catalog?.harnesses || []).map((h) => `<li class="row"><span class="mark-s" aria-hidden="true"></span><div class="row-text"><h3>${esc(h.name)} <span class="chip muted">${h.declared ? 'declared' : 'built-in'}</span></h3><p>Not checked yet</p></div></li>`).join('');
 }
 $('doctor-btn').addEventListener('click', async () => {
@@ -761,8 +780,6 @@ $('motion-seg').addEventListener('click', (e) => {
 async function init() {
   document.querySelectorAll('select[data-custom]').forEach(enhanceSelect);
   renderAppearance();
-  // Compare opens in dark mode to match this page, unless its own toggle chose light.
-  if (!readPref('theme', '')) writePref('theme', 'dark');
   showView(location.hash.slice(1) || 'home', { instant: true });
   document.fonts?.ready.then(() => moveNavPill(true));
   try {
@@ -775,5 +792,6 @@ async function init() {
   await Promise.all([loadCatalog().catch((error) => toast(`Could not read the experiments: ${error.message}`, 'err')), loadState()]);
   await poll();
   renderCheckTags();
+  renderHarnesses();
 }
 init();

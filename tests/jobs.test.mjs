@@ -125,7 +125,8 @@ test('a dry-run job shows the plan, calls nothing and writes no run', async () =
 });
 
 test('one job at a time; the first stop of a run asks on stdin, the second ends the process', async () => {
-  const first = await request(fakePort, 'POST', '/api/jobs', { body: { command: 'run', experiment: 'smoke-opencode.yaml', dry_run: true } });
+  // The stand-in CLI ignores its arguments, so this "live" run calls nothing.
+  const first = await request(fakePort, 'POST', '/api/jobs', { body: { command: 'run', experiment: 'smoke-opencode.yaml' } });
   assert.equal(first.status, 202);
   const busy = await request(fakePort, 'POST', '/api/jobs', { body: { command: 'validate' } });
   assert.equal(busy.status, 409);
@@ -163,4 +164,45 @@ test('under LAB_JOB the CLI still exits on its own while stdin stays open', asyn
     });
   });
   assert.equal(code, 0);
+});
+
+test('a live run stopped once finishes its current call through the real CLI and keeps the run as failed', async () => {
+  // A declared harness that answers after 3 s: no model, no quota.
+  fs.writeFileSync(
+    path.join(root, 'configs', 'harnesses.yaml'),
+    ['harnesses:', '  slow-cli:', '    bin: node', `    args: ["-e", "setTimeout(() => console.log('Paris'), 3000)"]`, '    stdin: true', '    output: text', ''].join('\n'),
+  );
+  fs.writeFileSync(
+    path.join(root, 'experiments', 'slow-test.yaml'),
+    ['id: slow-test', 'suite: smoke', 'prompt: qa-single-turn', 'repeats: 3', 'targets:', '  - model: beam-free', '    harness: slow-cli', 'evaluators:', '  - id: exact-match', '    version: "1"', '    dimension: quality', ''].join('\n'),
+  );
+  const res = await request(port, 'POST', '/api/jobs', { body: { command: 'run', experiment: 'slow-test.yaml' } });
+  assert.equal(res.status, 202, JSON.stringify(res.json));
+  const id = res.json.job.id;
+  const runLine = /^(\d{8}T\d{6}Z__smoke__slow-test__\w+)$/;
+  let runId = null;
+  for (let i = 0; i < 100 && !runId; i += 1) {
+    await new Promise((r) => setTimeout(r, 100));
+    const { lines } = (await request(port, 'GET', `/api/jobs/${id}`)).json;
+    runId = lines.map((l) => runLine.exec(l.trim())?.[1]).find(Boolean) || null;
+  }
+  assert.ok(runId, 'the run started');
+  const stop = await request(port, 'POST', `/api/jobs/${id}/cancel`, { body: {} });
+  assert.equal(stop.json.job.status, 'stopping');
+  const end = await waitForEnd(port, id, 30000);
+  assert.equal(end.job.status, 'stopped', end.lines.join('\n'));
+  assert.ok(end.lines.some((l) => l.includes('Stopping after the current call')));
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'results', runId, 'run.json'), 'utf8'));
+  assert.equal(manifest.status, 'failed');
+  const rows = fs.readFileSync(path.join(root, 'results', runId, 'raw.jsonl'), 'utf8').trim().split('\n');
+  assert.ok(rows.length >= 1 && rows.length < 12, `${rows.length} rows`);
+});
+
+test('a dry run stops at once: it has no current call to finish', async () => {
+  const res = await request(fakePort, 'POST', '/api/jobs', { body: { command: 'run', experiment: 'smoke-opencode.yaml', dry_run: true } });
+  assert.equal(res.status, 202);
+  const stop = await request(fakePort, 'POST', `/api/jobs/${res.json.job.id}/cancel`, { body: {} });
+  assert.notEqual(stop.json.job.status, 'stopping');
+  const end = await waitForEnd(fakePort, res.json.job.id, 15000);
+  assert.equal(end.job.status, 'stopped');
 });

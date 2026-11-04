@@ -305,7 +305,8 @@ export function createServer({ root = labRoot(), jobOptions } = {}) {
       if (!res.headersSent) sendJson(res, error.status || 500, { error: error.message || 'Internal server error' });
     }
   });
-  server.on('close', () => jobs.shutdown());
+  // A server closed in code (tests) leaves no job behind.
+  server.on('close', () => jobs.shutdown({ now: true }));
   server.jobs = jobs;
   return server;
 }
@@ -316,7 +317,20 @@ export function startServer({ port = Number(process.env.PORT || 4317), root = la
     console.log(`Model Lab dashboard: http://${HOST}:${port}`);
     console.log(`Data root: ${root}`);
   });
-  const stop = () => server.close(() => process.exit(0));
+  // A running job keeps its output pipe until it ends, so a run can finish its current
+  // call and write run.json. A second Ctrl+C ends it now.
+  let stopping = false;
+  const stop = () => {
+    if (stopping) {
+      server.jobs.shutdown({ now: true }).then(() => process.exit(1));
+      return;
+    }
+    stopping = true;
+    const job = server.jobs.running();
+    if (job) console.log(`Stopping "${job.label}" after its current call. Press Ctrl+C again to stop it now.`);
+    server.jobs.shutdown().then(() => server.close(() => process.exit(0)));
+    server.closeIdleConnections?.();
+  };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
   return server;
