@@ -17,6 +17,17 @@ node lab run experiments/smoke-harness-sweep.yaml # calls every target; writes r
 node lab dashboard                                # http://127.0.0.1:4317
 ```
 
+### Run from the browser
+
+`node lab dashboard` opens the control page at `http://127.0.0.1:4317`. From there you run everything without a terminal:
+
+- **Run**: pick an experiment, then a harness, models, cases and repeats. Preview shows the plan and calls nothing. Start asks once (`Start N calls?`), then runs and shows the live output. Stop lets the current call finish and keeps the run.
+- **Runs**: every stored run. Score again makes no model calls.
+- **Compare**: the comparison views (also at `/compare.html`).
+- **Harnesses**, **Checks**, **Activity**: `doctor`; `validate`, `report`, `runs`; the output of every job.
+
+The page runs the same `node lab` commands you would type, one at a time, on this machine only. It accepts no other command.
+
 A smaller first run is one case and one repeat:
 
 ```bash
@@ -52,7 +63,7 @@ To add any other model that OpenCode reaches (`opencode models` lists them), add
 | `node lab validate` | Checks every input and stored record against `schemas/`. |
 | `node lab runs` | Lists runs, newest first. |
 | `node lab report [--write]` | Prints a Markdown comparison per context, or writes `reports/comparison.md`. |
-| `node lab dashboard [--port n]` | Starts the local dashboard. |
+| `node lab dashboard [--port n]` | Starts the local control page and comparison dashboard. |
 | `npm test` | Runs the test suite (`tests/*.test.mjs`). |
 
 ## Harnesses
@@ -114,7 +125,7 @@ lab/                       The CLI: run, score, validate, doctor, runs, report
   adapters/                One file per built-in harness on one seam (cli.mjs); declared.mjs reads configs/harnesses.yaml
   evaluators/              Versioned scorers (exact-match, normalized-match, final-answer, js-function, svg-structure)
   lib/                     YAML and JSON Schema subsets, metrics, derived state
-dashboard/                 Local comparison UI: server.mjs + public/ (static, no build)
+dashboard/                 Local UI: server.mjs, jobs.mjs (runs lab commands), public/ (control page + compare, static, no build)
 configs/models.yaml        Model registry: exact id, params, optional pricing, per-harness ids
 configs/harnesses.yaml     Extra CLI harnesses, declared with no code
 datasets/<suite>/          suite.yaml + cases.jsonl

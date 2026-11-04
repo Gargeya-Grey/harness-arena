@@ -1,6 +1,6 @@
 // Local-only dashboard server. Serves dashboard/public and a read-only index of
-// results/ at /api/state. The only writes are human annotations (append-only)
-// and saved boards.
+// results/ at /api/state. It writes human annotations (append-only) and saved boards,
+// and starts allowlisted `node lab` commands as jobs (dashboard/jobs.mjs).
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -11,9 +11,17 @@ import { buildState } from '../lab/lib/state.mjs';
 import { labRoot, paths } from '../lab/lib/repo.mjs';
 import { SchemaSet } from '../lab/lib/schema.mjs';
 import { appendJsonl, isoNow, resolveInside, safeSegment, writeJson } from '../lab/lib/fsutil.mjs';
+import { catalog, createJobs } from './jobs.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 const HOST = '127.0.0.1';
+const VERSION = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version || null;
+  } catch {
+    return null;
+  }
+})();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -123,8 +131,9 @@ function serveFile(req, res, abs, extraHeaders = {}) {
   fs.createReadStream(abs).on('error', () => res.destroy()).pipe(res);
 }
 
-export function createServer({ root = labRoot() } = {}) {
+export function createServer({ root = labRoot(), jobOptions } = {}) {
   const p = paths(root);
+  const jobs = createJobs(root, jobOptions);
   const schemas = new SchemaSet(p.schemas);
   const annotationFile = path.join(p.annotations, 'human@1.jsonl');
 
@@ -253,7 +262,7 @@ export function createServer({ root = labRoot() } = {}) {
     sendJson(res, 200, { deleted: path.basename(file, '.json') });
   }
 
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     try {
       const host = req.headers.host || '';
       if (!/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(host)) {
@@ -266,9 +275,23 @@ export function createServer({ root = labRoot() } = {}) {
         const refused = refuseCrossSite(req);
         if (refused) return sendJson(res, refused[0], { error: refused[1] });
       }
-      if (route === 'GET /api/health') return sendJson(res, 200, { ok: true, root: path.basename(root), generated_at: isoNow() });
+      if (route === 'GET /api/health') return sendJson(res, 200, { ok: true, root: path.basename(root), version: VERSION, generated_at: isoNow() });
       if (route === 'GET /api/state') return sendJson(res, 200, buildState(root));
       if (route === 'GET /api/artifact') return serveArtifact(req, res, url);
+      if (route === 'GET /api/catalog') return sendJson(res, 200, catalog(root));
+      if (route === 'GET /api/jobs') return sendJson(res, 200, jobs.list());
+      if (route === 'POST /api/jobs') {
+        const body = await readJsonBody(req);
+        try {
+          return sendJson(res, 202, { job: jobs.start(body) });
+        } catch (error) {
+          if (error.job) return sendJson(res, error.status, { error: error.message, job: error.job });
+          throw error;
+        }
+      }
+      const jobRoute = /^\/api\/jobs\/([\w-]{1,64})(\/cancel)?$/.exec(url.pathname);
+      if (jobRoute && req.method === 'GET' && !jobRoute[2]) return sendJson(res, 200, jobs.get(jobRoute[1], url.searchParams.get('since')));
+      if (jobRoute && req.method === 'POST' && jobRoute[2]) return sendJson(res, 202, { job: jobs.stop(jobRoute[1]) });
       if (route === 'POST /api/annotations') return await postAnnotation(req, res);
       if (route === 'POST /api/boards') return await postBoard(req, res);
       if (req.method === 'DELETE' && url.pathname.startsWith('/api/boards/')) {
@@ -282,6 +305,10 @@ export function createServer({ root = labRoot() } = {}) {
       if (!res.headersSent) sendJson(res, error.status || 500, { error: error.message || 'Internal server error' });
     }
   });
+  // A server closed in code (tests) leaves no job behind.
+  server.on('close', () => jobs.shutdown({ now: true }));
+  server.jobs = jobs;
+  return server;
 }
 
 export function startServer({ port = Number(process.env.PORT || 4317), root = labRoot() } = {}) {
@@ -290,7 +317,20 @@ export function startServer({ port = Number(process.env.PORT || 4317), root = la
     console.log(`Model Lab dashboard: http://${HOST}:${port}`);
     console.log(`Data root: ${root}`);
   });
-  const stop = () => server.close(() => process.exit(0));
+  // A running job keeps its output pipe until it ends, so a run can finish its current
+  // call and write run.json. A second Ctrl+C ends it now.
+  let stopping = false;
+  const stop = () => {
+    if (stopping) {
+      server.jobs.shutdown({ now: true }).then(() => process.exit(1));
+      return;
+    }
+    stopping = true;
+    const job = server.jobs.running();
+    if (job) console.log(`Stopping "${job.label}" after its current call. Press Ctrl+C again to stop it now.`);
+    server.jobs.shutdown().then(() => server.close(() => process.exit(0)));
+    server.closeIdleConnections?.();
+  };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
   return server;

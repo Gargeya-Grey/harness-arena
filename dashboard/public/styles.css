@@ -1,5 +1,5 @@
 /* Model Lab. A dense comparison workspace: tinted lineup rail, white work canvas, hairlines over boxes.
-   Colour tokens and the two typefaces come from the owner's house style; the rest is this app's own. */
+   Light colours come from the owner's house style. Dark colours match the Odicto Forest theme of the control page. */
 :root {
   --paper: #F6F7F4; --paper-raised: #FFFFFF; --sage: #E2EDE6;
   --ink: #14201C; --ink-2: #53615B; --rule: #DDE2DC;
@@ -22,10 +22,10 @@
 :root[data-theme="light"] { color-scheme: light; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --paper: #0E1412; --paper-raised: #151D1A; --sage: #17261F;
-    --ink: #ECEFEA; --ink-2: #A3B0AA; --rule: #26302C;
+    --paper: #0f1311; --paper-raised: #17191c; --sage: #26312c;
+    --ink: #e7e5df; --ink-2: #b2b5b5; --rule: #2a302d;
     --forest: #ECEFEA; --on-forest: #0E1412;
-    --leaf-ink: #3DDC9F; --clay: #E5866B; --focus: var(--leaf);
+    --leaf-ink: #8edcbb; --clay: #f2a39b; --focus: #8edcbb;
     --backdrop: rgba(0, 0, 0, .6);
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 12px 32px rgba(0, 0, 0, .45);
     --hover: color-mix(in srgb, var(--sage) 80%, transparent);
@@ -34,10 +34,10 @@
   }
 }
 :root[data-theme="dark"] {
-  --paper: #0E1412; --paper-raised: #151D1A; --sage: #17261F;
-  --ink: #ECEFEA; --ink-2: #A3B0AA; --rule: #26302C;
+  --paper: #0f1311; --paper-raised: #17191c; --sage: #26312c;
+  --ink: #e7e5df; --ink-2: #b2b5b5; --rule: #2a302d;
   --forest: #ECEFEA; --on-forest: #0E1412;
-  --leaf-ink: #3DDC9F; --clay: #E5866B; --focus: var(--leaf);
+  --leaf-ink: #8edcbb; --clay: #f2a39b; --focus: #8edcbb;
   --backdrop: rgba(0, 0, 0, .6);
   --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 12px 32px rgba(0, 0, 0, .45);
   --hover: color-mix(in srgb, var(--sage) 80%, transparent);
