@@ -4,134 +4,209 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Model Lab</title>
-<meta name="description" content="Compare model configurations side by side: model, harness, harness version and reasoning effort.">
+<meta name="description" content="Run test cases through your own harnesses and models, then compare the answers.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/fonts/fonts.css">
-<link rel="stylesheet" href="/styles.css">
-<script type="module" src="/app.js"></script>
+<link rel="stylesheet" href="/control.css">
+<script src="/boot.js"></script>
+<script type="module" src="/control.js"></script>
 </head>
 <body>
-<header class="navbar">
-  <div class="brand">
-    <svg class="brand-mark" width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><rect width="22" height="22" rx="6" class="brand-bg"/><rect x="5" y="11" width="3" height="6" rx="1" class="brand-fg"/><rect x="9.5" y="5" width="3" height="12" rx="1" class="brand-fg"/><rect x="14" y="8" width="3" height="9" rx="1" class="brand-fg"/></svg>
-    <span class="bar-name">Model Lab</span>
-  </div>
-  <div class="ctx-pick">
-    <label class="sr" for="ctx-select">Comparison context: suite, prompt, cases, repeats</label>
-    <select id="ctx-select" disabled><option>Loading contexts</option></select>
-  </div>
-  <nav aria-label="Views"><ul>
-    <li><a href="#overview" id="nav-overview" data-view="overview">Overview</a></li>
-    <li><a href="#answers" id="nav-answers" data-view="answers">Answers</a></li>
-    <li><a href="#charts" id="nav-charts" data-view="charts">Charts</a></li>
-    <li><a href="#runs" id="nav-runs" data-view="runs">Runs</a></li>
-    <li><a href="#review" id="nav-review" data-view="review">Review</a></li>
-  </ul></nav>
-  <div class="bar-actions" id="ctx-actions">
-    <button type="button" class="icon-btn" id="refresh" data-act="refresh" aria-label="Refresh data" title="Read the results folder again">
-      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" class="ico"/></svg>
-    </button>
-    <button type="button" class="btn-quiet" id="export-btn" data-act="export-menu" aria-haspopup="true" aria-expanded="false" aria-controls="export-menu" disabled>
-      Export<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" class="ico"/></svg>
-    </button>
-    <button type="button" class="icon-btn theme" id="theme-toggle" aria-label="Switch to dark mode">
-      <svg class="ico-moon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 9.6A5.5 5.5 0 0 1 6.4 3a5.5 5.5 0 1 0 6.6 6.6Z" class="ico"/></svg>
-      <svg class="ico-sun" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" class="ico"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1" class="ico"/></svg>
-    </button>
-  </div>
-</header>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/></symbol>
+  <symbol id="i-run" viewBox="0 0 24 24"><path d="M7 4.5v15a.8.8 0 0 0 1.2.7l12-7.5a.8.8 0 0 0 0-1.4l-12-7.5A.8.8 0 0 0 7 4.5z"/></symbol>
+  <symbol id="i-runs" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></symbol>
+  <symbol id="i-compare" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+  <symbol id="i-harness" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="m6 10 3 2-3 2M11 15h6"/></symbol>
+  <symbol id="i-checks" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M2 12h3l3-8 4 16 3-8h7"/></symbol>
+  <symbol id="i-appearance" viewBox="0 0 24 24"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.5 19 2c1 2 2 4.2 2 8 0 5.5-4.8 10-10 10Z"/><path d="M2 21c0-3 1.9-5.6 5.3-7"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24"><path d="M7 17 17 7M8 7h9v9"/></symbol>
+</svg>
 
-<div class="shell">
-  <aside class="rail" id="configs" aria-label="Lineup, configurations and boards">
-    <button type="button" class="rail-toggle" id="cfg-toggle" data-act="cfg-toggle" aria-expanded="false" aria-controls="cfg-body">Lineup</button>
-    <div class="rail-body" id="cfg-body">
-      <section class="rail-sec tray-sec" aria-labelledby="tray-h">
-        <div class="rail-head"><h2 id="tray-h" class="eyebrow">Lineup</h2><span class="rail-count num" id="tray-note"></span></div>
-        <div id="tray"><div class="loading">Loading the selection.</div></div>
-        <p class="rail-hint">Letters mark each configuration in every view. Drag to reorder.</p>
-      </section>
+<div class="app">
+  <aside class="rail" aria-label="Model Lab">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 26 26" aria-hidden="true"><rect x="3" y="12" width="4" height="10" rx="2"/><rect x="11" y="4" width="4" height="18" rx="2"/><rect x="19" y="8" width="4" height="14" rx="2"/></svg>
+      <span class="word">model lab<span class="dot">.</span></span>
+      <span class="ver" id="version"></span>
+    </div>
 
-      <section class="rail-sec" aria-labelledby="rail-cfg-h">
-        <div class="rail-head"><h2 id="rail-cfg-h" class="eyebrow">Configurations</h2><span class="rail-count" id="cfg-count"></span></div>
-        <input type="search" class="cfg-search" id="cfg-search" aria-label="Search configurations" placeholder="Search model, harness, effort" autocomplete="off">
-        <div id="cfg-filters"></div>
-        <div id="cfg-list"><div class="loading">Loading configurations.</div></div>
-      </section>
+    <div class="run-card" id="run-card" data-tone="unknown" aria-live="polite">
+      <div class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="run-text"><div class="run-title" id="run-title">Checking the lab</div><div class="run-sub" id="run-sub">One moment</div></div>
+    </div>
 
-      <section class="rail-sec" aria-labelledby="rail-board-h">
-        <div class="rail-head"><h2 id="rail-board-h" class="eyebrow">Boards</h2></div>
-        <div id="ctx-boards">
-          <label class="sr" for="board-select">Saved boards</label>
-          <select id="board-select" disabled><option>No boards</option></select>
-        </div>
-        <div class="rail-row">
-          <button type="button" class="btn-quiet" id="board-save" data-act="board-form" disabled>Save current</button>
-          <button type="button" class="btn-quiet" id="board-delete" data-act="board-delete" disabled>Delete</button>
-        </div>
-        <div id="board-extra"></div>
-      </section>
+    <nav class="nav" aria-label="Pages">
+      <span class="nav-pill" aria-hidden="true"></span>
+      <button type="button" class="nav-item" data-view="home"><svg class="i"><use href="#i-home"/></svg><span class="nav-label">Home</span><span class="nav-dot"></span></button>
+      <button type="button" class="nav-item" data-view="run"><svg class="i"><use href="#i-run"/></svg><span class="nav-label">Run</span><span class="nav-dot"></span></button>
+      <button type="button" class="nav-item" data-view="runs"><svg class="i"><use href="#i-runs"/></svg><span class="nav-label">Runs</span><span class="nav-dot"></span></button>
+      <button type="button" class="nav-item" data-view="compare"><svg class="i"><use href="#i-compare"/></svg><span class="nav-label">Compare</span><span class="nav-dot"></span></button>
+      <button type="button" class="nav-item" data-view="harnesses"><svg class="i"><use href="#i-harness"/></svg><span class="nav-label">Harnesses</span><span class="nav-dot"></span></button>
+      <button type="button" class="nav-item" data-view="checks"><svg class="i"><use href="#i-checks"/></svg><span class="nav-label">Checks</span><span class="nav-dot"></span></button>
+      <button type="button" class="nav-item" data-view="activity"><svg class="i"><use href="#i-activity"/></svg><span class="nav-label">Activity</span><span class="nav-dot"></span></button>
+      <button type="button" class="nav-item" data-view="appearance"><svg class="i"><use href="#i-appearance"/></svg><span class="nav-label">Appearance</span><span class="nav-dot"></span></button>
+    </nav>
+
+    <div class="rail-foot">
+      <a href="/compare.html" target="_blank" rel="noopener">Open Compare in its own tab <svg class="i"><use href="#i-ext"/></svg></a>
+      <p>Same as <code>node lab</code> in a terminal. Data root: <code id="root-name">…</code></p>
     </div>
   </aside>
 
   <main class="main" id="main">
-    <div class="pagehead">
-      <h1 class="sr">Compare model configurations</h1>
-      <div class="ctx-badge" id="ctx-badge" aria-live="polite"><span class="badge">Loading</span></div>
-      <span class="pagehead-meta" id="ctx-label"></span>
-    </div>
-
-    <div class="view" id="view-overview">
-      <div class="tiles" id="tiles" role="group" aria-label="Headline numbers"></div>
-      <section class="sec" id="leaderboard" aria-labelledby="lb-h">
-        <div class="sec-head">
-          <div class="sec-title-row"><h2 id="lb-h">Leaderboard</h2><span class="sec-note" id="lb-note"></span></div>
-          <div class="sec-tools">
-            <button type="button" class="link-btn" data-act="export" data-kind="csv" data-fk="lb:csv">CSV</button>
-            <button type="button" class="link-btn" data-act="export" data-kind="md" data-fk="lb:md">Copy Markdown</button>
-          </div>
+    <!-- Home -->
+    <section class="view" id="view-home" aria-labelledby="h-home">
+      <header class="page-head"><h1 id="h-home">Model Lab</h1><p>Run the same cases through your own harnesses and models. Every call is kept as evidence, then compared side by side.</p></header>
+      <div class="hero">
+        <div class="hero-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="hero-text"><div class="hero-title" id="hero-title">Ready</div><div class="hero-sub" id="hero-sub">Loading the lab</div></div>
+        <button type="button" class="btn primary small" data-go="run">New run</button>
+      </div>
+      <section class="sect">
+        <div class="sect-label"><h2>Your lab</h2><span class="sect-note">Select a row to open its page</span></div>
+        <ul class="group" id="meters"></ul>
+      </section>
+      <section class="sect">
+        <div class="sect-label"><h2>First test</h2><span class="sect-note">Three steps, no model calls until step 3</span></div>
+        <div class="howto">
+          <div class="howto-card"><div class="howto-top"><span class="tile"><svg class="i"><use href="#i-harness"/></svg></span><h3>Check harnesses</h3></div><p>See which CLIs are installed and signed in on this machine.</p><button type="button" class="btn secondary small" data-go="harnesses">Open Harnesses</button></div>
+          <div class="howto-card"><div class="howto-top"><span class="tile"><svg class="i"><use href="#i-runs"/></svg></span><h3>Preview a run</h3></div><p>Pick an experiment and press Preview. It shows the plan and calls nothing.</p><button type="button" class="btn secondary small" data-go="run">Open Run</button></div>
+          <div class="howto-card"><div class="howto-top"><span class="tile"><svg class="i"><use href="#i-run"/></svg></span><h3>Start one case</h3></div><p>Choose one case and one repeat, then Start. Then open Compare.</p><button type="button" class="btn secondary small" data-go="compare">Open Compare</button></div>
         </div>
-        <div id="lb"><div class="loading">Loading the leaderboard.</div></div>
       </section>
-      <div class="chart-grid" id="charts-body"></div>
-    </div>
+    </section>
 
-    <div class="view" id="view-answers" hidden>
-      <section class="sec" id="answers" aria-labelledby="ans-h">
-        <div class="sec-head"><div class="sec-title-row"><h2 id="ans-h">Answers</h2><span class="sec-note" id="ans-note"></span></div></div>
-        <div id="ans"><div class="loading">Loading the answers.</div></div>
+    <!-- Run -->
+    <section class="view" id="view-run" aria-labelledby="h-run">
+      <header class="page-head"><h1 id="h-run">Run</h1><p>Choose an experiment and its scope. Preview shows the plan and calls nothing. Start calls the models through your own sign-ins.</p></header>
+      <section class="sect">
+        <div class="sect-label"><h2>Experiment</h2><span class="sect-note" id="exp-note"></span></div>
+        <ul class="group">
+          <li class="row block">
+            <div class="row-text"><h3><label for="exp-select">Experiment</label></h3><p>Files in <code>experiments/</code>.</p></div>
+            <select id="exp-select" data-custom></select>
+          </li>
+          <li class="row block" id="exp-detail"></li>
+        </ul>
       </section>
-    </div>
-
-    <div class="view" id="view-charts" hidden>
-      <div class="chart-grid" id="charts-all"></div>
-    </div>
-
-    <div class="view" id="view-runs" hidden>
-      <section class="sec" id="runs-sec" aria-labelledby="runs-h">
-        <div class="sec-head"><div class="sec-title-row"><h2 id="runs-h">Runs</h2><span class="sec-note" id="runs-note"></span></div></div>
-        <div id="runs-body"><div class="loading">Loading the runs.</div></div>
+      <section class="sect">
+        <div class="sect-label"><h2>Scope</h2><span class="sect-note">Leave a choice empty to run all of it</span></div>
+        <ul class="group">
+          <li class="row block">
+            <div class="row-text"><h3><label for="harness-select">Harness</label></h3><p>Only the targets that use this harness.</p></div>
+            <select id="harness-select" data-custom></select>
+          </li>
+          <li class="row block">
+            <div class="row-text"><h3 id="models-h">Models</h3><p>Select models to run only those. None selected runs every target.</p></div>
+            <div class="chips" id="model-chips" role="group" aria-labelledby="models-h"></div>
+          </li>
+          <li class="row block">
+            <div class="row-text"><h3 id="cases-h">Cases</h3><p>Select cases to run only those. Start with one.</p></div>
+            <div class="chips" id="case-chips" role="group" aria-labelledby="cases-h"></div>
+          </li>
+          <li class="row">
+            <div class="row-text"><h3><label for="repeats">Repeats</label></h3><p id="repeats-hint">Each case runs this many times per target.</p></div>
+            <div class="row-ctl"><input type="number" id="repeats" class="short" min="1" max="50" step="1" inputmode="numeric"></div>
+          </li>
+        </ul>
+        <p class="sect-foot" id="call-count"></p>
       </section>
-    </div>
-
-    <div class="view" id="view-review" hidden>
-      <section class="sec" id="review-sec" aria-labelledby="rev-h">
-        <div class="sec-head"><div class="sec-title-row"><h2 id="rev-h">Human review</h2><span class="sec-note" id="rev-note"></span></div></div>
-        <div id="rev-body"><div class="loading">Loading the ratings.</div></div>
+      <div class="notice" id="edit-notice" hidden><strong>Agent task.</strong> Each harness gets its edit flags and a shell in an isolated folder. A tripwire stops the run if a file in this repository changes. Run agent tasks only with harnesses and models you trust on this machine.</div>
+      <div class="actions">
+        <button type="button" class="btn secondary" id="preview-btn">Preview</button>
+        <button type="button" class="btn primary" id="start-btn">Start run</button>
+      </div>
+      <section class="sect" id="run-output-sect" hidden>
+        <div class="sect-label"><h2>Output</h2><span class="sect-note" id="run-output-note"></span></div>
+        <div class="job" id="run-job"></div>
       </section>
-    </div>
+    </section>
+
+    <!-- Runs -->
+    <section class="view" id="view-runs" aria-labelledby="h-runs">
+      <header class="page-head"><h1 id="h-runs">Runs</h1><p>Every stored run, newest first. Score again recomputes scores from the stored answers and makes no model calls.</p></header>
+      <section class="sect">
+        <div class="sect-label"><h2>Stored runs</h2><span class="sect-note" id="runs-note"></span></div>
+        <ul class="group" id="runs-list"><li class="row"><div class="row-text"><p>Loading the runs</p></div></li></ul>
+        <div class="actions"><button type="button" class="btn secondary small" id="score-all">Score all again</button><button type="button" class="btn tertiary small" data-go="compare">Open Compare</button></div>
+      </section>
+    </section>
+
+    <!-- Compare -->
+    <section class="view wide" id="view-compare" aria-labelledby="h-compare">
+      <header class="page-head compact"><h1 id="h-compare">Compare</h1><p>Quality, cost, latency and every answer, per configuration.</p></header>
+      <div class="frame-wrap"><iframe id="compare-frame" title="Compare configurations" data-src="/compare.html#overview"></iframe></div>
+    </section>
+
+    <!-- Harnesses -->
+    <section class="view" id="view-harnesses" aria-labelledby="h-harnesses">
+      <header class="page-head"><h1 id="h-harnesses">Harnesses</h1><p>The CLIs that call the models. Each one uses your own sign-in. Check shows which are installed here.</p></header>
+      <section class="sect">
+        <div class="sect-label"><h2>On this machine</h2><span class="sect-note" id="harness-note">Not checked yet</span></div>
+        <ul class="group" id="harness-list"></ul>
+        <div class="actions"><button type="button" class="btn primary small" id="doctor-btn">Check harnesses</button></div>
+        <p class="sect-foot">Isolation: what <code>user_config: isolated</code> keeps out. Partial means some of your setup still loads. Connect another CLI in <code>configs/harnesses.yaml</code>.</p>
+      </section>
+    </section>
+
+    <!-- Checks -->
+    <section class="view" id="view-checks" aria-labelledby="h-checks">
+      <header class="page-head"><h1 id="h-checks">Checks</h1><p>Validate checks every input and stored record against the schemas. Report writes a Markdown comparison to the output.</p></header>
+      <section class="sect">
+        <div class="sect-label"><h2>Commands</h2></div>
+        <ul class="group">
+          <li class="row"><div class="row-text"><h3>Validate</h3><p><code>node lab validate</code></p></div><div class="row-ctl"><span class="tag" id="validate-tag" hidden></span><button type="button" class="btn secondary small" data-job="validate">Validate</button></div></li>
+          <li class="row"><div class="row-text"><h3>Report</h3><p><code>node lab report</code>: one Markdown table per context</p></div><div class="row-ctl"><span class="tag" id="report-tag" hidden></span><button type="button" class="btn secondary small" data-job="report">Report</button></div></li>
+          <li class="row"><div class="row-text"><h3>List runs</h3><p><code>node lab runs</code></p></div><div class="row-ctl"><span class="tag" id="runs-tag" hidden></span><button type="button" class="btn secondary small" data-job="runs">List runs</button></div></li>
+        </ul>
+        <p class="sect-foot">The test suite (<code>npm test</code>) is for code changes. Run it in a terminal.</p>
+      </section>
+      <section class="sect" id="checks-output-sect" hidden>
+        <div class="sect-label"><h2>Output</h2></div>
+        <div class="job" id="checks-job"></div>
+      </section>
+    </section>
+
+    <!-- Activity -->
+    <section class="view" id="view-activity" aria-labelledby="h-activity">
+      <header class="page-head"><h1 id="h-activity">Activity</h1><p>Commands started from this page since the server started. One runs at a time.</p></header>
+      <section class="sect">
+        <div class="sect-label"><h2>Jobs</h2><span class="sect-note" id="jobs-note"></span></div>
+        <ul class="group" id="jobs-list"></ul>
+      </section>
+      <section class="sect" id="activity-output-sect" hidden>
+        <div class="sect-label"><h2>Output</h2></div>
+        <div class="job" id="activity-job"></div>
+      </section>
+    </section>
+
+    <!-- Appearance -->
+    <section class="view" id="view-appearance" aria-labelledby="h-appearance">
+      <header class="page-head"><h1 id="h-appearance">Appearance</h1><p>Colour and motion for this page. Saved in this browser at once.</p></header>
+      <section class="sect">
+        <div class="sect-label"><h2>Colour</h2></div>
+        <ul class="group">
+          <li class="row"><div class="row-text"><h3>Theme colour</h3><p>Changes the accent and the tint of every surface.</p></div>
+            <div class="row-ctl"><div class="swatches" id="swatches" role="radiogroup" aria-label="Theme colour"></div><span class="theme-name" id="theme-name" aria-live="polite"></span></div></li>
+        </ul>
+      </section>
+      <section class="sect">
+        <div class="sect-label"><h2>Motion</h2></div>
+        <ul class="group">
+          <li class="row block"><div class="row-text"><h3>Motion</h3><p>Reduced keeps short fades. Off stops every animation.</p></div>
+            <div class="seg" id="motion-seg" role="group" aria-label="Motion" style="--n:3"><span class="seg-knob" aria-hidden="true"></span><button type="button" data-v="full">Full</button><button type="button" data-v="reduced">Reduced</button><button type="button" data-v="off">Off</button></div></li>
+        </ul>
+      </section>
+    </section>
   </main>
 </div>
 
-<div class="export-menu" id="export-menu" role="menu" aria-label="Export" hidden>
-  <button type="button" class="export-item" role="menuitem" data-act="export" data-kind="md">Copy Markdown table</button>
-  <button type="button" class="export-item" role="menuitem" data-act="export" data-kind="csv">Download CSV</button>
-  <button type="button" class="export-item" role="menuitem" data-act="export" data-kind="json">Download JSON</button>
-  <button type="button" class="export-item" role="menuitem" data-act="export" data-kind="png169">Share card 16:9 (PNG)</button>
-  <button type="button" class="export-item" role="menuitem" data-act="export" data-kind="png11">Share card 1:1 (PNG)</button>
-</div>
-
-<div class="status" id="status" aria-hidden="true"></div>
-<aside class="insp" id="inspector" role="dialog" aria-modal="false" aria-labelledby="insp-title" hidden></aside>
-<dialog class="dlg" id="review" aria-labelledby="review-title"></dialog>
-<div class="live" id="live" role="status" aria-live="polite" aria-atomic="true"></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="offline" id="offline" role="status" hidden><span class="ring"></span>The lab server stopped. Start it again with <code>node lab dashboard</code>.</div>
 </body>
 </html>

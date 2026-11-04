@@ -231,9 +231,12 @@ Add and validate:
 ```
 dashboard/
   server.mjs              local server: indexer, /api routes, static files
+  jobs.mjs                starts allowlisted `node lab` commands as jobs (section 13)
   public/
-    index.html            shell: app bar, rail, views, inspector, dialog
-    styles.css            tokens and components
+    index.html            control page: run, score, validate, doctor (section 13)
+    control.css/.js       control page style and script; boot.js applies theme before paint
+    compare.html          comparison shell: app bar, rail, views, inspector, dialog
+    styles.css            comparison tokens and components
     app.js                boot, routing, theme, events
     js/                   one module per view: leaderboard, answers, charts,
                           runs, reviewview, inspector, configs, exporter, ...
@@ -241,7 +244,7 @@ dashboard/
 boards/                   saved comparison boards (repo root)
 ```
 
-Keep the run harness separate. The dashboard reads evidence; it does not execute model calls.
+The server never calls a model itself. The control page starts the CLI as a child process (`dashboard/jobs.mjs`); the CLI makes the calls and writes the evidence, exactly as in a terminal. The comparison views only read evidence.
 
 ### 5.2 Stack
 
@@ -259,8 +262,13 @@ Keep the run harness separate. The dashboard reads evidence; it does not execute
 | POST | `/api/annotations` | Append one validated annotation |
 | POST | `/api/boards` | Create or update a board |
 | DELETE | `/api/boards/:id` | Delete a board file |
+| GET | `/api/catalog` | Experiments (targets, case ids, access, user setup), harness names, model keys |
+| GET | `/api/jobs` | Jobs since the server started, newest first, and the running job id |
+| POST | `/api/jobs` | Start one job: `{command: run\|score\|validate\|doctor\|runs\|report, ...}`. 409 while another job runs |
+| GET | `/api/jobs/:id?since=n` | One job and its output lines from line `n` |
+| POST | `/api/jobs/:id/cancel` | Stop a job (section 13) |
 
-Bind to `127.0.0.1` only. Reject requests with a non-local `Host` header. No external network calls. There is no file watcher and no event stream: the Refresh button reads the folder again.
+Bind to `127.0.0.1` only. Reject requests with a non-local `Host` header, and any write with a foreign `Origin` or a non-JSON body. No external network calls. There is no file watcher and no event stream: the Refresh button reads the folder again, and the control page polls `/api/jobs`.
 
 ### 5.4 Indexing
 
@@ -570,3 +578,35 @@ The UI shell may start after Phase 0. Phase 1 must land before chart polish, so 
 - Exact benchmark briefs beyond the first SVG suite.
 - A chart library, if hand-drawn SVG stops being enough.
 - Native desktop packaging through Tauri or Electron.
+
+## 13. Control page
+
+`/` is the control page: the owner runs the lab from it. `/compare.html` is the comparison workspace of sections 6 and 7; the control page shows it inside its Compare page.
+
+### 13.1 Pages
+
+| Page | What it does |
+|---|---|
+| Home | One meter row per page (experiments, runs, harnesses, checks, activity), and the three steps of a first test |
+| Run | Experiment, harness, models, cases and repeats; the call count; Preview (`--dry-run`) and Start; the live output |
+| Runs | Every stored run; Score again per run (`--force`, with a confirm step, for a run the guard stopped); Score all again |
+| Compare | `/compare.html` in a frame; it reloads after a run or score job |
+| Harnesses | `node lab doctor`, parsed into one row per harness |
+| Checks | `node lab validate`, `report`, `runs` |
+| Activity | Every job since the server started, with its output |
+| Appearance | Theme colour (Forest, Ocean, Plum, Ember, Graphite) and motion (Full, Reduced, Off), saved in `localStorage` |
+
+Start asks once: the first press shows `Start N calls?` for 5 seconds, and only a second press starts the run. A live run costs quota; a preview costs nothing.
+
+### 13.2 Jobs
+
+- Allowlist: `run`, `score`, `validate`, `doctor`, `runs`, `report`. Never `dashboard`.
+- The server spawns `node lab/cli.mjs <args>` with an argument array, no shell, `cwd` and `LAB_ROOT` set to the data root.
+- An experiment is a file name in `<root>/experiments/`. A run id must have a `run.json` in `<root>/results/`. Harness names, model keys and case ids match `^[A-Za-z0-9][\w.:@/+-]*$`, so no value can start with `-` and become a flag. Repeats: 1 to 50.
+- One job at a time. Output is kept in memory (the last 5,000 lines per job, the last 30 jobs) and lost when the server stops. The evidence is in `results/` as usual.
+- Stop: the first stop of a live run writes `cancel` to the child's stdin (`LAB_JOB=1`), which acts as Ctrl+C: the run finishes its current call, keeps what it wrote and is marked failed. A second stop, or a stop of any other command, ends the process tree (`taskkill /T /F` on Windows, the process group on other systems).
+- Known limit: when the server itself stops, it asks a running job to stop and exits; the job may then fail on a closed output pipe.
+
+### 13.3 Visual system
+
+The control page follows the owner's Odicto design system (dark only): Instrument Sans; OKLCH tokens from `--h`/`--k`; a 248px rail with the run card (five pixel bars: idle, running, stopping, server stopped) and one sliding nav pill with a glowing stem; an 800px main column; glass groups (radius 18, top rim, grain) with hairline rows; wells for inputs; a custom select with a fixed menu; status marks by shape (dot, hollow ring, diamond); toasts that last 7 seconds; an offline banner after two failed polls. The comparison page keeps its own layout, and its dark colours match the Forest theme.

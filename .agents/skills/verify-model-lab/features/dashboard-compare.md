@@ -15,7 +15,7 @@ The dashboard compares up to eight configurations (model + harness + version + e
 
 ## How to get to it (user POV)
 
-`node lab dashboard`, then open `http://127.0.0.1:4317`. Pick a context in `#ctx-select`. The URL hash holds the view, context and lineup, so a copied URL reopens the same comparison.
+`node lab dashboard`, then open `http://127.0.0.1:4317` and select Compare, or open `http://127.0.0.1:4317/compare.html` directly (drive it there: the browser tools reach into the frame poorly). Pick a context in `#ctx-select`. The URL hash holds the view, context and lineup, so a copied URL reopens the same comparison.
 
 ## Driving it with the browser
 

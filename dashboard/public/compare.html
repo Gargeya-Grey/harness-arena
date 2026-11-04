@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model Lab · Compare</title>
+<meta name="description" content="Compare model configurations side by side: model, harness, harness version and reasoning effort.">
+<link rel="stylesheet" href="/fonts/fonts.css">
+<link rel="stylesheet" href="/styles.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<header class="navbar">
+  <div class="brand">
+    <svg class="brand-mark" width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><rect width="22" height="22" rx="6" class="brand-bg"/><rect x="5" y="11" width="3" height="6" rx="1" class="brand-fg"/><rect x="9.5" y="5" width="3" height="12" rx="1" class="brand-fg"/><rect x="14" y="8" width="3" height="9" rx="1" class="brand-fg"/></svg>
+    <span class="bar-name">Model Lab</span>
+  </div>
+  <div class="ctx-pick">
+    <label class="sr" for="ctx-select">Comparison context: suite, prompt, cases, repeats</label>
+    <select id="ctx-select" disabled><option>Loading contexts</option></select>
+  </div>
+  <nav aria-label="Views"><ul>
+    <li><a href="#overview" id="nav-overview" data-view="overview">Overview</a></li>
+    <li><a href="#answers" id="nav-answers" data-view="answers">Answers</a></li>
+    <li><a href="#charts" id="nav-charts" data-view="charts">Charts</a></li>
+    <li><a href="#runs" id="nav-runs" data-view="runs">Runs</a></li>
+    <li><a href="#review" id="nav-review" data-view="review">Review</a></li>
+  </ul></nav>
+  <div class="bar-actions" id="ctx-actions">
+    <button type="button" class="icon-btn" id="refresh" data-act="refresh" aria-label="Refresh data" title="Read the results folder again">
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" class="ico"/></svg>
+    </button>
+    <button type="button" class="btn-quiet" id="export-btn" data-act="export-menu" aria-haspopup="true" aria-expanded="false" aria-controls="export-menu" disabled>
+      Export<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" class="ico"/></svg>
+    </button>
+    <button type="button" class="icon-btn theme" id="theme-toggle" aria-label="Switch to dark mode">
+      <svg class="ico-moon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 9.6A5.5 5.5 0 0 1 6.4 3a5.5 5.5 0 1 0 6.6 6.6Z" class="ico"/></svg>
+      <svg class="ico-sun" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" class="ico"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1" class="ico"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="rail" id="configs" aria-label="Lineup, configurations and boards">
+    <button type="button" class="rail-toggle" id="cfg-toggle" data-act="cfg-toggle" aria-expanded="false" aria-controls="cfg-body">Lineup</button>
+    <div class="rail-body" id="cfg-body">
+      <section class="rail-sec tray-sec" aria-labelledby="tray-h">
+        <div class="rail-head"><h2 id="tray-h" class="eyebrow">Lineup</h2><span class="rail-count num" id="tray-note"></span></div>
+        <div id="tray"><div class="loading">Loading the selection.</div></div>
+        <p class="rail-hint">Letters mark each configuration in every view. Drag to reorder.</p>
+      </section>
+
+      <section class="rail-sec" aria-labelledby="rail-cfg-h">
+        <div class="rail-head"><h2 id="rail-cfg-h" class="eyebrow">Configurations</h2><span class="rail-count" id="cfg-count"></span></div>
+        <input type="search" class="cfg-search" id="cfg-search" aria-label="Search configurations" placeholder="Search model, harness, effort" autocomplete="off">
+        <div id="cfg-filters"></div>
+        <div id="cfg-list"><div class="loading">Loading configurations.</div></div>
+      </section>
+
+      <section class="rail-sec" aria-labelledby="rail-board-h">
+        <div class="rail-head"><h2 id="rail-board-h" class="eyebrow">Boards</h2></div>
+        <div id="ctx-boards">
+          <label class="sr" for="board-select">Saved boards</label>
+          <select id="board-select" disabled><option>No boards</option></select>
+        </div>
+        <div class="rail-row">
+          <button type="button" class="btn-quiet" id="board-save" data-act="board-form" disabled>Save current</button>
+          <button type="button" class="btn-quiet" id="board-delete" data-act="board-delete" disabled>Delete</button>
+        </div>
+        <div id="board-extra"></div>
+      </section>
+    </div>
+  </aside>
+
+  <main class="main" id="main">
+    <div class="pagehead">
+      <h1 class="sr">Compare model configurations</h1>
+      <div class="ctx-badge" id="ctx-badge" aria-live="polite"><span class="badge">Loading</span></div>
+      <span class="pagehead-meta" id="ctx-label"></span>
+    </div>
+
+    <div class="view" id="view-overview">
+      <div class="tiles" id="tiles" role="group" aria-label="Headline numbers"></div>
+      <section class="sec" id="leaderboard" aria-labelledby="lb-h">
+        <div class="sec-head">
+          <div class="sec-title-row"><h2 id="lb-h">Leaderboard</h2><span class="sec-note" id="lb-note"></span></div>
+          <div class="sec-tools">
+            <button type="button" class="link-btn" data-act="export" data-kind="csv" data-fk="lb:csv">CSV</button>
+            <button type="button" class="link-btn" data-act="export" data-kind="md" data-fk="lb:md">Copy Markdown</button>
+          </div>
+        </div>
+        <div id="lb"><div class="loading">Loading the leaderboard.</div></div>
+      </section>
+      <div class="chart-grid" id="charts-body"></div>
+    </div>
+
+    <div class="view" id="view-answers" hidden>
+      <section class="sec" id="answers" aria-labelledby="ans-h">
+        <div class="sec-head"><div class="sec-title-row"><h2 id="ans-h">Answers</h2><span class="sec-note" id="ans-note"></span></div></div>
+        <div id="ans"><div class="loading">Loading the answers.</div></div>
+      </section>
+    </div>
+
+    <div class="view" id="view-charts" hidden>
+      <div class="chart-grid" id="charts-all"></div>
+    </div>
+
+    <div class="view" id="view-runs" hidden>
+      <section class="sec" id="runs-sec" aria-labelledby="runs-h">
+        <div class="sec-head"><div class="sec-title-row"><h2 id="runs-h">Runs</h2><span class="sec-note" id="runs-note"></span></div></div>
+        <div id="runs-body"><div class="loading">Loading the runs.</div></div>
+      </section>
+    </div>
+
+    <div class="view" id="view-review" hidden>
+      <section class="sec" id="review-sec" aria-labelledby="rev-h">
+        <div class="sec-head"><div class="sec-title-row"><h2 id="rev-h">Human review</h2><span class="sec-note" id="rev-note"></span></div></div>
+        <div id="rev-body"><div class="loading">Loading the ratings.</div></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div class="export-menu" id="export-menu" role="menu" aria-label="Export" hidden>
+  <button type="button" class="export-item" role="menuitem" data-act="export" data-kind="md">Copy Markdown table</button>
+  <button type="button" class="export-item" role="menuitem" data-act="export" data-kind="csv">Download CSV</button>
+  <button type="button" class="export-item" role="menuitem" data-act="export" data-kind="json">Download JSON</button>
+  <button type="button" class="export-item" role="menuitem" data-act="export" data-kind="png169">Share card 16:9 (PNG)</button>
+  <button type="button" class="export-item" role="menuitem" data-act="export" data-kind="png11">Share card 1:1 (PNG)</button>
+</div>
+
+<div class="status" id="status" aria-hidden="true"></div>
+<aside class="insp" id="inspector" role="dialog" aria-modal="false" aria-labelledby="insp-title" hidden></aside>
+<dialog class="dlg" id="review" aria-labelledby="review-title"></dialog>
+<div class="live" id="live" role="status" aria-live="polite" aria-atomic="true"></div>
+</body>
+</html>

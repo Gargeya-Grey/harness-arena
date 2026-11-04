@@ -93,6 +93,17 @@ async function main(argv) {
   }
 }
 
+// Under the dashboard (LAB_JOB=1) a "cancel" line on stdin acts as Ctrl+C: a run stops
+// after its current call and keeps what it wrote. Windows has no SIGINT for a child process.
+if (process.env.LAB_JOB === '1') {
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (text) => {
+    if (/\bcancel\b/.test(text)) process.emit('SIGINT', 'SIGINT');
+  });
+  process.stdin.on('error', () => {});
+  process.stdin.unref();
+}
+
 main(process.argv.slice(2))
   .then((code) => {
     if (code != null) process.exitCode = code;
