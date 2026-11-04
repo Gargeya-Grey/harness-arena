@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseYaml } from './yaml.mjs';
 import { readJsonl, readText, sha256 } from './fsutil.mjs';
+import { treeHash } from './workspace.mjs';
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -51,13 +52,18 @@ export function loadSuite(root, suiteId) {
   const meta = parseYaml(suiteBytes.toString('utf8'), 'suite.yaml');
   const { rows: cases, problems } = readJsonl(casesFile);
   if (problems.length) throw new Error(`${casesFile}:${problems[0].line}: ${problems[0].message}`);
+  // Agent suites also carry starter workspaces and hidden checks; their bytes are
+  // part of the suite's identity. Suites without them keep the old hash.
+  const extra = ['workspaces', 'checks'].filter((name) => fs.existsSync(path.join(dir, name))).map((name) => Buffer.from(`${name}:${treeHash(path.join(dir, name))}`));
   return {
     id: meta.id ?? suiteId,
     version: String(meta.version),
     meta,
     cases,
-    // The stored hash covers suite.yaml followed by cases.jsonl, byte for byte.
-    sha256: sha256(Buffer.concat([suiteBytes, caseBytes])),
+    dir,
+    // The stored hash covers suite.yaml followed by cases.jsonl, byte for byte,
+    // then the hash of each workspaces/ and checks/ folder when present.
+    sha256: sha256(Buffer.concat([suiteBytes, caseBytes, ...extra])),
   };
 }
 

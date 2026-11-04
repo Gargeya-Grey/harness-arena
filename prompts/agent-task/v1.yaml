@@ -1,0 +1,13 @@
+version: "1"
+messages:
+  - role: user
+    content: |
+      You are working in a small JavaScript project in the current folder (Node, ES modules, no dependencies).
+
+      Task: {{task}}
+
+      Rules:
+      - Edit the files in the current folder. Do not touch anything outside it.
+      - You may run commands such as `node --test`.
+      - Do not install packages.
+      - When you are done, reply with a short summary of what you changed.

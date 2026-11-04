@@ -15,6 +15,9 @@
 #   isolation_args  Optional. Appended when the experiment sets user_config: isolated:
 #                   flags that keep your own settings, skills or MCP servers out of the call.
 #   isolation_note  Optional. What isolation_args keep out, and what still loads.
+#   edit_args       Optional. Appended when the experiment sets access: edit (agent tasks):
+#                   flags that let the CLI edit files and run commands without prompts.
+#   edit_note       Optional. What edit_args allow.
 #   output          text (stdout is the answer) | json (one object) | jsonl (one event per line).
 #   result          For json and jsonl: dotted paths into the result object.
 #     where         jsonl only: the last line whose fields match, e.g. { type: result }.

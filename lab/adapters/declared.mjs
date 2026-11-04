@@ -31,7 +31,7 @@ export function checkDeclared(name, entry, builtIn) {
   const strings = (value) => Array.isArray(value) && value.every((item) => typeof item === 'string');
   // Quote numbers in YAML lists ("3", not 3): every argument is a string.
   if (!strings(entry.args)) return [...problems, 'needs "args", a list of strings'];
-  for (const key of ['version_args', 'effort_args', 'isolation_args']) {
+  for (const key of ['version_args', 'effort_args', 'isolation_args', 'edit_args']) {
     if (entry[key] != null && !strings(entry[key])) problems.push(`${key} must be a list of strings`);
   }
   const output = entry.output ?? 'text';
@@ -40,7 +40,7 @@ export function checkDeclared(name, entry, builtIn) {
   if (entry.stdin && hasPrompt) problems.push('use "{prompt}" in args or stdin: true, not both');
   if (!entry.stdin && !hasPrompt) problems.push('pass the prompt: put "{prompt}" in args or set stdin: true');
   if (entry.args.some((item) => item.includes('{prompt}') && item !== '{prompt}')) problems.push('"{prompt}" must be a whole argument, never part of one');
-  for (const key of ['version_args', 'effort_args', 'isolation_args']) {
+  for (const key of ['version_args', 'effort_args', 'isolation_args', 'edit_args']) {
     if (strings(entry[key]) && entry[key].some((item) => item.includes('{prompt}'))) problems.push(`${key} cannot hold "{prompt}"; only args can`);
   }
   if (entry.result != null && (typeof entry.result !== 'object' || Array.isArray(entry.result))) problems.push('result must be a map');
@@ -61,6 +61,7 @@ export function declaredAdapter(name, entry) {
     supportsEffort: Array.isArray(entry.effort_args),
     declared: true,
     stdin: entry.stdin ? ({ prompt }) => prompt : undefined,
+    edit: entry.edit_args ? { args: entry.edit_args, note: entry.edit_note || 'Declared in configs/harnesses.yaml.' } : undefined,
     isolation: entry.isolation_args
       ? { args: entry.isolation_args, note: entry.isolation_note || 'Declared in configs/harnesses.yaml.' }
       : undefined,

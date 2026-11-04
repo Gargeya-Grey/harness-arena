@@ -1,0 +1,14 @@
+{
+  "probes": {
+    "no code keeps the total": 25,
+    "SAVE10 takes 10 percent off": 22.5,
+    "FLAT5 takes 5 off": 20,
+    "FLAT5 never goes below 0": 0,
+    "a later code replaces the earlier one": 20,
+    "an unknown code throws an Error": "Error",
+    "the total is rounded to cents": 53.97
+  },
+  "files": {
+    "test/cart.test.mjs": { "includes": ["applyDiscount"] }
+  }
+}

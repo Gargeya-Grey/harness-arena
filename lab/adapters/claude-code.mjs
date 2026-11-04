@@ -14,6 +14,8 @@ export default defineCli({
   // Measured 2026-11-04: drops user MCP servers and skills (34,525 to 29,316 prompt
   // tokens on a one-word reply); built-in plugins and the base prompt still load.
   // --bare would skip more, but it accepts only ANTHROPIC_API_KEY, not a subscription.
+  // Agent tasks: file edits are accepted and these tools run without a prompt. No web tools.
+  edit: { args: ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash,Read,Edit,Write,Glob,Grep'], note: 'Edits files and runs shell commands; web tools stay off.' },
   isolation: {
     args: ['--setting-sources', 'project,local', '--strict-mcp-config', '--disable-slash-commands'],
     note: 'Skips user settings, MCP servers, skills and slash commands. Built-in plugins still load.',

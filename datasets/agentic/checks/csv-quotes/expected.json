@@ -1,0 +1,13 @@
+{
+  "probes": {
+    "plain rows": [["a", "b"], ["1", "2"]],
+    "quoted comma": [["x,y", "z"]],
+    "doubled quote": [["he said \"hi\"", "1"]],
+    "CRLF and a final newline": [["a", "b"], ["1", "2"]],
+    "empty fields": [["a", "", "b"]],
+    "newline inside quotes": [["line1\nline2", "x"]]
+  },
+  "files": {
+    "test/csv.test.mjs": { "includes": ["parseCsv"] }
+  }
+}

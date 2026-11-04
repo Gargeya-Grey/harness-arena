@@ -1,4 +1,5 @@
-// OpenAI Codex CLI: `codex exec --json`, read-only sandbox, prompt on stdin.
+// OpenAI Codex CLI: `codex exec --json`, prompt on stdin. Read-only sandbox, or
+// workspace-write for agent tasks (access: edit).
 
 import { defineCli } from './cli.mjs';
 import { jsonLines, stderrError, stderrTail } from './process.mjs';
@@ -10,10 +11,11 @@ export default defineCli({
   name: 'codex',
   bin: BIN,
   supportsEffort: true,
+  edit: { args: ['-s', 'workspace-write'], note: 'Codex sandbox workspace-write: writes inside the call folder and, by Codex defaults, the temp folder.' },
   stdin: ({ prompt }) => prompt,
 
-  args({ model, effort, cwd, persist }) {
-    const args = ['exec', '--json', '--skip-git-repo-check', '-s', 'read-only', '--color', 'never', '-m', model];
+  args({ model, effort, cwd, persist, access }) {
+    const args = ['exec', '--json', '--skip-git-repo-check', ...(access === 'edit' ? [] : ['-s', 'read-only']), '--color', 'never', '-m', model];
     if (effort) args.push('-c', `model_reasoning_effort="${effort}"`);
     if (cwd) args.push('-C', cwd);
     if (!persist) args.push('--ephemeral');

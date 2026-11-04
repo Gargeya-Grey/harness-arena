@@ -12,6 +12,7 @@ export default defineCli({
   name: 'opencode',
   bin: BIN,
   supportsEffort: true,
+  edit: { args: ['--auto'], note: 'Auto-approves permissions that are not explicitly denied.' },
 
   // --standalone gives each call a private server, so a call never shares state
   // with the user's background OpenCode service. `--` keeps a prompt that starts

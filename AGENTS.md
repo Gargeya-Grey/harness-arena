@@ -29,7 +29,7 @@ dashboard/server.mjs      Local server: /api/state, /api/artifact, annotations, 
 dashboard/public/         Static UI, no build step
 configs/models.yaml       Model registry: exact id, params, optional pricing, harness_models
 configs/harnesses.yaml    CLI harnesses declared with no code
-datasets/<suite>/         suite.yaml + cases.jsonl (one case per line)
+datasets/<suite>/         suite.yaml + cases.jsonl (one case per line); agent suites add workspaces/ and checks/
 prompts/<prompt>/         prompt.yaml + frozen vN.yaml templates
 experiments/*.yaml        targets x suite x prompt x repeats x evaluators
 results/<run_id>/         Immutable run: run.json, raw.jsonl, scores/ (+ harness-events.ndjson, local only)
@@ -68,6 +68,7 @@ docs/dashboard-spec.md    Dashboard design: UI, data contract, visual system
 1. Edit `datasets/<suite>/cases.jsonl`; keep `case_id` stable and unique.
 2. Bump `version` in `suite.yaml`.
 3. Give every case an `input` object matching the prompt's `variables`.
+4. For an agent task, set `input.workspace` to a folder in `datasets/<suite>/workspaces/` (the starter project) and `expected.check` to a folder in `datasets/<suite>/checks/` with `probe.mjs` (exports `probes: [{ name, run({ load }) }]`; each returns a value) and `expected.json` (`{ probes: { <name>: <value> }, files: { <path>: { exists, includes, same_as_starter } } }`). The agent never sees the check, and the sandbox never sees `expected.json`. Its experiment needs `access: edit` and `workdir: isolated`.
 
 Done when `node lab validate` passes.
 

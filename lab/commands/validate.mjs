@@ -57,6 +57,30 @@ export function validateRepo(root) {
         if (seen.has(item.case_id)) report(file, `duplicate case_id ${item.case_id}`);
         seen.add(item.case_id);
         if (!String(item.case_id).startsWith(`${name}-`)) report(file, `case_id ${item.case_id} should start with "${name}-"`);
+        const workspace = item.input?.workspace;
+        if (workspace != null) {
+          if (typeof workspace !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(workspace)) report(file, `line ${index + 1}: input.workspace must be a plain folder name`);
+          else if (!fs.existsSync(path.join(suite.dir, 'workspaces', workspace))) report(file, `line ${index + 1}: workspaces/${workspace} does not exist`);
+        }
+        const checkName = item.expected?.check;
+        if (checkName != null) {
+          const checkDir = path.join(suite.dir, 'checks', String(checkName));
+          if (typeof checkName !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(checkName)) report(file, `line ${index + 1}: expected.check must be a plain folder name`);
+          else if (!fs.existsSync(path.join(checkDir, 'probe.mjs'))) report(file, `line ${index + 1}: checks/${checkName}/probe.mjs does not exist`);
+          else {
+            try {
+              const expected = readJson(path.join(checkDir, 'expected.json'));
+              const probes = expected?.probes ?? {};
+              const files = expected?.files ?? {};
+              if (typeof probes !== 'object' || Array.isArray(probes) || typeof files !== 'object' || Array.isArray(files)) report(file, `line ${index + 1}: checks/${checkName}/expected.json needs objects "probes" and "files"`);
+              else if (!Object.keys(probes).length && !Object.keys(files).length) report(file, `line ${index + 1}: checks/${checkName}/expected.json has no tests`);
+              for (const rel of Object.keys(files)) if (!/^[a-zA-Z0-9._-]+(\/[a-zA-Z0-9._-]+)*$/.test(rel) || rel.split('/').includes('..')) report(file, `line ${index + 1}: checks/${checkName}/expected.json file "${rel}" must be a plain relative path`);
+            } catch (error) {
+              report(file, `line ${index + 1}: checks/${checkName}/expected.json: ${error.message}`);
+            }
+          }
+          if (workspace == null) report(file, `line ${index + 1}: expected.check needs input.workspace`);
+        }
       });
     } catch (error) {
       report(path.join(p.datasets, name), error.message);
@@ -85,8 +109,11 @@ export function validateRepo(root) {
       targetProblems.forEach((message) => report(abs, message));
       for (const target of targets) if (target.harness && !adapters[target.harness]) report(abs, `unknown harness "${target.harness}"; known: ${Object.keys(adapters).join(', ')}`);
       if (experiment.user_config != null && !['loaded', 'isolated'].includes(experiment.user_config)) report(abs, `user_config must be "loaded" or "isolated"`);
+      if (experiment.access != null && !['answer', 'edit'].includes(experiment.access)) report(abs, `access must be "answer" or "edit"`);
       const suite = suites.get(experiment.suite);
       if (!suite) report(abs, `suite "${experiment.suite}" not found`);
+      const usesWorkspace = suite && (experiment.cases || suite.cases.map((item) => item.case_id)).some((id) => suite.cases.find((entry) => entry.case_id === id)?.input?.workspace != null);
+      if ((experiment.access === 'edit' || usesWorkspace) && experiment.workdir === 'repo') report(abs, `workdir must be "isolated" when access is "edit" or a case has a workspace`);
       let prompt = null;
       try {
         prompt = loadPrompt(root, experiment.prompt, experiment.prompt_version);

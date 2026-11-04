@@ -39,7 +39,7 @@ export function scoreRun(root, runDir, { log = () => {} } = {}) {
       if (raw.error) continue;
       const testCase = cases.get(raw.case_id);
       if (!testCase) continue;
-      const result = evaluator.score({ raw, testCase });
+      const result = evaluator.score({ raw, testCase, suite, runDir });
       if (!result) continue;
       scores.push({
         run_id: manifest.run_id,

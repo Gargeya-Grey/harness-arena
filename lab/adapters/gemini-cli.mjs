@@ -10,6 +10,7 @@ export default defineCli({
   name: 'gemini-cli',
   bin: BIN,
   supportsEffort: false,
+  edit: { args: ['--approval-mode', 'yolo'], note: 'Every tool, no approval prompts.' },
 
   args({ model, prompt }) {
     return ['-p', prompt, '-m', model, '-o', 'json', '--skip-trust'];

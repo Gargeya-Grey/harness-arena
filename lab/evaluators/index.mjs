@@ -5,7 +5,11 @@
 
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { rebuildWorkspace, treeHash } from '../lib/workspace.mjs';
 import { isDeepStrictEqual } from 'node:util';
 
 function exactMatch({ text, expected }) {
@@ -126,6 +130,11 @@ const SANDBOX = fileURLToPath(new URL('./js-sandbox.cjs', import.meta.url));
 const SANDBOX_TIMEOUT_MS = 30000;
 // Node 20 to 22.12 name the permission model --experimental-permission.
 const PERMISSION_FLAG = process.allowedNodeEnvironmentFlags.has('--permission') ? '--permission' : '--experimental-permission';
+// node:sqlite opens and creates files past the permission model (Node 22-24), so
+// both sandboxes turn it off where this Node knows the flag.
+const SANDBOX_FLAGS = [PERMISSION_FLAG, ...(process.allowedNodeEnvironmentFlags.has('--no-experimental-sqlite') ? ['--no-experimental-sqlite'] : [])];
+// Before Node 23.5 a folder grant needs a trailing wildcard to cover its files.
+const NODE_MAJOR = Number(process.versions.node.split('.')[0]);
 
 /**
  * Runs model-written code in its own Node process: permission model on (it reads
@@ -137,7 +146,7 @@ const PERMISSION_FLAG = process.allowedNodeEnvironmentFlags.has('--permission') 
 export function runJsTests({ sources, name, tests }) {
   const nonce = crypto.randomUUID();
   const env = process.platform === 'win32' ? { SYSTEMROOT: process.env.SYSTEMROOT } : {};
-  const result = spawnSync(process.execPath, [PERMISSION_FLAG, `--allow-fs-read=${SANDBOX}`, '--max-old-space-size=256', SANDBOX], {
+  const result = spawnSync(process.execPath, [...SANDBOX_FLAGS, `--allow-fs-read=${SANDBOX}`, '--max-old-space-size=256', SANDBOX], {
     input: JSON.stringify({ nonce, sources, name, tests: tests.map((test) => ({ args: test.args })) }),
     encoding: 'utf8',
     timeout: SANDBOX_TIMEOUT_MS,
@@ -173,6 +182,120 @@ export function runJsTests({ sources, name, tests }) {
   return { loaded: Boolean(out.loaded), ...(out.error ? { error: String(out.error).slice(0, 300) } : {}), results };
 }
 
+const WORKSPACE_CHECK = fileURLToPath(new URL('./workspace-check.mjs', import.meta.url));
+
+/**
+ * The hidden check of an agent task: datasets/<suite>/checks/<name>/ holds
+ * probe.mjs (runs in the sandbox, returns observed values) and expected.json
+ * (read here only): { probes: { <name>: <value> }, files: { <path>: { exists?,
+ * includes?, same_as_starter? } } }. Each probe and each file rule is one test.
+ */
+export function loadCheck(checksDir, name) {
+  const dir = path.join(checksDir, name);
+  const expected = JSON.parse(fs.readFileSync(path.join(dir, 'expected.json'), 'utf8'));
+  return { probeFile: path.join(dir, 'probe.mjs'), probes: expected.probes || {}, files: expected.files || {} };
+}
+
+function fileRule(rule, text, starterText) {
+  if (rule.exists === false) return text == null ? null : 'file should not exist';
+  if (text == null) return 'file is missing';
+  for (const part of rule.includes || []) if (!text.includes(part)) return `file lacks ${JSON.stringify(part).slice(0, 80)}`;
+  if (rule.same_as_starter && text !== starterText) return 'file differs from the starter';
+  return null;
+}
+
+const readOrNull = (file) => (fs.existsSync(file) && fs.statSync(file).isFile() ? fs.readFileSync(file, 'utf8') : null);
+
+/**
+ * Rebuilds an agent's final workspace from the run's stored evidence, adds the
+ * probe file under a random name, runs it in the sandbox (permission model, read
+ * access to that folder and the runner only), and judges the values here.
+ */
+export function runWorkspaceCheck({ fixtureDir, check, runDir, manifestPath }) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-check-'));
+  try {
+    const workspace = path.join(dir, 'ws');
+    const manifest = rebuildWorkspace({ fixtureDir, runDir, manifestPath, dest: workspace });
+    const results = [];
+    for (const [rel, rule] of Object.entries(check.files)) {
+      const problem = fileRule(rule, readOrNull(path.join(workspace, ...rel.split('/'))), readOrNull(path.join(fixtureDir, ...rel.split('/'))));
+      results.push({ name: `file ${rel}`, ok: !problem, ...(problem ? { error: problem } : {}) });
+    }
+    const probe = `.lab-probe-${crypto.randomUUID()}.mjs`;
+    fs.copyFileSync(check.probeFile, path.join(workspace, probe));
+    const nonce = crypto.randomUUID();
+    const env = process.platform === 'win32' ? { SYSTEMROOT: process.env.SYSTEMROOT } : {};
+    const reads = [workspace, ...(NODE_MAJOR < 23 ? [path.join(workspace, '*')] : []), WORKSPACE_CHECK].map((item) => `--allow-fs-read=${item}`);
+    const run = spawnSync(process.execPath, [...SANDBOX_FLAGS, ...reads, '--max-old-space-size=256', WORKSPACE_CHECK], {
+      input: JSON.stringify({ nonce, workspace, probe }),
+      cwd: workspace,
+      encoding: 'utf8',
+      timeout: SANDBOX_TIMEOUT_MS * 2,
+      maxBuffer: 8 * 1024 * 1024,
+      env,
+      windowsHide: true,
+    });
+    let out = null;
+    for (const line of String(run.stdout ?? '').split('\n')) {
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed && parsed.nonce === nonce) out = parsed;
+      } catch {
+        // Not the runner's line.
+      }
+    }
+    let error = null;
+    if (run.error) error = run.error.code === 'ETIMEDOUT' ? `check timed out after ${(SANDBOX_TIMEOUT_MS * 2) / 1000} s` : run.error.message;
+    else if (!out) error = `check gave no result (exit ${run.status}): ${String(run.stderr).trim().split('\n').at(-1)?.slice(0, 200) ?? ''}`;
+    else if (out.error) error = String(out.error).slice(0, 300);
+    const observed = new Map((Array.isArray(out?.results) ? out.results : []).map((item) => [String(item?.name), item]));
+    for (const [name, want] of Object.entries(check.probes)) {
+      const got = observed.get(name);
+      if (!got) results.push({ name, ok: false, error: 'no result for this probe' });
+      else if (got.error != null) results.push({ name, ok: false, error: String(got.error).slice(0, 300) });
+      else {
+        let value;
+        try {
+          value = JSON.parse(String(got.json));
+        } catch {
+          value = undefined;
+        }
+        const ok = value !== undefined && isDeepStrictEqual(value, want);
+        results.push({ name, ok, ...(ok ? {} : { error: `expected ${JSON.stringify(want)}, got ${String(got.json).slice(0, 200)}` }) });
+      }
+    }
+    return { ...(error ? { error } : {}), skipped: manifest.skipped || [], results };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function workspaceTests({ raw, testCase, suite, runDir }) {
+  const checkName = testCase.expected?.check;
+  if (!checkName || testCase.input?.workspace == null || !suite?.dir || !runDir) return null;
+  const manifest = (raw.artifacts || []).find((item) => String(item.path || '').endsWith('/workspace.json'));
+  if (!manifest) return { value: 0, passed: false, details: { check: checkName, error: 'no workspace was stored for this row' } };
+  const fixtureDir = path.join(suite.dir, 'workspaces', testCase.input.workspace);
+  let run;
+  try {
+    const stored = JSON.parse(fs.readFileSync(path.join(runDir, ...String(manifest.path).split('/')), 'utf8'));
+    // The rebuild adds the agent's changes to today's starter. If the starter has
+    // changed since the run, the rebuild would be a different workspace: no score.
+    if (stored.fixture_sha256 !== treeHash(fixtureDir)) return null;
+    run = runWorkspaceCheck({ fixtureDir, check: loadCheck(path.join(suite.dir, 'checks'), checkName), runDir, manifestPath: manifest.path });
+  } catch (error) {
+    run = { error: `check could not run: ${String(error?.message ?? error).slice(0, 300)}`, skipped: [], results: [] };
+  }
+  const passedTests = run.results.filter((item) => item.ok).length;
+  const total = run.results.length;
+  const value = total ? Number((passedTests / total).toFixed(4)) : 0;
+  return {
+    value,
+    passed: total > 0 && passedTests === total && !run.error,
+    details: { check: checkName, passed_tests: passedTests, total_tests: total, ...(run.error ? { error: run.error } : {}), ...(run.skipped.length ? { skipped: run.skipped } : {}), results: run.results },
+  };
+}
+
 function jsFunction({ text, testCase }) {
   const tests = testCase.expected?.tests;
   const name = testCase.input?.name;
@@ -189,6 +312,7 @@ export const EVALUATORS = {
   'svg-structure@1': { id: 'svg-structure', version: '1', dimension: 'format', score: ({ raw, testCase }) => svgStructure({ text: raw.response?.text, input: testCase.input }) },
   'final-answer@1': { id: 'final-answer', version: '1', dimension: 'quality', score: ({ raw, testCase }) => (testCase.expected == null ? null : finalAnswer({ text: raw.response?.text, expected: testCase.expected })) },
   'js-function@1': { id: 'js-function', version: '1', dimension: 'quality', score: ({ raw, testCase }) => jsFunction({ text: raw.response?.text, testCase }) },
+  'workspace-tests@1': { id: 'workspace-tests', version: '1', dimension: 'quality', score: ({ raw, testCase, suite, runDir }) => workspaceTests({ raw, testCase, suite, runDir }) },
 };
 
 export function getEvaluator(id, version) {

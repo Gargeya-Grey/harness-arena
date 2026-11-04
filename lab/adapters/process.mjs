@@ -65,7 +65,9 @@ export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, on
     let settled = false;
     const child = spawn(resolved.command, [...resolved.prefix, ...args], {
       cwd,
-      env: { ...process.env, ...env },
+      // spawn sets the real working folder but not PWD, and some CLIs (OpenCode on
+      // Windows) start their tools from PWD. Point it at cwd so the agent starts there.
+      env: { ...process.env, ...env, ...(cwd ? { PWD: path.resolve(cwd), INIT_CWD: path.resolve(cwd) } : {}) },
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });

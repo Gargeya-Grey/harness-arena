@@ -10,6 +10,7 @@ export default defineCli({
   name: 'command-code',
   bin: BIN,
   supportsEffort: true,
+  edit: { args: ['--yolo', '--tools-all'], note: 'Every tool, no permission prompts.' },
   isolation: { args: ['--no-skills'], note: 'Skips skill discovery. User settings and memory still load.' },
 
   args({ model, effort, prompt, persist, maxTurns }) {
