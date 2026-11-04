@@ -1,0 +1,92 @@
+{
+  "run_id": "20261104T162004Z__coding__coding-sweep__01ae96",
+  "created_at": "2026-11-04T16:20:04.255Z",
+  "finished_at": "2026-11-04T16:20:10.951Z",
+  "status": "completed",
+  "suite": {
+    "id": "coding",
+    "version": "1.0.0",
+    "sha256": "18763e34d48562be7784bcf124682531b6bf745cfec90ff645942dfb9615e87d"
+  },
+  "prompt": {
+    "id": "js-function",
+    "version": "1",
+    "sha256": "c44cc1445bf7b66847809311a638b44c3cdcb970f659de0543f8d661982bc04b"
+  },
+  "experiment": {
+    "id": "coding-sweep",
+    "description": "The coding suite through four harnesses, one model each, with the user setup kept out where the harness allows it. Each answer runs against hidden tests in a sandboxed Node process. Descriptive: model and harness both vary.\n",
+    "suite": "coding",
+    "prompt": "js-function",
+    "repeats": 1,
+    "targets": [
+      {
+        "model": "claude-haiku-5.5",
+        "harness": "claude-code"
+      },
+      {
+        "model": "gpt-6-luna-low",
+        "harness": "codex"
+      },
+      {
+        "model": "deepseek-v4.1-flash-max",
+        "harness": "command-code"
+      },
+      {
+        "model": "beam-free",
+        "harness": "opencode"
+      }
+    ],
+    "workdir": "isolated",
+    "user_config": "isolated",
+    "timeout_s": 300,
+    "evaluators": [
+      {
+        "id": "js-function",
+        "version": "1",
+        "dimension": "quality"
+      }
+    ],
+    "cases": [
+      "coding-roman"
+    ]
+  },
+  "models": [
+    {
+      "model_key": "beam-free",
+      "provider": "opencode",
+      "model": "opencode/beam-free",
+      "params": {},
+      "context_window": null,
+      "reasoning_effort": null,
+      "pricing": {}
+    }
+  ],
+  "repeats": 1,
+  "evaluators": [
+    {
+      "id": "js-function",
+      "version": "1",
+      "dimension": "quality"
+    }
+  ],
+  "harness": {
+    "name": "opencode",
+    "version": "2.2.5",
+    "entrypoint": "headless",
+    "access_method": "subscription",
+    "platform": "win32",
+    "session_id": null,
+    "settings": {
+      "workdir": "isolated",
+      "workdir_git_fence": true,
+      "timeout_s": 300,
+      "persist_sessions": false,
+      "user_config": "loaded",
+      "user_config_requested": "isolated",
+      "user_config_flags": [],
+      "user_config_note": "This harness has no flag to skip the user setup; it always loads it."
+    }
+  },
+  "notes": "Run by lab opencode; experiment file sha256 7d3b00390ac828a99ffe0bb0e75f88dc4ca88cc101d5600314fbf569e103f8b9."
+}

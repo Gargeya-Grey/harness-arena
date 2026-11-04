@@ -61,6 +61,22 @@ Each CLI call runs in an empty, isolated folder that is its own git repository. 
 
 Cost is optional. With `pricing` in the registry entry, the dashboard shows an API-equivalent cost. Without it, cost is n/a. A subscription bill does not change per call.
 
+## Suites
+
+| Suite | Cases | Prompt | Evaluator | Experiment |
+|---|---|---|---|---|
+| `smoke` | 4 one-word questions | `qa-single-turn` | `normalized-match@1`, `exact-match@1` | `smoke-harness-sweep`, `smoke-opencode` |
+| `reasoning` | 15 word problems, many with a trap answer | `reasoning-final-answer` | `final-answer@1`: the last `Answer:` line; numbers compare as numbers | `reasoning-sweep` |
+| `coding` | 8 JavaScript functions with hidden tests | `js-function` | `js-function@1`: share of tests passed | `coding-sweep` |
+
+`js-function@1` runs the model's code in its own Node process with the permission model on. The code can read only the sandbox runner file, and cannot write files, start processes, use workers or load addons. The process gets none of your environment variables (Windows adds a few system ones, such as `PATH`), a 256 MB heap and a time limit. Each test gets a fresh context and 2 seconds. The expected values never enter the sandbox, and the lab counts only the result line that carries a random nonce, so escaped code cannot fake a score. Node does not limit network access. So the sandbox keeps your files and secrets safe, but it is not a network jail.
+
+Start with one case before a full sweep. For example, this call costs nothing on the free OpenCode model:
+
+```bash
+node lab run experiments/coding-sweep.yaml --harness opencode --repeats 1 --cases coding-roman
+```
+
 ## How a comparison works
 
 - **Configuration**: model + harness + harness version + effort + user setup. Its id is `<model_key>__<harness>-<version>__<effort|default>`, plus `__isolated` when the run kept the user setup out.
@@ -74,7 +90,7 @@ Example: `smoke-harness-sweep` runs Claude Haiku 5.5 through Claude Code and thr
 ```
 lab/                       The CLI: run, score, validate, doctor, runs, report
   adapters/                One file per built-in harness on one seam (cli.mjs); declared.mjs reads configs/harnesses.yaml
-  evaluators/              Versioned scorers (exact-match@1, normalized-match@1, svg-structure@1)
+  evaluators/              Versioned scorers (exact-match, normalized-match, final-answer, js-function, svg-structure)
   lib/                     YAML and JSON Schema subsets, metrics, derived state
 dashboard/                 Local comparison UI: server.mjs + public/ (static, no build)
 configs/models.yaml        Model registry: exact id, params, optional pricing, per-harness ids

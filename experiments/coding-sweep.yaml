@@ -1,0 +1,27 @@
+id: coding-sweep
+description: >
+  The coding suite through four harnesses, one model each, with the user setup
+  kept out where the harness allows it. Each answer runs against hidden tests in
+  a sandboxed Node process. Descriptive: model and harness both vary.
+suite: coding
+prompt: js-function
+repeats: 3
+
+targets:
+  - model: claude-haiku-5.5
+    harness: claude-code
+  - model: gpt-6-luna-low
+    harness: codex
+  - model: deepseek-v4.1-flash-max
+    harness: command-code
+  - model: beam-free
+    harness: opencode
+
+workdir: isolated
+user_config: isolated
+timeout_s: 300
+
+evaluators:
+  - id: js-function
+    version: "1"
+    dimension: quality

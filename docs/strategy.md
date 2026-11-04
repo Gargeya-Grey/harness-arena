@@ -104,7 +104,7 @@ Quality and reliability are deliberately separate: a model can be right on avera
 - **New suite** - new folder with `suite.yaml` and `cases.jsonl`. Bump `version` whenever cases change.
 - **New model** - add a registry entry with exact snapshot and pricing. Pricing is required for cost metrics.
 - **New prompt version** - add `vN.yaml`, point `prompt.yaml` at it, and reference the new version in the next experiment. Old runs keep their version.
-- **New evaluator** - give it an `id`, `version`, and `dimension`; write scores to `scores/<id>@<version>.jsonl`.
+- **New evaluator** - give it an `id`, `version`, and `dimension`; write scores to `scores/<id>@<version>.jsonl`. An evaluator that runs model-written code runs it through `runJsTests` (`lab/evaluators/index.mjs`): a separate Node process with the permission model, an empty environment and a time limit. Never `eval` model output in the lab process.
 
 ## Deliberately postponed
 
