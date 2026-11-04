@@ -1,0 +1,23 @@
+id: opencode-coding
+description: >
+  The coding suite (JavaScript functions checked by hidden tests in a sandbox) through OpenCode, two free models.
+  Controlled: only the model differs. To compare other models, add
+  targets (each model key must be in configs/models.yaml).
+suite: coding
+prompt: js-function
+repeats: 3
+
+targets:
+  - model: beam-free
+    harness: opencode
+  - model: pulse-alpha-free
+    harness: opencode
+
+workdir: isolated
+user_config: isolated
+timeout_s: 300
+
+evaluators:
+  - id: js-function
+    version: "1"
+    dimension: quality

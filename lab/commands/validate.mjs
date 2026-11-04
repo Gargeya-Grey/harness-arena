@@ -8,6 +8,7 @@ import { SchemaSet } from '../lib/schema.mjs';
 import { loadPrompt, loadRegistry, loadSuite, loadYamlFile, paths, resolveExperiment } from '../lib/repo.mjs';
 import { harnessesFile, loadAdapters, readDeclared } from '../adapters/index.mjs';
 import { getEvaluator } from '../evaluators/index.mjs';
+import { listTree } from '../lib/workspace.mjs';
 
 export function validateRepo(root) {
   const p = paths(root);
@@ -61,6 +62,11 @@ export function validateRepo(root) {
         if (workspace != null) {
           if (typeof workspace !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(workspace)) report(file, `line ${index + 1}: input.workspace must be a plain folder name`);
           else if (!fs.existsSync(path.join(suite.dir, 'workspaces', workspace))) report(file, `line ${index + 1}: workspaces/${workspace} does not exist`);
+          else {
+            const others = [];
+            listTree(path.join(suite.dir, 'workspaces', workspace), undefined, others);
+            if (others.length) report(file, `line ${index + 1}: workspaces/${workspace} holds ${others.join(', ')}, which is not a regular file or folder`);
+          }
         }
         const checkName = item.expected?.check;
         if (checkName != null) {
@@ -114,6 +120,7 @@ export function validateRepo(root) {
       if (!suite) report(abs, `suite "${experiment.suite}" not found`);
       const usesWorkspace = suite && (experiment.cases || suite.cases.map((item) => item.case_id)).some((id) => suite.cases.find((entry) => entry.case_id === id)?.input?.workspace != null);
       if ((experiment.access === 'edit' || usesWorkspace) && experiment.workdir === 'repo') report(abs, `workdir must be "isolated" when access is "edit" or a case has a workspace`);
+      if (usesWorkspace && experiment.access !== 'edit') report(abs, `access must be "edit": a case has a workspace, and without edit access the agent cannot change any file`);
       let prompt = null;
       try {
         prompt = loadPrompt(root, experiment.prompt, experiment.prompt_version);

@@ -14,8 +14,12 @@ export const WORKSPACE_LIMITS = { files: 200, fileBytes: 1024 * 1024, totalBytes
 const UNSAFE_NAME = /[:?*"<>|\\]|[\u0000-\u001f]/;
 const UNSAFE_NAME_ALL = new RegExp(UNSAFE_NAME.source, 'g');
 
-/** Relative POSIX paths of every regular file under dir, sorted. Skips .git and node_modules; never follows links. */
-export function listTree(dir, skipDirs = SKIP_DIRS) {
+/**
+ * Relative POSIX paths of every regular file under dir, sorted. Skips .git and
+ * node_modules; never follows links. Links and other entries that are not a
+ * regular file or folder go into `others` when it is given.
+ */
+export function listTree(dir, skipDirs = SKIP_DIRS, others = null) {
   const out = [];
   const walk = (abs, rel) => {
     for (const entry of fs.readdirSync(abs, { withFileTypes: true })) {
@@ -24,6 +28,8 @@ export function listTree(dir, skipDirs = SKIP_DIRS) {
         if (!skipDirs.has(entry.name)) walk(path.join(abs, entry.name), next);
       } else if (entry.isFile()) {
         out.push(next);
+      } else if (others) {
+        others.push(next);
       }
     }
   };
@@ -31,8 +37,12 @@ export function listTree(dir, skipDirs = SKIP_DIRS) {
   return out.sort();
 }
 
+/** Copy a starter project. A link in it would be lost on some systems, so it is refused. */
 export function copyTree(from, to) {
-  for (const rel of listTree(from)) {
+  const others = [];
+  const files = listTree(from, SKIP_DIRS, others);
+  if (others.length) throw new Error(`${from} holds ${others.join(', ')}, which is not a regular file or folder; a starter project may hold only those`);
+  for (const rel of files) {
     const target = path.join(to, ...rel.split('/'));
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.copyFileSync(path.join(from, ...rel.split('/')), target);
@@ -49,22 +59,17 @@ export function treeHash(dir) {
 /**
  * A fingerprint of folders: the content hash of every file, so a change that keeps
  * size and modification time still shows.
- * The runner takes one before and one after an agent call; `stampDiff` names the
- * first path that differs. `skip` holds absolute folders to leave out.
+ * The runner takes one of the repository before and one after an agent call;
+ * `stampDiff` names the first path that differs. Folders named in `skipDirs` are
+ * left out at any depth.
  */
-export function treeStamp(root, folders, skip = []) {
+export function treeStamp(root, skipDirs = SKIP_DIRS) {
   const stamp = new Map();
-  const skipped = skip.map((item) => path.resolve(item));
-  for (const folder of folders) {
-    const abs = path.join(root, folder);
-    for (const rel of listTree(abs)) {
-      const file = path.join(abs, ...rel.split('/'));
-      if (skipped.some((item) => file === item || file.startsWith(item + path.sep))) continue;
-      try {
-        stamp.set(`${folder}/${rel}`, sha256(fs.readFileSync(file)));
-      } catch {
-        stamp.set(`${folder}/${rel}`, 'unreadable');
-      }
+  for (const rel of listTree(root, skipDirs)) {
+    try {
+      stamp.set(rel, sha256(fs.readFileSync(path.join(root, ...rel.split('/')))));
+    } catch {
+      stamp.set(rel, 'unreadable');
     }
   }
   return stamp;
@@ -95,9 +100,11 @@ function isText(buffer) {
  */
 export function snapshotWorkspace({ fixtureDir, fixtureSha, workDir, runDir, base, artifactId, createdAt }) {
   const before = new Set(listTree(fixtureDir));
-  const after = listTree(workDir);
+  const links = [];
+  const after = listTree(workDir, SKIP_DIRS, links);
   const changed = [];
-  const skipped = [];
+  // A link the agent made is recorded, never followed or stored.
+  const skipped = links.map((rel) => ({ path: rel.replace(UNSAFE_NAME_ALL, '_'), bytes: 0, reason: 'not a regular file' }));
   let total = 0;
   for (const rel of after) {
     const file = path.join(workDir, ...rel.split('/'));

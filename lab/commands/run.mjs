@@ -34,8 +34,10 @@ export function mentionsFolder(text, folders) {
   return folders.some((folder) => folderSpellings(folder).some((needle) => needle.length > 3 && hay.includes(needle)));
 }
 
-// What an agent call must leave alone: the lab's inputs, code and stored evidence.
-const GUARDED_FOLDERS = ['datasets', 'prompts', 'configs', 'experiments', 'lab', 'schemas', 'results'];
+// What an agent call must leave alone: the whole repository (inputs, code, docs,
+// dashboard, stored evidence), except git internals, installed packages and the
+// local scratch folder.
+const UNGUARDED_DIRS = new Set(['.git', 'node_modules', '.cache']);
 
 /**
  * Environment overrides for an agent call: drop variables that point back at the
@@ -62,7 +64,7 @@ export function workspaceDir(suite, testCase) {
 // folder inside a home folder that is a git repo leaks that repo into the prompt.
 export function fenceWorkdir(dir) {
   fs.mkdirSync(dir, { recursive: true });
-  const result = spawnSync('git', ['init', '-q'], { cwd: dir, stdio: 'ignore', windowsHide: true });
+  const result = spawnSync('git', ['init', '-q'], { cwd: dir, stdio: 'ignore', windowsHide: true, timeout: 30000 });
   return result.status === 0;
 }
 
@@ -95,6 +97,7 @@ export function planExperiment(root, file, { harness: onlyHarness, models: onlyM
     if (missing.length) throw new Error(`Case ${item.case_id} lacks prompt variable(s): ${missing.join(', ')}`);
     if (item.input?.workspace != null) {
       if (experiment.workdir === 'repo') throw new Error(`Case ${item.case_id} has a workspace; agent tasks need workdir: isolated`);
+      if (access !== 'edit') throw new Error(`Case ${item.case_id} has a workspace; agent tasks need access: edit, or the agent cannot change any file`);
       if (!fs.existsSync(workspaceDir(suite, item))) throw new Error(`Case ${item.case_id}: workspace folder ${workspaceDir(suite, item)} not found`);
     }
   }
@@ -254,7 +257,7 @@ async function runHarness(root, plan, harnessName, modelKeys, { log, signal }) {
         // It is a tripwire, not an OS sandbox: see README "Agent tasks".
         const guarded = plan.workdirMode !== 'repo' && (plan.access === 'edit' || testCase.input?.workspace != null);
         // The current run folder is guarded too: the runner writes nothing there during a call.
-        const stampBefore = guarded ? treeStamp(root, GUARDED_FOLDERS) : null;
+        const stampBefore = guarded ? treeStamp(root, UNGUARDED_DIRS) : null;
         const fixtureSha = testCase.input?.workspace != null ? treeHash(workspaceDir(plan.suite, testCase)) : null;
         const startedAt = isoNow();
         let result;
@@ -280,9 +283,9 @@ async function runHarness(root, plan, harnessName, modelKeys, { log, signal }) {
         let halt = false;
         if (guarded) {
           let escape = null;
-          const changed = stampDiff(stampBefore, treeStamp(root, GUARDED_FOLDERS));
+          const changed = stampDiff(stampBefore, treeStamp(root, UNGUARDED_DIRS));
           if (changed) {
-            escape = `changed ${changed} in the lab repository; the experiment stops and this run is not scored. Restore the repository (git status, git checkout) before the next run`;
+            escape = `changed ${changed} in the lab repository while it ran; the experiment stops and this run is not scored. Check that file with git diff. If you edited it yourself during the call, this is a false alarm: keep your work and run again. Otherwise restore it (git checkout -- <file>) before the next run`;
             halt = true;
           } else if (mentionsFolder(`${JSON.stringify(result.events ?? [])}\n${result.text ?? ''}`, [root])) {
             escape = 'worked in the lab repository outside its work folder, where it could read the hidden checks';
@@ -368,7 +371,10 @@ async function runHarness(root, plan, harnessName, modelKeys, { log, signal }) {
   if (plan.workdirMode !== 'repo') manifest.harness.settings.workdir_git_fence = fenced;
   manifest.status = aborted || (attempts > 0 && failures === attempts) ? 'failed' : 'completed';
   if (aborted) manifest.notes += ' Interrupted before every row was written.';
-  if (halted) manifest.notes += ' Stopped: an agent changed files of the lab repository. Not scored; restore the repository, then run node lab score.';
+  if (halted) {
+    manifest.harness.settings.halted = 'left_workdir';
+    manifest.notes += ' Stopped: a file of the lab repository changed during an agent call. Not scored; node lab score skips it unless --force.';
+  }
   writeJson(path.join(runDir, 'run.json'), manifest);
   // The changed files may include the hidden checks, so a halted run is not scored.
   const written = halted ? [] : scoreRun(root, runDir, { log });

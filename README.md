@@ -23,6 +23,22 @@ A smaller first run is one case and one repeat:
 node lab run experiments/smoke-harness-sweep.yaml --repeats 1 --cases smoke-001
 ```
 
+### First test with OpenCode
+
+Three experiments compare two free OpenCode models (`beam-free`, `pulse-alpha-free`) on the three real suites. Only the model differs. Start with one case each, then run the full experiment:
+
+```bash
+node lab run experiments/opencode-reasoning.yaml --repeats 1 --cases reasoning-bat-ball
+node lab run experiments/opencode-coding.yaml    --repeats 1 --cases coding-roman
+node lab run experiments/opencode-agentic.yaml   --repeats 1 --cases agentic-slugify-bug
+node lab run experiments/opencode-reasoning.yaml # 90 calls
+node lab run experiments/opencode-coding.yaml    # 48 calls
+node lab run experiments/opencode-agentic.yaml   # 18 calls, up to 15 minutes each
+node lab dashboard
+```
+
+To add any other model that OpenCode reaches (`opencode models` lists them), add a key to `configs/models.yaml` with `model: <provider>/<model>`, add a target with that key, and run `node lab validate`.
+
 ## Commands
 
 | Command | What it does |
@@ -72,9 +88,9 @@ Cost is optional. With `pricing` in the registry entry, the dashboard shows an A
 
 `js-function@1` runs the model's code in its own Node process with the permission model on. The code can read only the sandbox runner file, and cannot write files, start processes, use workers, load addons or open `node:sqlite` (which gets past the permission model). The process gets none of your environment variables (Windows adds a few system ones, such as `PATH`), a 256 MB heap and a time limit. Each test gets a fresh context and 2 seconds. The expected values never enter the sandbox, and the lab counts only the result line that carries a random nonce, so escaped code cannot fake a score. Node does not limit network access or signals: code in the sandbox can use `fetch` and can send a signal to your other processes. So the sandbox keeps your files safe from that code, but it is not a network jail or an OS sandbox.
 
-**Agent tasks** (`access: edit` in the experiment). The runner copies the case's starter project (`datasets/<suite>/workspaces/<name>/`) into the call's isolated folder, and the harness gets its edit flags, so the agent can edit files and run commands there. The flags are recorded in `harness.settings.access_flags`. After the call the runner stores every changed or deleted file under `artifacts/.../workspace/` in the run. `workspace-tests@1` rebuilds the final workspace from that evidence alone, and checks it against the hidden check in `datasets/<suite>/checks/<name>/`, which the agent never gets. `probe.mjs` runs in a sandbox like the one of `js-function@1` and only reports what the agent's code returns. `expected.json` holds the answers and file rules (`exists`, `includes`, `same_as_starter`), and only the lab process reads it. So agent code in the sandbox cannot see the answers, and changed globals there can only spoil its own values. You can score a stored run again at any time, with no model call. If the starter project has changed since the run, the row gets no score, because the rebuild would not be the agent's workspace.
+**Agent tasks** (`access: edit` in the experiment; `run` and `validate` refuse a workspace case without it). The runner copies the case's starter project (`datasets/<suite>/workspaces/<name>/`) into the call's isolated folder, and the harness gets its edit flags, so the agent can edit files and run commands there. The flags are recorded in `harness.settings.access_flags`. After the call the runner stores every changed or deleted file under `artifacts/.../workspace/` in the run. `workspace-tests@1` rebuilds the final workspace from that evidence alone, and checks it against the hidden check in `datasets/<suite>/checks/<name>/`, which the agent never gets. `probe.mjs` runs in a sandbox like the one of `js-function@1` and only reports what the agent's code returns. `expected.json` holds the answers and file rules (`exists`, `includes`, `same_as_starter`), and only the lab process reads it. So agent code in the sandbox cannot see the answers, and changed globals there can only spoil its own values. You can score a stored run again at any time, with no model call. If the starter project has changed since the run, the row gets no score, and `node lab score` says so, because the rebuild would not be the agent's workspace. The runner stores up to 200 changed files, 1 MB each and 5 MB in all; a file over a limit is listed under `skipped` in the score details, and probes that need it fail. Home paths are removed from stored UTF-8 text files; other files are stored as they are.
 
-An agent is a program with a shell on your machine; the edit flags let it act without asking. Each call starts in its own folder: the runner also sets `PWD`, which OpenCode reads, and removes environment variables that name this repository. Edit access never runs with `workdir: repo`. Two tripwires keep a run honest. If the agent changes the content of a file of the lab (`datasets`, `prompts`, `configs`, `experiments`, `lab`, `schemas`, `results`, the current run included), the row gets the error `left_workdir`, the experiment stops, and that run is not scored: restore the repository with git, then run `node lab score`. If the agent's tool calls name this repository, in any slash style, where it could read the hidden checks, the row also gets `left_workdir`. A tripwire is not an OS sandbox: a process the agent leaves running, or a path it builds at run time, can get past it. Run agent tasks only with harnesses and models you trust on this machine.
+An agent is a program with a shell on your machine; the edit flags let it act without asking. Each call starts in its own folder: the runner also sets `PWD`, which OpenCode reads, and removes environment variables that name this repository. Edit access never runs with `workdir: repo`. Two tripwires keep a run honest. If a file anywhere in this repository changes during an agent call (all of it except `.git`, `node_modules` and `.cache`, the current run included), the row gets the error `left_workdir`, the experiment stops, and the run is marked `harness.settings.halted`. `node lab score` skips a stopped run unless you pass `--force`. The message names the file: check it with `git diff`. If you edited that file yourself during the call, it is a false alarm; keep your work and run again. If the agent's tool calls name this repository, in any slash style, where it could read the hidden checks, the row also gets `left_workdir`. A tripwire is not an OS sandbox: a process the agent leaves running, or a path it builds at run time, can get past it. Run agent tasks only with harnesses and models you trust on this machine.
 
 Start with one case before a full sweep. For example, this call costs nothing on the free OpenCode model:
 
@@ -112,6 +128,6 @@ docs/strategy.md           Principles, IDs, lifecycle, comparability rules
 docs/dashboard-spec.md     Dashboard design, data contract, visual system
 ```
 
-Set `LAB_ROOT` to point the CLI and dashboard at another data root. The tests use `LAB_ROOT=tests/fixtures/repo`.
+Set `LAB_ROOT` to point the CLI and dashboard at another data root. The tests use `LAB_ROOT=tests/fixtures/repo`. In PowerShell, set it first: `$env:LAB_ROOT='tests/fixtures/repo'`.
 
 Full rules: [docs/strategy.md](docs/strategy.md). Agent orientation: [AGENTS.md](AGENTS.md).

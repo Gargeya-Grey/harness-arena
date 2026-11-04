@@ -16,7 +16,8 @@ import { agentEnv, mentionsFolder, planExperiment, runCommand } from '../lab/com
 import { scoreRun } from '../lab/commands/score.mjs';
 import { validateRepo } from '../lab/commands/validate.mjs';
 import { readJson, readJsonl } from '../lab/lib/fsutil.mjs';
-import { WORKSPACE_LIMITS, listTree, rebuildWorkspace, snapshotWorkspace } from '../lab/lib/workspace.mjs';
+import { WORKSPACE_LIMITS, copyTree, listTree, rebuildWorkspace, snapshotWorkspace } from '../lab/lib/workspace.mjs';
+import { loadCheck, runWorkspaceCheck } from '../lab/evaluators/index.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, '..');
@@ -42,7 +43,7 @@ function tempRoot() {
   return root;
 }
 
-function experiment(root, harness, extra = []) {
+function experiment(root, harness, extra = [], caseId = 'agentic-slugify-bug') {
   const file = path.join(root, 'experiments', `${harness}.yaml`);
   fs.writeFileSync(
     file,
@@ -53,7 +54,7 @@ function experiment(root, harness, extra = []) {
       'repeats: 1',
       `harness: ${harness}`,
       'models: [claude-haiku]',
-      'cases: [agentic-slugify-bug]',
+      `cases: [${caseId}]`,
       'workdir: isolated',
       'access: edit',
       ...extra,
@@ -84,12 +85,12 @@ function fakeAgent(name, act) {
   };
 }
 
-async function runWith(t, name, act, extra) {
+async function runWith(t, name, act, extra, caseId) {
   const root = tempRoot();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   ADAPTERS[name] = fakeAgent(name, act);
   t.after(() => delete ADAPTERS[name]);
-  const [result] = await runCommand(root, experiment(root, name, extra), { log: () => {} });
+  const [result] = await runCommand(root, experiment(root, name, extra, caseId), { log: () => {} });
   const rows = readJsonl(path.join(result.runDir, 'raw.jsonl')).rows;
   const scoreDir = path.join(result.runDir, 'scores');
   const scoreFile = fs.existsSync(scoreDir) ? fs.readdirSync(scoreDir)[0] : null;
@@ -237,6 +238,88 @@ test('an agent that edits the lab stops the whole experiment, and its run is not
   assert.match(rows[0].error.message, /changed lab\/evaluators\/workspace-check\.mjs/);
   assert.equal(readJson(path.join(results[0].runDir, 'run.json')).status, 'failed');
   assert.ok(!fs.existsSync(path.join(results[0].runDir, 'scores')), 'a halted run is not scored');
+  // It stays unscored when scored again later, unless forced.
+  assert.equal(readJson(path.join(results[0].runDir, 'run.json')).harness.settings.halted, 'left_workdir');
+  assert.deepEqual(scoreRun(root, results[0].runDir), []);
+  assert.equal(scoreRun(root, results[0].runDir, { force: true }).length, 1);
+});
+
+test('the guard covers the whole repository, not only the lab folders', async (t) => {
+  const { rows, result } = await runWith(t, 'fake-docs-editor', ({ cwd }) => {
+    fs.writeFileSync(path.join(rootOf.current, 'NOTES.md'), 'planted\n');
+    fs.writeFileSync(path.join(cwd, 'src', 'slugify.mjs'), GOOD_SLUGIFY);
+  });
+  assert.equal(rows[0].error?.type, 'left_workdir');
+  assert.match(rows[0].error.message, /changed NOTES\.md/);
+  assert.match(rows[0].error.message, /false alarm/, 'the message never tells the owner to throw away their own edit');
+  assert.equal(result.halted, true);
+});
+
+test('a workspace case without access: edit is refused by run and by validate', (t) => {
+  const root = tempRoot();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = experiment(root, 'fake-any');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('access: edit\n', ''));
+  assert.throws(() => planExperiment(root, file), /need access: edit/);
+  assert.match(validateRepo(root).problems.join('\n'), /access must be "edit"/);
+});
+
+const SOLUTIONS = path.join(HERE, 'fixtures', 'agentic-solutions');
+
+test('every hidden check passes on a known-good solution, so each case can be won', async (t) => {
+  for (const name of ['slugify-bug', 'cart-discount', 'csv-quotes']) {
+    const { scores } = await runWith(t, `fake-solver-${name}`, ({ cwd }) => fs.cpSync(path.join(SOLUTIONS, name), cwd, { recursive: true }), [], `agentic-${name}`);
+    assert.equal(scores[0].passed, true, `${name}: ${JSON.stringify(scores[0].details)}`);
+  }
+});
+
+test('file rules: includes, exists false and same_as_starter each fail when they should', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-rules-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const fixture = path.join(dir, 'fixture');
+  fs.mkdirSync(fixture);
+  fs.writeFileSync(path.join(fixture, 'keep.txt'), 'original\n');
+  fs.writeFileSync(path.join(fixture, 'notes.txt'), 'hello\n');
+  const work = path.join(dir, 'work');
+  fs.cpSync(fixture, work, { recursive: true });
+  fs.writeFileSync(path.join(work, 'keep.txt'), 'changed\n');
+  fs.writeFileSync(path.join(work, 'secret.txt'), 'x\n');
+  const runDir = path.join(dir, 'run');
+  const artifact = snapshotWorkspace({ fixtureDir: fixture, workDir: work, runDir, base: 'w', artifactId: 'x', createdAt: '2026-11-04T00:00:00Z' });
+  const checkDir = path.join(dir, 'checks', 'rules');
+  fs.mkdirSync(checkDir, { recursive: true });
+  fs.writeFileSync(path.join(checkDir, 'probe.mjs'), 'export const probes = [];\n');
+  fs.writeFileSync(
+    path.join(checkDir, 'expected.json'),
+    JSON.stringify({ files: { 'keep.txt': { same_as_starter: true }, 'notes.txt': { includes: ['bye'] }, 'secret.txt': { exists: false }, 'missing.txt': { exists: true } } }),
+  );
+  const run = runWorkspaceCheck({ fixtureDir: fixture, check: loadCheck(path.join(dir, 'checks'), 'rules'), runDir, manifestPath: artifact.path });
+  assert.deepEqual(
+    run.results.map((item) => [item.name, item.ok, item.error]),
+    [
+      ['file keep.txt', false, 'file differs from the starter'],
+      ['file notes.txt', false, 'file lacks "bye"'],
+      ['file secret.txt', false, 'file should not exist'],
+      ['file missing.txt', false, 'file is missing'],
+    ],
+  );
+});
+
+test('a changed starter is reported when scoring, and a link in a starter is refused', async (t) => {
+  const { root, result } = await runWith(t, 'fake-fixer3', ({ cwd }) => fs.writeFileSync(path.join(cwd, 'src', 'slugify.mjs'), GOOD_SLUGIFY));
+  fs.appendFileSync(path.join(root, 'datasets', 'agentic', 'workspaces', 'slugify-bug', 'package.json'), '\n');
+  const lines = [];
+  scoreRun(root, result.runDir, { log: (line) => lines.push(line) });
+  assert.match(lines.join('\n'), /not scored, its starter project changed/);
+  const starter = path.join(root, 'datasets', 'agentic', 'workspaces', 'slugify-bug');
+  try {
+    fs.symlinkSync(path.join(starter, 'package.json'), path.join(starter, 'link.json'), 'file');
+  } catch {
+    t.diagnostic('this machine cannot create links; the link half of the test is skipped');
+    return;
+  }
+  assert.throws(() => copyTree(starter, path.join(root, 'copy')), /not a regular file or folder/);
+  assert.match(validateRepo(root).problems.join('\n'), /holds link\.json/);
 });
 
 test('agentEnv drops variables that point at the repository and OLDPWD, and keeps the rest of PATH', () => {

@@ -20,7 +20,7 @@ Commands
       --repeats <n>         Override the experiment's repeats
       --cases <a,b>         Run only these case ids (recorded in the run)
       --dry-run             Show what would run; call nothing, write nothing
-  score <run-id>... | --all   Recompute scores from raw.jsonl (no API calls)
+  score <run-id>... | --all   Recompute scores from raw.jsonl (no API calls); --force also scores a stopped run
   validate                Check inputs and every stored record against schemas/
   doctor                  Show which harnesses are installed here (built-in and configs/harnesses.yaml)
   runs                    List runs, newest first
@@ -44,6 +44,7 @@ async function main(argv) {
       cases: { type: 'string' },
       'dry-run': { type: 'boolean' },
       all: { type: 'boolean' },
+      force: { type: 'boolean' },
       write: { type: 'boolean' },
       port: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
@@ -69,7 +70,7 @@ async function main(argv) {
       return results.some((item) => item.status !== 'completed') ? 1 : 0;
     }
     case 'score':
-      scoreCommand(root, positionals, { all: values.all });
+      scoreCommand(root, positionals, { all: values.all, force: values.force });
       return 0;
     case 'validate':
       return validateCommand(root);

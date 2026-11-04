@@ -74,3 +74,9 @@ models:
     model: opencode/beam-free
     display_name: Beam (free)
     params: {}
+
+  pulse-alpha-free:
+    provider: opencode
+    model: opencode/pulse-alpha-free
+    display_name: Pulse Alpha (free)
+    params: {}

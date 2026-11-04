@@ -18,8 +18,13 @@ export function resolveRunDir(root, ref) {
   throw new Error(`No run matches "${ref}"`);
 }
 
-export function scoreRun(root, runDir, { log = () => {} } = {}) {
+export function scoreRun(root, runDir, { log = () => {}, force = false } = {}) {
   const manifest = readJson(path.join(runDir, 'run.json'));
+  // A run stopped by the workdir guard may have been scored against changed files.
+  if (manifest.harness?.settings?.halted && !force) {
+    log(`  skip: this run was stopped (${manifest.harness.settings.halted}); pass --force to score it anyway`);
+    return [];
+  }
   const { rows, problems } = readJsonl(path.join(runDir, 'raw.jsonl'));
   if (problems.length) throw new Error(`raw.jsonl line ${problems[0].line}: ${problems[0].message}`);
   const suite = loadSuite(root, manifest.suite.id);
@@ -41,6 +46,10 @@ export function scoreRun(root, runDir, { log = () => {} } = {}) {
       if (!testCase) continue;
       const result = evaluator.score({ raw, testCase, suite, runDir });
       if (!result) continue;
+      if (result.skip) {
+        log(`  ${raw.case_id} r${raw.repeat} ${raw.model_key}: not scored, ${result.skip}`);
+        continue;
+      }
       scores.push({
         run_id: manifest.run_id,
         case_id: raw.case_id,
@@ -62,12 +71,12 @@ export function scoreRun(root, runDir, { log = () => {} } = {}) {
   return written;
 }
 
-export function scoreCommand(root, refs, { all = false, log = console.log } = {}) {
+export function scoreCommand(root, refs, { all = false, force = false, log = console.log } = {}) {
   const dirs = all ? listDirs(paths(root).results).map((name) => path.join(paths(root).results, name)).filter((dir) => fs.existsSync(path.join(dir, 'run.json'))) : refs.map((ref) => resolveRunDir(root, ref));
   if (!dirs.length) throw new Error('Name a run id (or part of one), or pass --all');
   for (const dir of dirs) {
     log(path.basename(dir));
-    for (const item of scoreRun(root, dir, { log })) {
+    for (const item of scoreRun(root, dir, { log, force })) {
       log(`  ${path.relative(dir, item.file).replace(/\\/g, '/')}: ${item.count} scores, ${item.passed} passed`);
     }
   }
