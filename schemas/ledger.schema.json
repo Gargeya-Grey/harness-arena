@@ -48,7 +48,7 @@
     },
     "files": {
       "type": "object",
-      "description": "close, adopt: sha256 of every file of the run folder but scores/. resume: the run's files but run.json, raw.jsonl and harness-events.ndjson. row: the files that call wrote or changed. scores: sha256 of every scores/ file.",
+      "description": "close, adopt: sha256 of every file of the run folder but scores/. resume: the run's files but run.json, raw.jsonl and harness-events.ndjson. row: the files that call wrote or changed. scores: sha256 of each scores/ file the score command wrote (adopt: every scores/ file of the run's evaluators).",
       "additionalProperties": {
         "type": "string"
       }
@@ -72,6 +72,25 @@
         "owner"
       ],
       "description": "adopt: who vouched for the run."
+    },
+    "events": {
+      "type": "object",
+      "description": "row, resume: the size and sha256 of the first bytes of harness-events.ndjson that the ledger vouches for (after that row's events).",
+      "required": [
+        "size",
+        "sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
     }
   }
 }

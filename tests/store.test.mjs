@@ -23,6 +23,7 @@ import { buildState } from '../lab/lib/state.mjs';
 import { buildArgs } from '../dashboard/jobs.mjs';
 import { runProcess } from '../lab/adapters/process.mjs';
 import { setProcessWatch } from '../lab/lib/procwatch.mjs';
+import { writeRunFile } from '../lab/lib/runwrite.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES = path.join(REPO, 'tests', 'fixtures', 'repo');
@@ -757,27 +758,188 @@ test('ledger: adopt --all never adopts a halted run; naming it does', async (t) 
   assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
 });
 
-test('a row that cannot be stored after a call the guard passed closes the run as interrupted, and a resume calls it again', async (t) => {
-  const { root } = setup(t);
-  fake(t, 'fake-busy', () => '4');
-  const append = fs.appendFileSync;
-  let failed = false;
-  t.mock.method(fs, 'appendFileSync', function appendFile(file, text, ...rest) {
-    if (!failed && String(file).endsWith('raw.jsonl') && String(text).includes('smoke-002')) {
-      failed = true;
-      throw Object.assign(new Error('resource busy'), { code: 'EBUSY' });
-    }
-    return append.call(this, file, text, ...rest);
+/** A fake harness whose every answer comes with one event; counts its calls by case. */
+function eventsHarness(t, name, calls) {
+  ADAPTERS[name] = {
+    name,
+    kind: 'cli',
+    entrypoint: 'headless',
+    access_method: 'subscription',
+    supports_effort: false,
+    edit: { args: [], note: 'fake' },
+    detect: async () => ({ version: '1.0.0' }),
+    applied: () => ({}),
+    async call(ctx) {
+      calls.push(ctx.model);
+      return { text: '4', finish_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 }, wall_ms: 1, events: [{ type: 'note', text: `answered ${calls.length}` }] };
+    },
+  };
+  t.after(() => delete ADAPTERS[name]);
+}
+
+for (const [label, failing] of [
+  ['the raw row', (file, text) => String(file).endsWith('raw.jsonl')],
+  ['its events', (file) => String(file).endsWith('harness-events.ndjson')],
+  ['its ledger entry', (file, text, root) => String(file) === ledgerPath(root) && String(text).includes('"kind":"row"')],
+]) {
+  test(`a write that fails after a call the guard passed (${label}) leaves the run open, and a resume calls that row again`, async (t) => {
+    const { root } = setup(t);
+    const calls = [];
+    eventsHarness(t, `fake-busy-${label.length}`, calls);
+    const append = fs.appendFileSync;
+    let seen = 0;
+    let failed = false;
+    t.mock.method(fs, 'appendFileSync', function appendFile(file, text, ...rest) {
+      if (!failed && failing(file, text, root) && (seen += 1) === 2) {
+        failed = true;
+        throw Object.assign(new Error('resource busy'), { code: 'EBUSY' });
+      }
+      return append.call(this, file, text, ...rest);
+    });
+    const [result] = await runCommand(root, smokeExperiment(root, `busy${label.length}`, `fake-busy-${label.length}`, ['smoke-001', 'smoke-002', 'smoke-003']), { log: () => {} });
+    t.mock.restoreAll();
+    assert.equal(failed, true);
+    const manifest = JSON.parse(fs.readFileSync(path.join(result.runDir, 'run.json'), 'utf8'));
+    assert.equal(manifest.harness.settings.halted, undefined);
+    assert.equal(manifest.runner.interrupted, true);
+    // No close entry vouches for the half-stored row: the run is open, and counts nowhere.
+    assert.equal(trustOf(root, result.runId, result.runDir).state, 'open');
+    assert.ok(buildState(root).observations.filter((item) => item.run_id === result.runId).every((item) => item.trusted === false));
+    const [resumed] = await runCommand(root, null, { resume: result.runId, log: () => {} });
+    assert.equal(resumed.status, 'completed');
+    assert.equal(calls.length, 4, 'the failed row is called again, once');
+    assert.deepEqual(fs.readFileSync(path.join(result.runDir, 'raw.jsonl'), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line).case_id), ['smoke-001', 'smoke-002', 'smoke-003']);
+    assert.equal(fs.readFileSync(path.join(result.runDir, 'harness-events.ndjson'), 'utf8').split('\n').filter(Boolean).length, 3);
+    assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
+    assert.deepEqual(validateRepo(root).problems, []);
   });
-  const [result] = await runCommand(root, smokeExperiment(root, 'busy', 'fake-busy', ['smoke-001', 'smoke-002', 'smoke-003']), { log: () => {} });
+}
+
+test('ledger: events edited after a crash are caught, and the run is not resumed', async (t) => {
+  const { root } = setup(t);
+  const calls = [];
+  eventsHarness(t, 'fake-events', calls);
+  const [result] = await runCommand(root, smokeExperiment(root, 'events', 'fake-events', ['smoke-001', 'smoke-002', 'smoke-003']), { log: () => {} });
+  const raw = path.join(result.runDir, 'raw.jsonl');
+  fs.writeFileSync(raw, `${fs.readFileSync(raw, 'utf8').split('\n').slice(0, 2).join('\n')}\n`);
+  fs.rmSync(path.join(result.runDir, 'scores'), { recursive: true, force: true });
+  crashed(result.runDir);
+  crashInLedger(root, result.runId, 2);
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'open');
+  const events = path.join(result.runDir, 'harness-events.ndjson');
+  fs.writeFileSync(events, fs.readFileSync(events, 'utf8').replace('answered 1', 'answered X'));
+  assert.match(trustOf(root, result.runId, result.runDir).reason, /harness-events\.ndjson changed/);
+  await assert.rejects(runCommand(root, null, { resume: result.runId, log: () => {} }), /does not match the evidence ledger/);
+});
+
+test('ledger: an open run counts in no aggregate, its one unrecorded row included', async (t) => {
+  const { root } = setup(t);
+  fake(t, 'fake-open-agg', () => '4');
+  const [result] = await runCommand(root, smokeExperiment(root, 'openagg', 'fake-open-agg', ['smoke-001', 'smoke-002', 'smoke-003']), { log: () => {} });
+  fs.rmSync(path.join(result.runDir, 'scores'), { recursive: true, force: true });
+  crashed(result.runDir);
+  crashInLedger(root, result.runId, 2);
+  const raw = path.join(result.runDir, 'raw.jsonl');
+  const lines = fs.readFileSync(raw, 'utf8').split('\n').filter(Boolean);
+  const forged = { ...JSON.parse(lines[2]), latency_ms: 987654 };
+  fs.writeFileSync(raw, `${[lines[0], lines[1], JSON.stringify(forged)].join('\n')}\n`);
+  assert.deepEqual(trustOf(root, result.runId, result.runDir), { state: 'open', scores: 'match', unrecorded_last: true });
+  const state = buildState(root);
+  assert.ok(state.observations.filter((item) => item.run_id === result.runId).every((item) => item.trusted === false));
+  const ctx = state.contexts.find((item) => item.runs.includes(result.runId));
+  for (const agg of Object.values(ctx.aggregates)) assert.equal(agg.n, 0);
+});
+
+test('ledger: a run whose scores do not match counts in no metric at all', async (t) => {
+  const { root } = setup(t);
+  fake(t, 'fake-mis', () => '4');
+  const [result] = await runCommand(root, smokeExperiment(root, 'mis', 'fake-mis'), { log: () => {} });
+  const file = path.join(result.runDir, 'scores', 'exact-match@1.jsonl');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('"value":1', '"value":0'));
+  assert.equal(trustOf(root, result.runId, result.runDir).scores, 'mismatch');
+  const ctx = buildState(root).contexts.find((item) => item.runs.includes(result.runId));
+  for (const agg of Object.values(ctx.aggregates)) {
+    assert.equal(agg.n, 0);
+    assert.equal(agg.scored_n ?? 0, 0);
+  }
+});
+
+test('ledger: a resumed run keeps no old scores: they count again only once rescored', async (t) => {
+  const { root } = setup(t);
+  let calls = 0;
+  fake(t, 'fake-stale', () => {
+    calls += 1;
+    if (calls === 2) process.emit('SIGINT', 'cancel');
+    return '4';
+  });
+  const [result] = await runCommand(root, smokeExperiment(root, 'stale', 'fake-stale', ['smoke-001', 'smoke-002', 'smoke-003']), { log: () => {} });
+  assert.ok(fs.readdirSync(path.join(result.runDir, 'scores')).length, 'the stopped run was scored');
+  // The resume closes the run; its scoring then fails.
+  const rename = fs.renameSync;
+  t.mock.method(fs, 'renameSync', function renameFile(from, to, ...rest) {
+    if (String(to).includes(`${path.sep}scores${path.sep}`)) throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+    return rename.call(this, from, to, ...rest);
+  });
+  await runCommand(root, null, { resume: result.runId, log: () => {} }).catch(() => {});
   t.mock.restoreAll();
-  const manifest = JSON.parse(fs.readFileSync(path.join(result.runDir, 'run.json'), 'utf8'));
-  assert.equal(manifest.harness.settings.halted, undefined);
-  assert.equal(manifest.runner.interrupted, true);
-  assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
-  const [resumed] = await runCommand(root, null, { resume: result.runId, log: () => {} });
-  assert.equal(resumed.status, 'completed');
-  assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
+  const trust = trustOf(root, result.runId, result.runDir);
+  assert.equal(trust.scores, 'mismatch');
+  assert.ok(buildState(root).observations.filter((item) => item.run_id === result.runId).every((item) => item.trusted === false));
+  scoreRun(root, result.runDir, { log: () => {} });
+  assert.equal(trustOf(root, result.runId, result.runDir).scores, 'match');
+});
+
+test('ledger: a score file of an evaluator that cannot run is never recorded by a rescore', async (t) => {
+  const { root } = setup(t);
+  fake(t, 'fake-gone', () => '4');
+  const [result] = await runCommand(root, smokeExperiment(root, 'gone', 'fake-gone'), { log: () => {} });
+  // A run made with an evaluator this checkout no longer has, adopted as it was.
+  const manifestFile = path.join(result.runDir, 'run.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+  fs.writeFileSync(manifestFile, JSON.stringify({ ...manifest, evaluators: [...manifest.evaluators, { id: 'retired', version: '1', dimension: 'quality' }] }));
+  const gone = path.join(result.runDir, 'scores', 'retired@1.jsonl');
+  fs.writeFileSync(gone, fs.readFileSync(path.join(result.runDir, 'scores', 'exact-match@1.jsonl'), 'utf8').replaceAll('exact-match', 'retired'));
+  adoptCommand(root, [result.runId], { log: () => {} });
+  assert.equal(trustOf(root, result.runId, result.runDir).scores, 'match');
+  fs.writeFileSync(gone, fs.readFileSync(gone, 'utf8').replaceAll('"value":1', '"value":0'));
+  assert.equal(trustOf(root, result.runId, result.runDir).scores, 'mismatch');
+  scoreRun(root, result.runDir, { log: () => {} });
+  const trust = trustOf(root, result.runId, result.runDir);
+  assert.equal(trust.scores, 'mismatch');
+  assert.match(trust.scores_reason, /retired@1\.jsonl/);
+  assert.ok(buildState(root).observations.filter((item) => item.run_id === result.runId).every((item) => item.trusted === false));
+});
+
+test('a rescore never writes through a link: a hard-linked score file, a linked scores folder', async (t) => {
+  const { root, data } = setup(t);
+  fake(t, 'fake-link-score', () => '4');
+  const [victim] = await runCommand(root, smokeExperiment(root, 'victim', 'fake-link-score'), { log: () => {} });
+  const [result] = await runCommand(root, smokeExperiment(root, 'linker', 'fake-link-score'), { log: () => {} });
+  const victimFile = path.join(victim.runDir, 'run.json');
+  const before = fs.readFileSync(victimFile);
+  const score = path.join(result.runDir, 'scores', 'exact-match@1.jsonl');
+  fs.rmSync(score);
+  fs.linkSync(victimFile, score);
+  scoreRun(root, result.runDir, { log: () => {} });
+  assert.deepEqual(fs.readFileSync(victimFile), before, 'the other run is untouched');
+  assert.equal(fs.statSync(score).nlink, 1);
+  // A scores folder that is a link into another run is refused.
+  fs.rmSync(path.join(result.runDir, 'scores'), { recursive: true });
+  fs.symlinkSync(victim.runDir, path.join(result.runDir, 'scores'), 'junction');
+  t.after(() => fs.rmSync(path.join(result.runDir, 'scores'), { force: true }));
+  const victimFiles = fs.readdirSync(victim.runDir).sort();
+  assert.throws(() => writeRunFile(result.runDir, 'scores/exact-match@1.jsonl', 'x'), /not a plain folder/);
+  // The scorer does not get that far: the linked folder makes the run untrusted, so it is skipped.
+  let written = [];
+  try {
+    written = scoreRun(root, result.runDir, { log: () => {} });
+  } catch {
+    written = [];
+  }
+  assert.deepEqual(written, []);
+  assert.deepEqual(fs.readdirSync(victim.runDir).sort(), victimFiles);
+  assert.deepEqual(fs.readFileSync(victimFile), before);
+  assert.ok(data);
 });
 
 test('ledger: a resume after a crash before a row entry keeps the run open while that call is made again', async (t) => {

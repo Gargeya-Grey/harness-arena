@@ -8,6 +8,7 @@ import { findRunDir, loadSuite, runDirs } from '../lib/repo.mjs';
 import { storeFolders, takeLocks } from '../lib/lock.mjs';
 import { appendEntry, ensureLedger, ledgerPath, loadLedger, scoresEntry, trustRun } from '../lib/ledger.mjs';
 import { getEvaluator } from '../evaluators/index.mjs';
+import { writeRunFile } from '../lib/runwrite.mjs';
 
 export function resolveRunDir(root, ref) {
   if (fs.existsSync(path.join(ref, 'run.json'))) return path.resolve(ref);
@@ -74,13 +75,14 @@ export function scoreRun(root, runDir, { log = () => {}, force = false } = {}) {
         details: result.details,
       });
     }
-    const file = path.join(runDir, 'scores', `${evaluator.id}@${evaluator.version}.jsonl`);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, scores.map((score) => JSON.stringify(score)).join('\n') + (scores.length ? '\n' : ''), 'utf8');
-    written.push({ file, count: scores.length, passed: scores.filter((score) => score.passed).length });
+    // A new file renamed into place, never written through a link (lab/lib/runwrite.mjs).
+    const rel = `scores/${evaluator.id}@${evaluator.version}.jsonl`;
+    const file = writeRunFile(runDir, rel, scores.map((score) => JSON.stringify(score)).join('\n') + (scores.length ? '\n' : ''));
+    written.push({ file, rel, count: scores.length, passed: scores.filter((score) => score.passed).length });
   }
-  // The scores now in the folder are the ones the ledger vouches for.
-  if (ledger) appendEntry(ledgerPath(root), scoresEntry(manifest.run_id, runDir, manifest));
+  // The ledger vouches only for the files written now. A file of an evaluator that could
+  // not run stays unrecorded, so the run counts nowhere until it is rescored or adopted.
+  if (ledger) appendEntry(ledgerPath(root), scoresEntry(manifest.run_id, runDir, manifest, written.map((item) => item.rel)));
   return written;
 }
 

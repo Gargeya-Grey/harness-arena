@@ -2,6 +2,19 @@
 import { S } from './model.js';
 import { html, setHtml, dateTime } from './util.js';
 
+// All or nothing (lab/lib/ledger.mjs): a run that does not count in aggregates says why.
+function trustPill(r) {
+  const trust = r.trust;
+  if (!trust || trust.state === 'legacy') return '';
+  let label = null;
+  if (trust.state === 'halted') label = 'halted';
+  else if (trust.state === 'untrusted') label = /not in the ledger/.test(trust.reason || '') ? 'not in ledger' : 'changed';
+  else if (trust.state === 'open' && r.status !== 'running') label = 'open, not counted';
+  else if (trust.state === 'trusted' && trust.scores === 'mismatch') label = 'scores changed';
+  if (!label) return '';
+  return html` <span class="pill is-bad" title="${trust.reason || trust.scores_reason || 'not counted in any aggregate'}">${label}</span>`;
+}
+
 export function renderRuns() {
   const host = document.getElementById('runs-body');
   const note = document.getElementById('runs-note');
@@ -30,7 +43,7 @@ export function renderRuns() {
         <td data-label="Models" class="run-models">${(r.models || []).join(', ') || html`<span class="muted">none</span>`}</td>
         <td data-label="Rows" class="col-num"><span class="num${incomplete ? ' bad' : ''}">${r.rows} / ${r.expected_rows}</span></td>
         <td data-label="Errors" class="col-num"><span class="num${r.errors ? ' bad' : ''}">${r.errors}</span></td>
-        <td data-label="Status" class="run-status"><span class="pill${badStatus ? ' is-bad' : ''}">${r.status}</span>${r.trust?.state === 'untrusted' || r.trust?.state === 'halted' ? html` <span class="pill is-bad" title="${r.trust.reason || ''}">${r.trust.state === 'halted' ? 'halted' : /not in the ledger/.test(r.trust.reason || '') ? 'not in ledger' : 'changed'}</span>` : ''}</td>
+        <td data-label="Status" class="run-status"><span class="pill${badStatus ? ' is-bad' : ''}">${r.status}</span>${trustPill(r)}</td>
       </tr>`;
     });
     table = html`<div class="runs-wrap" role="region" aria-label="Runs table" tabindex="0"><table class="ledger ledger-runs">

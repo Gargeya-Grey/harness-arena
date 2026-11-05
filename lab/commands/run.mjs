@@ -18,7 +18,8 @@ import { resolveRunDir, scoreRun } from './score.mjs';
 import { modelCheck, normalizeErrorType, runLiveness } from '../lib/checks.mjs';
 import { LOCK_FILE, storeFolders, takeLocks } from '../lib/lock.mjs';
 import { startProcessWatch } from '../lib/procwatch.mjs';
-import { appendEntry, callFiles, closeEntry, ensureLedger, ledgerBytes, ledgerPath, lineSha, loadLedger, manifestCore, restoreLedger, rowLine, rowLines, trustRun } from '../lib/ledger.mjs';
+import { appendRunFile, own, runPath, writeRunFile } from '../lib/runwrite.mjs';
+import { appendEntry, callFiles, closeEntry, ensureLedger, eventsState, ledgerBytes, ledgerPath, lineSha, loadLedger, manifestCore, restoreLedger, rowLine, rowLines, trustRun } from '../lib/ledger.mjs';
 
 const DEFAULT_TIMEOUT_S = 300;
 const USER_CONFIG = new Set(['loaded', 'isolated']);
@@ -175,9 +176,7 @@ function writeArtifact(runDir, kind, row, text, harness) {
   const svg = extractSvg(text);
   if (!svg) return [];
   const rel = `artifacts/${row.case_id}/${row.model_key}__${harness}/r${row.repeat}/output.svg`;
-  const file = path.join(runDir, rel);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, svg, 'utf8');
+  writeRunFile(runDir, rel, svg);
   return [{ artifact_id: `${row.case_id}__${row.model_key}__r${row.repeat}__raw`, role: 'raw', mime: 'image/svg+xml', path: rel, sha256: sha256(svg), derived: false, created_at: isoNow() }];
 }
 
@@ -288,25 +287,7 @@ function tryGuardStamp(scope) {
  * The runner's own files in a run folder: an agent may have made one read-only. That is
  * a change the guard halts on; the runner still writes its row and closes the run.
  */
-function own(file) {
-  let stat;
-  try {
-    stat = fs.lstatSync(file);
-  } catch {
-    return file; // Not there yet.
-  }
-  // Never write through a link: a file with a second link (a hard link to another run's
-  // file) is copied to a new file of its own first, and anything else is refused.
-  if (!stat.isFile()) throw new Error(`${path.basename(file)} in the run folder is not a plain file`);
-  if (!(stat.mode & 0o200)) fs.chmodSync(file, 0o666);
-  if (stat.nlink > 1) {
-    const copy = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`;
-    fs.writeFileSync(copy, fs.readFileSync(file), { flag: 'wx' });
-    fs.rmSync(file, { force: true });
-    fs.renameSync(copy, file);
-  }
-  return file;
-}
+const manifestText = (manifest) => `${JSON.stringify(manifest, null, 2)}\n`;
 
 /** The folders an agent must not name: the repository, and the data folder with every stored run. */
 const labFolders = (root) => [root, paths(root).data].filter(Boolean);
@@ -331,7 +312,7 @@ function removeFolder(dir) {
 
 function heartbeat(session, at = isoNow()) {
   session.manifest.runner.heartbeat_at = at;
-  writeJson(own(path.join(session.runDir, 'run.json')), session.manifest);
+  writeRunFile(session.runDir, 'run.json', manifestText(session.manifest));
 }
 
 /** Start one run (one harness), or reopen a stopped one to continue it. */
@@ -371,6 +352,7 @@ async function openRun(root, plan, harnessName, modelKeys, { log, resume = null,
 
   session.runId = `${runStamp()}__${plan.suite.id}__${plan.experiment.id}__${crypto.randomBytes(3).toString('hex')}`;
   session.runDir = path.join(paths(root).results, session.runId);
+  fs.mkdirSync(session.runDir, { recursive: true });
   session.manifest = {
     run_id: session.runId,
     created_at: isoNow(),
@@ -416,7 +398,7 @@ async function openRun(root, plan, harnessName, modelKeys, { log, resume = null,
     runner: { pid: process.pid, heartbeat_at: isoNow() },
     notes: `Run by lab ${harnessName}; experiment file sha256 ${plan.experimentSha}.`,
   };
-  writeJson(path.join(session.runDir, 'run.json'), session.manifest);
+  writeRunFile(session.runDir, 'run.json', manifestText(session.manifest));
   record(plan, { kind: 'open', run_id: session.runId, core: manifestCore(session.manifest) });
   session.recorded = {};
   log(`\n${session.runId}\n  harness ${adapter.name} ${detected.version} · ${models.length} model(s) · ${plan.cases.length} case(s) · ${plan.repeats} repeat(s) · workdir ${plan.workdirMode}`);
@@ -599,8 +581,9 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
       // The agent's final workspace is evidence, kept even when the call failed or timed
       // out: the evaluator rebuilds it from this alone.
       const base = `artifacts/${safeSegment(row.case_id)}/${safeSegment(row.model_key)}__${safeSegment(adapter.name)}/r${repeat}/workspace`;
-      // A call that crashed before its row was written may have left a snapshot; it is not this call's.
-      fs.rmSync(path.join(runDir, ...base.split('/')), { recursive: true, force: true });
+      // A call that crashed before its row was written may have left a snapshot; it is not
+      // this call's. Never through a link: runPath refuses one on the way.
+      fs.rmSync(runPath(runDir, base), { recursive: true, force: true });
       try {
         const artifact = snapshotWorkspace({ fixtureDir: workspaceDir(plan.suite, testCase), fixtureSha, workDir: callCwd, runDir, base, artifactId: `${row.case_id}__${row.model_key}__r${repeat}__workspace`, createdAt: isoNow() });
         row.artifacts = [...(row.artifacts || []), artifact];
@@ -609,16 +592,14 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
       }
     }
     if (isolatedDir) row.metadata.workdir_removed = removeFolder(callCwd);
-    appendJsonl(own(path.join(runDir, 'raw.jsonl')), row);
-    own(path.join(runDir, 'harness-events.ndjson'));
-    for (const event of result.events || []) {
-      // Events keep what the call did, not how this machine is set up (lab/lib/redact.mjs).
-      appendJsonl(path.join(runDir, 'harness-events.ndjson'), { case_id: row.case_id, model_key: row.model_key, repeat, event: redactEvent(event) });
-    }
+    appendRunFile(runDir, 'raw.jsonl', rowLine(row));
+    // Events keep what the call did, not how this machine is set up (lab/lib/redact.mjs).
+    const events = (result.events || []).map((event) => rowLine({ case_id: row.case_id, model_key: row.model_key, repeat, event: redactEvent(event) })).join('');
+    if (events) appendRunFile(runDir, 'harness-events.ndjson', events);
     // The row entry comes last: the row's line, and every file this call wrote.
     const now = callFiles(runDir);
     const written = Object.fromEntries(Object.entries(now).filter(([rel, sha]) => session.recorded[rel] !== sha));
-    record(plan, { kind: 'row', run_id: session.runId, sha256: lineSha(rowLine(row)), files: written });
+    record(plan, { kind: 'row', run_id: session.runId, sha256: lineSha(rowLine(row)), files: written, events: eventsState(runDir) });
     session.recorded = now;
     session.done.add(rowKey(row.case_id, row.model_key, repeat));
     if (row.error) session.failures += 1;
@@ -669,15 +650,22 @@ async function closeRun(root, plan, session, { log, aborted, halted: haltedAs })
       : ' Stopped: another run of this experiment halted when a file of the lab repository changed during an agent call. Not scored; node lab score skips it unless --force.';
   }
   try {
-    writeJson(own(path.join(runDir, 'run.json')), manifest);
+    writeRunFile(runDir, 'run.json', manifestText(manifest));
   } catch (error) {
     log(`  warning: could not write run.json of ${session.runId} (${redactPaths(error.message)})`);
   }
-  try {
-    record(plan, closeEntry('close', session.runId, runDir, { status: manifest.status, ...(halted ? { halted } : {}) }));
-  } catch (error) {
-    log(`  warning: the close entry could not be written to the ledger (${error.message}); this run reads as not trusted`);
-    halted = halted || 'ledger_unwritable';
+  if (session.halted === 'write_failed') {
+    // A row may have reached raw.jsonl without its ledger entry. No close entry vouches for
+    // it: the run stays open in the ledger, and a resume drops that row and calls it again.
+    log(`  note: ${session.runId} stays open in the evidence ledger; continue it with node lab run --resume ${session.runId}`);
+    halted = halted || 'write_failed';
+  } else {
+    try {
+      record(plan, closeEntry('close', session.runId, runDir, { status: manifest.status, ...(halted ? { halted } : {}) }));
+    } catch (error) {
+      log(`  warning: the close entry could not be written to the ledger (${error.message}); this run reads as not trusted`);
+      halted = halted || 'ledger_unwritable';
+    }
   }
   // The changed files may include the hidden checks, so a halted run is not scored.
   const written = halted ? [] : scoreRun(root, runDir, { log });
@@ -846,7 +834,9 @@ async function resumeRun(root, ref, { log, force, dryRun }) {
   // The ledger decides what a resume may keep: a run it halted or cannot match is refused,
   // and the one unrecorded last row a crash may leave is dropped and called again.
   if (!dryRun) ensureLedger(root, { log });
-  const trust = trustRun(loadLedger(ledgerPath(root)), manifest.run_id, runDir);
+  const resumeLedger = loadLedger(ledgerPath(root));
+  const trust = trustRun(resumeLedger, manifest.run_id, runDir);
+  const ledgerRun = resumeLedger?.runs?.get(manifest.run_id) || null;
   if (trust.state === 'halted') throw new Error(`${manifest.run_id} was halted by the workdir guard (evidence ledger: ${trust.reason}); it cannot be resumed. Start a new run.`);
   if (trust.state === 'untrusted') throw new Error(`Cannot resume ${manifest.run_id}: it does not match the evidence ledger (${trust.reason}). Start a new run.`);
   const rawFile = path.join(runDir, 'raw.jsonl');
@@ -892,13 +882,22 @@ async function resumeRun(root, ref, { log, force, dryRun }) {
     }
   }
   const recorded = Object.fromEntries(Object.entries(callFiles(runDir)).filter(([rel]) => !redo.some((prefix) => rel.startsWith(prefix))));
-  record(plan, { kind: 'resume', run_id: manifest.run_id, lines: kept, files: recorded, core: manifestCore(manifest) });
-  for (const prefix of new Set(redo)) fs.rmSync(path.join(runDir, ...prefix.split('/').filter(Boolean)), { recursive: true, force: true });
+  // The events kept: those the ledger recorded with the last kept row (a closed run: all).
+  // Events of a call made again are cut, so they are never vouched for twice.
+  const eventsFile = path.join(runDir, 'harness-events.ndjson');
+  const eventsKeep = ledgerRun?.closed ? eventsState(runDir) : ledgerRun?.events || { size: 0, sha256: eventsState(runDir, 0).sha256 };
+  record(plan, { kind: 'resume', run_id: manifest.run_id, lines: kept, files: recorded, events: eventsKeep, core: manifestCore(manifest) });
+  for (const prefix of new Set(redo)) {
+    // Never through a link: a link on the way would remove another run's files.
+    const dir = runPath(runDir, `${prefix}x`);
+    fs.rmSync(path.dirname(dir), { recursive: true, force: true });
+  }
+  if (fs.existsSync(eventsFile) && fs.statSync(eventsFile).size > eventsKeep.size) fs.truncateSync(own(eventsFile), eventsKeep.size);
   if (droppedRow || tornLine) {
-    fs.truncateSync(rawFile, Buffer.byteLength(text.slice(0, (text.endsWith('\n') ? text.slice(0, -1) : text).lastIndexOf('\n') + 1), 'utf8'));
+    fs.truncateSync(own(rawFile), Buffer.byteLength(text.slice(0, (text.endsWith('\n') ? text.slice(0, -1) : text).lastIndexOf('\n') + 1), 'utf8'));
     if (droppedRow) log(`  note: dropped the last row of ${manifest.run_id}: the ledger has no entry for it (a crash between the two writes); it is called again`);
   }
-  if (addNewline && !droppedRow) fs.appendFileSync(rawFile, '\n', 'utf8');
+  if (addNewline && !droppedRow) appendRunFile(runDir, 'raw.jsonl', '\n');
   const session = await openRun(root, plan, manifest.harness.name, manifest.models.map((item) => item.model_key), { log, effort: group?.effort, resume: { manifest, runDir, rows, tornLine, recorded } });
   return withSigint(log, (signal) => execute(root, plan, [session], { log, signal }));
 }

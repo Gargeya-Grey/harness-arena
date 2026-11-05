@@ -8,18 +8,22 @@
 // during every agent call. It is compact JSONL, one entry per line, and only grows:
 //   open    a run started; `core` is the sha256 of run.json without its changing fields
 //   resume  a resume reopened a run, before it wrote anything: the rows it keeps and its files
-//   row     one row was written: the sha256 of its line, and of every file the call wrote
+//   row     one row was written: the sha256 of its line, of every file the call wrote, and the
+//           size and sha256 of harness-events.ndjson after its events
 //   halt    the guard stopped the run (written before the run closes)
 //   close   the run closed: the sha256 of every file but scores/, and of every row line
 //   adopt   a run vouched for as it is: when the ledger is created, or by `node lab adopt`
-//   scores  the scores/ files its evaluators wrote for a run (sha256 each)
-// A closed run is trusted when its files match its last close or adopt entry. A run still
-// open (or crashed) is trusted as far as it goes: its run.json core, every recorded file
-// and every recorded row must match. A run with a halt entry is halted, whatever run.json
-// says. Scores are derived data: when they do not match their last scores entry they do
-// not count, and a re-score repairs them. Only the files of the run's own evaluators are
-// scores; any other file in scores/ is never read. No ledger file at all: every run reads
-// as before. A ledger that exists but cannot be read trusts no run.
+//   scores  the scores/ files a score command wrote for a run (sha256 each)
+// All or nothing: a run counts in an aggregate only when it is closed, every file matches
+// its last close or adopt entry, and its scores match its last scores entry exactly (a
+// scores/ file of its evaluators that no score command recorded is a mismatch). Any other
+// run is listed and counts nowhere. A run still open (or crashed) is checked as far as it
+// goes, so a resume can continue it: its run.json core, every recorded file and row, and
+// the recorded start of its events must match. A run with a halt entry is halted,
+// whatever run.json says. Scores are derived: `node lab score` recomputes and records
+// them. Only the files of the run's own evaluators are scores; any other file in scores/
+// is never read. No ledger file at all: every run counts as before. A ledger that exists
+// but cannot be read trusts no run.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -36,6 +40,18 @@ const OPEN_VOLATILE = new Set(['run.json', 'raw.jsonl', 'harness-events.ndjson']
 
 export function ledgerPath(root) {
   return path.join(mainCheckout(root) ?? root, LEDGER_FILE);
+}
+
+/** The size and sha256 of the first `size` bytes of harness-events.ndjson (all by default). */
+export function eventsState(runDir, size = null) {
+  let bytes = Buffer.alloc(0);
+  try {
+    bytes = fs.readFileSync(path.join(runDir, 'harness-events.ndjson'));
+  } catch {
+    bytes = Buffer.alloc(0);
+  }
+  const part = size == null ? bytes : bytes.subarray(0, size);
+  return { size: part.length, sha256: sha256(part) };
 }
 
 /** The exact line appendJsonl writes for a record, so the ledger can hash a row. */
@@ -190,26 +206,28 @@ export function readLedger(file) {
       problems.push({ line: index + 1, message: 'entry has no run_id' });
       return;
     }
-    if (!runs.has(id)) runs.set(id, { files: {}, lines: [], closed: false, halted: null, scores: null, core: null });
+    if (!runs.has(id)) runs.set(id, { files: {}, lines: [], closed: false, halted: null, scores: null, core: null, events: null });
     const run = runs.get(id);
     switch (entry.kind) {
       case 'open':
-        Object.assign(run, { files: {}, lines: [], closed: false, core: entry.core ?? null });
+        Object.assign(run, { files: {}, lines: [], closed: false, core: entry.core ?? null, scores: null, events: null });
         break;
       case 'resume':
-        Object.assign(run, { files: { ...(entry.files || {}) }, lines: [...(entry.lines || [])], closed: false, core: entry.core ?? null });
+        // A resume makes the run's old scores stale: they count again only once rescored.
+        Object.assign(run, { files: { ...(entry.files || {}) }, lines: [...(entry.lines || [])], closed: false, core: entry.core ?? null, scores: null, events: entry.events ?? null });
         break;
       case 'row':
         run.lines.push(entry.sha256);
         Object.assign(run.files, entry.files || {});
         run.closed = false;
+        if (entry.events) run.events = entry.events;
         break;
       case 'halt':
         run.halted = entry.reason || 'left_workdir';
         break;
       case 'close':
       case 'adopt':
-        Object.assign(run, { files: { ...(entry.files || {}) }, lines: [...(entry.lines || [])], closed: true, core: null });
+        Object.assign(run, { files: { ...(entry.files || {}) }, lines: [...(entry.lines || [])], closed: true, core: null, events: null });
         if (entry.halted) run.halted = run.halted || entry.halted;
         // An owner's adopt vouches for the run as it is now, halted or not.
         if (entry.kind === 'adopt') run.halted = entry.halted || null;
@@ -329,6 +347,11 @@ export function trustRun(ledger, runId, runDir) {
   for (const rel of OPEN_VOLATILE) delete open[rel];
   const changed = firstDiff(run.files, open, { extraOk: true });
   if (changed) return { state: 'untrusted', scores: 'mismatch', reason: `${changed} since its row was recorded` };
+  if (run.events) {
+    const now = eventsState(runDir, run.events.size);
+    if (now.size < run.events.size) return { state: 'untrusted', scores: 'mismatch', reason: 'harness-events.ndjson lost events that the ledger recorded' };
+    if (now.sha256 !== run.events.sha256) return { state: 'untrusted', scores: 'mismatch', reason: 'harness-events.ndjson changed since its row was recorded' };
+  }
   const { lines } = rowLines(runDir);
   if (lines.length < run.lines.length) return { state: 'untrusted', scores: 'mismatch', reason: 'raw.jsonl lost rows that the ledger recorded' };
   const bad = run.lines.findIndex((sha, index) => sha !== lines[index]);
@@ -339,18 +362,17 @@ export function trustRun(ledger, runId, runDir) {
   return { state: 'open', ...scoreState, ...(lines.length === run.lines.length + 1 ? { unrecorded_last: true } : {}) };
 }
 
-/** The evidence can be read: legacy, trusted, open or halted (shown, flagged when halted). */
-export const evidenceOk = (trust) => trust.state !== 'untrusted';
-/** Its scores count: trusted (or no ledger in use), and they match their entry. */
-export const scoresCount = (trust) => (trust.state === 'trusted' || trust.state === 'legacy') && trust.scores === 'match';
+/** All or nothing: the run counts in aggregates (rows and scores) only when it is closed and every file and score matches, or no ledger is in use. */
+export const runCounts = (trust) => (trust.state === 'trusted' || trust.state === 'legacy') && trust.scores === 'match';
 
 /** Record a closed run (close) or a vouched-for run (adopt). */
 export function closeEntry(kind, runId, runDir, extra = {}) {
   return { kind, run_id: runId, files: runFiles(runDir).files, lines: rowLines(runDir).lines, ...extra };
 }
 
-export function scoresEntry(runId, runDir, manifest = readManifest(runDir)) {
-  return { kind: 'scores', run_id: runId, files: pick(runFiles(runDir).scores, scoreFileNames(manifest)) };
+/** The scores entry: the files a score command wrote (`written`), or, for an adopt, every scores/ file of the run's evaluators. */
+export function scoresEntry(runId, runDir, manifest = readManifest(runDir), written = null) {
+  return { kind: 'scores', run_id: runId, files: pick(runFiles(runDir).scores, written ? new Set(written) : scoreFileNames(manifest)) };
 }
 
 /** Adopt runs as they are now: their files, rows and scores. Returns the run ids adopted. */

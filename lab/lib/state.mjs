@@ -8,7 +8,7 @@ import { paths, loadRegistry, loadCases, runDirs } from './repo.mjs';
 import { SchemaSet } from './schema.mjs';
 import { clusteredInterval, mean, percentile, sum, variance } from './metrics.mjs';
 import { errorClass, modelCheck, runLiveness } from './checks.mjs';
-import { evidenceOk, ledgerPath, loadLedger, scoreFileNames, scoresCount, trustRun } from './ledger.mjs';
+import { ledgerPath, loadLedger, runCounts, scoreFileNames, trustRun } from './ledger.mjs';
 
 const TEXT_INLINE_LIMIT = 2 * 1024 * 1024;
 
@@ -399,7 +399,7 @@ export function buildState(root, { validate = true } = {}) {
     let errors = 0;
     // A halted run is never scored, whatever score file sits in its folder.
     // So is a run that does not match the evidence ledger, or that the ledger says was halted.
-    const runScored = manifest.status !== 'running' && !manifest.harness?.settings?.halted && scoresCount(trust) && listFiles(scoresDir, '.jsonl').length > 0;
+    const runScored = manifest.status !== 'running' && !manifest.harness?.settings?.halted && runCounts(trust) && listFiles(scoresDir, '.jsonl').length > 0;
     for (const raw of rawRows) {
       const config = buildConfig(manifest, raw.model_key, raw, registry);
       if (!configs[config.id]) {
@@ -442,7 +442,9 @@ export function buildState(root, { validate = true } = {}) {
         error_class: errorClass(raw.error),
         run_scored: runScored,
         // From the evidence ledger: false leaves the row out of every aggregate.
-        trusted: evidenceOk(trust),
+        // All or nothing (lab/lib/ledger.mjs): a run that is open, halted, changed or
+        // mis-scored is listed and counts in no aggregate.
+        trusted: runCounts(trust),
         model_check: raw.metadata?.model_check ?? modelCheck(raw.metadata?.harness_model ?? config.model, raw.metadata?.model_reported),
         metadata: raw.metadata || null,
         scores,

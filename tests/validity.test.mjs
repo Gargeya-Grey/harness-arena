@@ -316,8 +316,18 @@ test('errors of a halted or unscored run do not count as 0', async (t) => {
   fs.rmSync(path.join(result.runDir, 'scores'), { recursive: true, force: true });
   // A real halt also writes a halt entry to the evidence ledger.
   appendEntry(ledgerPath(root), { kind: 'halt', run_id: result.runId, reason: 'left_workdir' });
-  const ctx = buildState(root).contexts.find((item) => item.runs.includes(result.runId));
-  const agg = Object.values(ctx.aggregates)[0];
+  // All or nothing: a halted run is listed, and counts in no aggregate.
+  const state = buildState(root);
+  assert.equal(state.runs.find((run) => run.run_id === result.runId).trust.state, 'halted');
+  const halted = Object.values(state.contexts.find((item) => item.runs.includes(result.runId)).aggregates)[0];
+  assert.equal(halted.counted_n, 0);
+  assert.equal(halted.failed_n, 0);
+  assert.equal(halted.mean_quality, null);
+  // An unscored run that counts: its error shows, and gives no 0.00.
+  const [plain] = await runCommand(root, experiment(root, 'unscored', ['repeats: 1', 'cases: [smoke-001, smoke-002]', 'harness: fake-halt', 'models: [claude-haiku]']), { log: () => {} });
+  fs.rmSync(path.join(plain.runDir, 'scores'), { recursive: true, force: true });
+  appendEntry(ledgerPath(root), { kind: 'scores', run_id: plain.runId, files: {} });
+  const agg = Object.values(buildState(root).contexts.find((item) => item.runs.includes(plain.runId)).aggregates)[0];
   assert.equal(agg.counted_n, 0);
   assert.equal(agg.mean_quality, null, 'no 0.00 from errors alone');
   assert.equal(agg.failed_n, 1, 'the error still shows');
