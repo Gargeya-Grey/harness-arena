@@ -379,7 +379,8 @@ export function buildState(root, { validate = true } = {}) {
 
     const runConfigIds = new Set();
     let errors = 0;
-    const runScored = manifest.status !== 'running' && listFiles(scoresDir, '.jsonl').length > 0;
+    // A halted run is never scored, whatever score file sits in its folder.
+    const runScored = manifest.status !== 'running' && !manifest.harness?.settings?.halted && listFiles(scoresDir, '.jsonl').length > 0;
     for (const raw of rawRows) {
       const config = buildConfig(manifest, raw.model_key, raw, registry);
       if (!configs[config.id]) {
