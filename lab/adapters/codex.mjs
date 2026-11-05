@@ -1,6 +1,7 @@
 // OpenAI Codex CLI: `codex exec --json`, prompt on stdin. Read-only sandbox, or
 // workspace-write for agent tasks (access: edit).
 
+import path from 'node:path';
 import { defineCli } from './cli.mjs';
 import { jsonLines, stderrError, stderrTail } from './process.mjs';
 
@@ -13,6 +14,15 @@ export default defineCli({
   supportsEffort: true,
   edit: { args: ['-s', 'workspace-write'], note: 'Codex sandbox workspace-write: writes inside the call folder and, by Codex defaults, the temp folder.' },
   stdin: ({ prompt }) => prompt,
+  // No flag skips the user setup, but CODEX_HOME moves all of it (config.toml, AGENTS.md,
+  // skills, MCP servers, sessions). An isolated call gets an empty CODEX_HOME in a temp
+  // home that holds a copy of auth.json only. Codex refreshes the token on use and the
+  // refresh token rotates, so a refreshed auth.json goes back to the real home.
+  // Source: codex --help (-c reads ~/.codex/config.toml) and the documented CODEX_HOME variable.
+  isolation: {
+    home: { files: ['.codex/auth.json'], env: (home) => ({ CODEX_HOME: path.join(home, '.codex') }) },
+    note: 'Runs with an empty CODEX_HOME in a temp home that holds only the sign-in file. Skips config.toml, AGENTS.md, skills and MCP servers.',
+  },
 
   args({ model, effort, cwd, persist, access }) {
     const args = ['exec', '--json', '--skip-git-repo-check', ...(access === 'edit' ? [] : ['-s', 'read-only']), '--color', 'never', '-m', model];

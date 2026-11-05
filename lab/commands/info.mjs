@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadAdapters, readDeclared } from '../adapters/index.mjs';
 import { resolveCommand } from '../adapters/process.mjs';
+import { missingSignIn } from '../lib/temphome.mjs';
 import { buildState } from '../lib/state.mjs';
 import { paths } from '../lib/repo.mjs';
 
@@ -24,13 +25,30 @@ export async function doctorCommand({ root, log = console.log } = {}) {
   for (const [adapter, status, isolation, detail] of rows) {
     log(`${pad(adapter.name, 16)}${pad(adapter.declared ? 'declared' : 'built-in', 10)}${pad(status, 12)}${pad(isolation, 11)}${detail}`);
   }
+  // How "user_config: isolated" works for each harness. Names only: no path, no file content.
+  log('\nisolation by harness:');
+  for (const [adapter] of rows) {
+    const { flags = [], home } = adapter.isolation || {};
+    if (!flags.length && !home) {
+      log(`  ${pad(adapter.name, 14)}not available: ${adapter.isolation?.note || 'no isolation'}`);
+      continue;
+    }
+    const parts = [];
+    if (flags.length) parts.push(`flags ${flags.join(' ')}`);
+    if (home) {
+      const missing = missingSignIn(home.files, undefined, home.store);
+      const env = adapter.isolation.args.filter((arg) => !flags.includes(arg));
+      parts.push(missing.length ? `temp home NOT available, sign-in file missing: ${missing.join(', ')}` : `temp home available, copies ${[...home.files, ...(home.store ? [home.store.label] : [])].join(', ')} only, env ${env.join(' ')}${home.writeBack ? ', refreshed token written back' : ''}`);
+    }
+    log(`  ${pad(adapter.name, 14)}${parts.join('; ')}`);
+  }
   try {
     for (const problem of readDeclared(root).problems) log(`configs/harnesses.yaml: ${problem}`);
   } catch (error) {
     log(`configs/harnesses.yaml: ${error.message}`);
   }
   log('\nEach harness uses your own sign-in. Run it once by hand if a call fails with an auth error.');
-  log('isolation: what "user_config: isolated" can keep out. partial = some of your setup still loads. none = all of it loads.');
+  log('isolation: what "user_config: isolated" can keep out. partial = some of your setup still loads (a temp home keeps config out and may still load built-in defaults). none = all of it loads.');
   log('Connect another CLI: add it to configs/harnesses.yaml.');
 }
 
