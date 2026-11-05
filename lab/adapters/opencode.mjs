@@ -3,16 +3,45 @@
 // The model id names the provider (opencode/..., openai/..., openrouter/...), so any
 // provider connected inside OpenCode works with no change here.
 
+import path from 'node:path';
 import { defineCli } from './cli.mjs';
+import { createOpenCodeSignIn } from './opencode-signin.mjs';
 import { jsonLines, runProcess, stderrError, stderrTail } from './process.mjs';
 
 const BIN = 'opencode';
+
+// OpenCode 2.x keeps its sign-ins in a database, not in auth.json (see opencode-signin.mjs).
+// To place them in a temp home, OpenCode first makes its own empty database there.
+const signIn = createOpenCodeSignIn({
+  async init({ dir, env }) {
+    const run = await runProcess(BIN, ['auth', 'list', '--standalone'], { cwd: dir, env, timeoutMs: 60000 });
+    return run.error ? { error: { type: 'harness_error', message: `could not prepare the isolated OpenCode home: ${run.error.message}` } } : null;
+  },
+});
 
 export default defineCli({
   name: 'opencode',
   bin: BIN,
   supportsEffort: true,
   edit: { args: ['--auto'], note: 'Auto-approves permissions that are not explicitly denied.' },
+  // `opencode debug paths` shows the config, data, state and cache folders; XDG_* and the
+  // home folder move all of them (checked on 2.2.5). The temp home holds the provider
+  // sign-ins only (OAuth and keys): the rows of the database's credential table. opencode.json,
+  // plugins, rules, sessions and all other settings stay out. OAuth tokens refresh on use,
+  // so a refreshed credential goes back to the real database.
+  isolation: {
+    home: {
+      files: [],
+      store: signIn,
+      env: (home) => ({
+        XDG_CONFIG_HOME: path.join(home, '.config'),
+        XDG_DATA_HOME: path.join(home, '.local', 'share'),
+        XDG_STATE_HOME: path.join(home, '.local', 'state'),
+        XDG_CACHE_HOME: path.join(home, '.cache'),
+      }),
+    },
+    note: 'Runs with its own config, data and cache folders in a temp home that holds only the provider sign-ins (credential rows). Skips opencode.json, plugins, rules, sessions and custom providers; only providers that are signed in work.',
+  },
 
   // --standalone gives each call a private server, so a call never shares state
   // with the user's background OpenCode service. `--` keeps a prompt that starts
@@ -73,7 +102,13 @@ export default defineCli({
   // OpenCode stores every session. Unless the experiment keeps sessions, delete
   // the one this call made, so test runs do not fill the user's session list.
   // The row records whether the delete worked (harness_extra.session_deleted).
-  async after(parsed, { persist, cwd }) {
+  // An isolated call keeps its session in the temp home, which is deleted after the call
+  // (so persist_sessions cannot keep it there).
+  async after(parsed, { persist, cwd, tempHome }) {
+    if (tempHome) {
+      if (parsed.session_id) parsed.extra = { ...parsed.extra, session_deleted: true };
+      return;
+    }
     if (persist || !parsed.session_id) return;
     const run = await runProcess(BIN, ['session', 'delete', parsed.session_id, '--standalone'], { cwd, timeoutMs: 30000 });
     parsed.extra = { ...parsed.extra, session_deleted: !run.error && run.code === 0 };

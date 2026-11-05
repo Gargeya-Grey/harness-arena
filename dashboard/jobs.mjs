@@ -7,7 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { paths, loadYamlFile, loadCases, loadRegistry, resolveExperiment } from '../lab/lib/repo.mjs';
+import { paths, findRunDir, loadYamlFile, loadCases, loadRegistry, resolveExperiment, targetProblems } from '../lab/lib/repo.mjs';
 import { loadAdapters } from '../lab/adapters/index.mjs';
 import { isoNow } from '../lab/lib/fsutil.mjs';
 
@@ -37,6 +37,13 @@ export function buildArgs(root, body) {
   const p = paths(root);
   const command = body.command;
   if (!COMMANDS.includes(command)) throw bad(`Unknown command. Allowed: ${COMMANDS.join(', ')}`);
+  if (command === 'run' && body.resume != null) {
+    // Continue a stopped run: only its missing rows run (node lab run --resume).
+    const id = String(body.resume);
+    if (body.experiment) throw bad('Give an experiment or a run to resume, not both');
+    if (!RUN_ID.test(id) || !findRunDir(root, id)) throw bad(`No run with id "${id.slice(0, 80)}"`);
+    return ['run', '--resume', id];
+  }
   if (command === 'run') {
     const file = String(body.experiment || '');
     if (!FILE.test(file)) throw bad('Name an experiment file in experiments/, for example smoke-opencode.yaml');
@@ -66,7 +73,7 @@ export function buildArgs(root, body) {
       const ids = Array.isArray(body.run_ids) ? body.run_ids.map(String) : [];
       if (!ids.length) throw bad('Name one or more run ids, or set all');
       for (const id of ids) {
-        if (!RUN_ID.test(id) || !fs.existsSync(path.join(p.results, id, 'run.json'))) throw bad(`No run with id "${id.slice(0, 80)}"`);
+        if (!RUN_ID.test(id) || !findRunDir(root, id)) throw bad(`No run with id "${id.slice(0, 80)}"`);
       }
       args.push(...ids);
     }
@@ -92,7 +99,7 @@ export function catalog(root) {
     try {
       const doc = loadYamlFile(path.join(p.experiments, file)) || {};
       const resolved = resolveExperiment(doc, registry);
-      entry.problems.push(...resolved.problems);
+      entry.problems.push(...resolved.problems, ...targetProblems(resolved.targets.filter((t) => t.harness), registry, loadAdapters(root)));
       Object.assign(entry, {
         id: doc.id || entry.id,
         description: doc.description || '',
@@ -101,7 +108,7 @@ export function catalog(root) {
         repeats: doc.repeats ?? 1,
         access: doc.access || 'answer',
         user_config: doc.user_config || 'loaded',
-        targets: resolved.targets.map((t) => ({ model: t.model, harness: t.harness })),
+        targets: resolved.targets.map((t) => ({ model: t.model, harness: t.harness, effort: t.effort ?? null })),
         cases: Array.isArray(doc.cases) ? doc.cases : null,
       });
       try {
@@ -177,7 +184,8 @@ export function createJobs(root, { cliPath = CLI, env = process.env } = {}) {
     const id = `${isoNow().replace(/[-:.]/g, '').slice(0, 15)}-${crypto.randomBytes(3).toString('hex')}`;
     const child = spawn(process.execPath, [cliPath, ...args], {
       cwd: root,
-      env: { ...env, LAB_ROOT: root, LAB_JOB: '1', NO_COLOR: '1', FORCE_COLOR: '0' },
+      // LAB_ROOT makes the child ignore lab.local.yaml, so it gets the data folder by name.
+      env: { ...env, LAB_ROOT: root, ...(paths(root).data ? { LAB_DATA: paths(root).data } : {}), LAB_JOB: '1', NO_COLOR: '1', FORCE_COLOR: '0' },
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       detached: process.platform !== 'win32',

@@ -13,12 +13,18 @@ const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 export function facts(agg) {
   const a = agg || {};
   const errors = a.errors_n || 0;
+  // A failed call scores 0 and counts against the setup. A lost one (quota, sign-in, CLI
+  // missing) counts neither way. An aggregate without failed_n counts every error.
+  const failed = a.failed_n ?? errors;
   const checked = a.scored_n || 0;
   const passed = a.passed_n || 0;
-  const decided = checked + errors;
+  const decided = checked + failed;
   return {
     tries: a.n || 0,
     errors,
+    failed,
+    lost: a.lost_n || 0,
+    mismatched: a.model_mismatch_n || 0,
     checked,
     passed,
     unchecked: a.unscored_n || 0,

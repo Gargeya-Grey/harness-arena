@@ -4,8 +4,9 @@ One file per user-facing feature. Each file says how a user reaches the feature 
 
 | Feature | Surface | File | Sub-features |
 |---|---|---|---|
-| Run an experiment | CLI | [run-experiment.md](run-experiment.md) | run-dry, run-filter, run-live, run-errors, run-isolation, run-user-config, run-declared |
-| Validate and report | CLI | [validate-report.md](validate-report.md) | validate, report |
+| Run an experiment | CLI | [run-experiment.md](run-experiment.md) | run-dry, run-filter, run-live, run-errors, run-isolation, run-user-config, run-declared, run-agentic, run-resume, run-interleave |
+| Isolated user setup | CLI | [isolation-temp-home.md](isolation-temp-home.md) | iso-doctor, iso-dry, iso-record, iso-auth, iso-writeback |
+| Validate and report | CLI | [validate-report.md](validate-report.md) | validate, report, new-case |
 | Control page | Dashboard | [control-page.md](control-page.md) | home, run-preview, run-start, run-progress, run-stop, lab, appearance, shell, offline |
 | Results page | Dashboard | [results-page.md](results-page.md) | head, answer, setups, choose, cases, side-panel, charts, ratings, runs, change-test, jobbar, old-links |
 | Rate answers, saved views and Share | Dashboard | [results-rate-share.md](results-rate-share.md) | rate, saved-views, share |

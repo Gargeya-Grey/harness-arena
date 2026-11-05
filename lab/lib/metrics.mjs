@@ -59,6 +59,48 @@ export function bootstrapMean(values, seed = 'lab', resamples = 2000) {
 }
 
 /**
+ * Percentile bootstrap 95% interval of the mean over clustered values: one array of
+ * values per case. Repeats of one case are not independent samples, so each draw
+ * picks cases with replacement, then repeats inside each picked case. Three cases
+ * with three repeats are three tasks, not nine. Null below 3 cases: repeats of one
+ * or two cases say nothing about how the configuration does across cases.
+ */
+export function bootstrapClustered(groups, seed = 'lab', resamples = 2000) {
+  const clusters = groups.filter((group) => group.length);
+  if (clusters.length < 3) return null;
+  const random = seededRandom(seed);
+  const means = [];
+  for (let r = 0; r < resamples; r += 1) {
+    let total = 0;
+    let count = 0;
+    for (let c = 0; c < clusters.length; c += 1) {
+      const group = clusters[Math.floor(random() * clusters.length)];
+      for (let i = 0; i < group.length; i += 1) total += group[Math.floor(random() * group.length)];
+      count += group.length;
+    }
+    means.push(total / count);
+  }
+  means.sort((a, b) => a - b);
+  return [means[Math.floor(0.025 * resamples)], means[Math.ceil(0.975 * resamples) - 1]];
+}
+
+/**
+ * The interval the dashboard shows for a mean of 0..1 values grouped by case: the
+ * clustered bootstrap, widened to the Wilson interval with n = number of cases. The
+ * bootstrap alone collapses to [1, 1] when every case passes; three passing cases
+ * are not proof of a 100% rate.
+ */
+export function clusteredInterval(groups, seed = 'lab') {
+  const boot = bootstrapClustered(groups, seed);
+  if (!boot) return null;
+  const clusters = groups.filter((group) => group.length);
+  const all = clusters.flat();
+  const share = all.reduce((a, b) => a + b, 0) / all.length;
+  const bound = wilson(share * clusters.length, clusters.length);
+  return [Math.min(boot[0], bound[0]), Math.max(boot[1], bound[1])];
+}
+
+/**
  * Notional API-equivalent cost in USD. `usage.input_tokens` counts every
  * prompt token, cached or not; cache reads and writes are priced separately
  * when the registry gives a rate, else at the input rate.

@@ -224,7 +224,7 @@ export function runWorkspaceCheck({ fixtureDir, check, runDir, manifestPath }) {
       results.push({ name: `file ${rel}`, ok: !problem, ...(problem ? { error: problem } : {}) });
     }
     const probe = `.lab-probe-${crypto.randomUUID()}.mjs`;
-    fs.copyFileSync(check.probeFile, path.join(workspace, probe));
+    fs.copyFileSync(check.probeFile, path.join(workspace, probe)); // not a run folder: the scratch rebuild
     const nonce = crypto.randomUUID();
     const env = process.platform === 'win32' ? { SYSTEMROOT: process.env.SYSTEMROOT } : {};
     const reads = [workspace, ...(NODE_MAJOR < 23 ? [path.join(workspace, '*')] : []), WORKSPACE_CHECK].map((item) => `--allow-fs-read=${item}`);
@@ -268,7 +268,7 @@ export function runWorkspaceCheck({ fixtureDir, check, runDir, manifestPath }) {
     }
     return { ...(error ? { error } : {}), skipped: manifest.skipped || [], results };
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true }); // not a run folder: the scratch rebuild
   }
 }
 

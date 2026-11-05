@@ -5,6 +5,14 @@ import { answer, bestMarks, facts, gapP, rankSetups, wilson, errorWord, errorRea
 import { caseName, caseHint, durText, fairLine, groupTests, shortDate, testMeta, testTitle } from '../dashboard/public/js/words.js';
 
 const agg = (o) => ({ n: 0, scored_n: 0, passed_n: 0, unscored_n: 0, errors_n: 0, latency_n: 0, p50_latency_ms: null, ...o });
+
+test('facts: a failed call counts against the setup; a call lost to limits or sign-in does not', () => {
+  const f = facts(agg({ n: 4, scored_n: 2, passed_n: 2, errors_n: 2, failed_n: 1, lost_n: 1 }));
+  assert.equal(f.decided, 3);
+  assert.equal(f.rate, 2 / 3);
+  assert.equal(f.lost, 1);
+  assert.equal(f.errors, 2);
+});
 const setup = (id, name, a, errorReason = '') => ({ id, name, facts: facts(agg(a)), errorReason });
 const nine = (passed, p50, extra = {}) => ({ n: 9, scored_n: 9, passed_n: passed, latency_n: 9, p50_latency_ms: p50, ...extra });
 

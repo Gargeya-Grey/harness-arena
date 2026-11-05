@@ -1,8 +1,10 @@
 id: reasoning
-version: "1.0.0"
+version: "1.1.0"
 description: >
   Short word problems with one checkable answer: arithmetic, rates, logic, dates
   and counting. Several are classic traps where the first intuition is wrong.
   A number answer is compared as a number; a word answer after normalising.
+  The cases whose id ends in -1 or -2 after a template name are written by
+  datasets/reasoning/generate.mjs (seeded; every answer is computed in code).
 defaults:
   repeats: 3

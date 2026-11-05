@@ -1,0 +1,29 @@
+{
+  "probes": {
+    "keeps the basic escapes": ["&lt;b&gt;&amp;&quot;x&quot;&lt;/b&gt;","<b>&","||0"],
+    "an apostrophe is escaped as &#39;": ["<a title='it&#39;s'>","&#39;&amp;&#39;","it's"],
+    "keeps nested loops escaping once": "a&amp;b&lt;|c|",
+    "a partial without an argument gets the context of the loop item": ["<li>A&amp;B</li><li>C</li>","<li>x</li>"],
+    "keeps a partial with an argument": ["[T&amp;1]","[a][b]","[me]"],
+    "a partial written as a function writes its markup as it is": ["<b>1</b>","<i>2</i>","[]","<b>3</b><b>4</b>"],
+    "the parent context is reached from inside an if": ["T:a T:c ","T:b"],
+    "the parent context is reached through an if and a second loop": "S/g1/1 S/g1/2 S-g2 ",
+    "keeps ../ in plain nested loops": "x1 x2 y3 ",
+    "an outer @index survives an inner loop": ["0[012]0;1[0]1;2[]2;","LF;L;E;","p01p q0q "],
+    "keeps @index, @first, @last and @key in one loop": ["0F 1 2L ","a=1,b=2,"],
+    "if and unless treat empty lists and zero as false": ["Nn","Yy","Nn","Yy","Nn","Yy","Nn","Nn","Yy","Nn","Nn"],
+    "each falls back to its else part on empty and missing lists": ["<i>none</i>","a&amp;b","it&#39;s",""],
+    "keeps helper results escaped, and safe results raw": ["A&amp;B|a&b|&lt;, &gt;","<i>&lt;I&gt;&&amp;","same"],
+    "a partial inside a loop reaches the parent context": "T&#39;-a;T&#39;-b;",
+    "a partial calls itself on the children of each node": "<ul><li>a&amp;b<ul><li>c<ul></ul></li><li>d<ul><li>e<ul></ul></li></ul></li></ul></li><li>f<ul></ul></li></ul>",
+    "keeps endless partial recursion an error": ["threw","threw"],
+    "an option element built from a partial in a loop": "<select><option value='o&#39;1' selected>One &amp; only</option><option value='o2'>&lt;Two&gt;</option></select>",
+    "keeps values, paths and falsy values": "deep||0|false||12|2",
+    "keeps broken templates and unknown names an error": ["threw","threw","threw","threw","threw"],
+    "a compiled template renders again with other data": ["<li>a&#39;</li>","<li>b</li><li>c</li>",""]
+  },
+  "files": {
+    "test/render.test.mjs": {"same_as_starter":true},
+    "test/scope.test.mjs": {"same_as_starter":true}
+  }
+}

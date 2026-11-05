@@ -7,7 +7,9 @@ import { labRoot } from './lib/repo.mjs';
 import { runCommand } from './commands/run.mjs';
 import { scoreCommand } from './commands/score.mjs';
 import { validateCommand } from './commands/validate.mjs';
+import { newCase } from './commands/new-case.mjs';
 import { doctorCommand, reportCommand, runsCommand } from './commands/info.mjs';
+import { adoptCommand } from './commands/adopt.mjs';
 
 const HELP = `Model Lab: run the same suite through any CLI harness, then compare.
 
@@ -20,7 +22,15 @@ Commands
       --repeats <n>         Override the experiment's repeats
       --cases <a,b>         Run only these case ids (recorded in the run)
       --dry-run             Show what would run; call nothing, write nothing
-  score <run-id>... | --all   Recompute scores from raw.jsonl (no API calls); --force also scores a stopped run
+  run --resume <run-id>   Continue a run that stopped before its last row (crashed or stopped);
+                          only the missing rows run. --force for a run with no heartbeat
+  new-case <suite> <slug> Add a case to a suite with every value to fill marked; --agent adds
+                          a starter workspace and a hidden check; --prompt <id> names the fields
+  score <run-id>... | --all   Recompute scores from raw.jsonl (no API calls); --force also scores a stopped run.
+                          A run that does not match the evidence ledger is never scored
+  adopt <run-id>... | --all   Vouch for runs as they are now in the evidence ledger (lab.ledger.jsonl):
+                          runs copied in, committed later, or checked by hand. --all adopts
+                          every run the ledger does not trust yet
   validate                Check inputs and every stored record against schemas/
   doctor                  Show which harnesses are installed here (built-in and configs/harnesses.yaml)
   runs                    List runs, newest first
@@ -43,6 +53,9 @@ async function main(argv) {
       repeats: { type: 'string' },
       cases: { type: 'string' },
       'dry-run': { type: 'boolean' },
+      resume: { type: 'string' },
+      agent: { type: 'boolean' },
+      prompt: { type: 'string' },
       all: { type: 'boolean' },
       force: { type: 'boolean' },
       write: { type: 'boolean' },
@@ -56,8 +69,12 @@ async function main(argv) {
   }
   switch (command) {
     case 'run': {
-      if (!positionals[0]) throw new Error('Name an experiment file: node lab run experiments/<name>.yaml');
-      const results = await runCommand(root, path.resolve(positionals[0]), {
+      if (!positionals[0] && !values.resume) throw new Error('Name an experiment file: node lab run experiments/<name>.yaml, or resume a run: node lab run --resume <run-id>');
+      if (positionals[0] && values.resume) throw new Error('Give an experiment file or --resume <run-id>, not both');
+      if (values.resume && (values.harness || values.models || values.repeats || values.cases)) throw new Error('--resume continues the run as it was planned; --harness, --models, --repeats and --cases do not apply');
+      const results = await runCommand(root, positionals[0] ? path.resolve(positionals[0]) : null, {
+        resume: values.resume,
+        force: values.force,
         harness: values.harness,
         models: values.models ? values.models.split(',').map((item) => item.trim()).filter(Boolean) : undefined,
         repeats: values.repeats != null ? Number(values.repeats) : undefined,
@@ -71,6 +88,12 @@ async function main(argv) {
     }
     case 'score':
       scoreCommand(root, positionals, { all: values.all, force: values.force });
+      return 0;
+    case 'new-case':
+      newCase(root, positionals[0], positionals[1], { agent: values.agent, prompt: values.prompt });
+      return 0;
+    case 'adopt':
+      adoptCommand(root, positionals, { all: values.all });
       return 0;
     case 'validate':
       return validateCommand(root);
@@ -98,7 +121,7 @@ async function main(argv) {
 if (process.env.LAB_JOB === '1') {
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (text) => {
-    if (/\bcancel\b/.test(text)) process.emit('SIGINT', 'SIGINT');
+    if (/\bcancel\b/.test(text)) process.emit('SIGINT', 'cancel');
   });
   process.stdin.on('error', () => {});
   process.stdin.unref();

@@ -1,0 +1,28 @@
+id: reasoning-hard-sweep
+description: >
+  The reasoning-hard suite (thirty hard problems with one exact answer) through
+  four harnesses, one model each, with the user setup kept out where the harness
+  allows it. Descriptive: model and harness both vary. Same targets and evaluator
+  as reasoning-sweep; the timeout is longer because hard problems need more thinking.
+suite: reasoning-hard
+prompt: reasoning-final-answer
+repeats: 3
+
+targets:
+  - model: claude-haiku-5.5
+    harness: claude-code
+  - model: gpt-6-luna-low
+    harness: codex
+  - model: deepseek-v4.1-flash-max
+    harness: command-code
+  - model: beam-free
+    harness: opencode
+
+workdir: isolated
+user_config: isolated
+timeout_s: 600
+
+evaluators:
+  - id: final-answer
+    version: "1"
+    dimension: quality

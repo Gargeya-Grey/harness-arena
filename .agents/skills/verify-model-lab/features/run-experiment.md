@@ -7,8 +7,10 @@
 - `run-dry` prints the plan (model id per harness, effort, forwarded and not-forwarded params) and writes nothing.
 - `run-filter` limits a run with `--harness`, `--models`, `--repeats` and `--cases`.
 - `run-live` calls each harness, writes `results/<run_id>/`, and scores the run.
-- `run-errors` records a failed call as a row with `error` set; a run where every call failed is `failed`.
-- `run-isolation` runs each CLI call in an empty temp folder that is its own git repository.
+- `run-errors` records a failed call as a row with `error` set; a run where every call failed is `failed`. A usage limit or sign-in failure is stored as `rate_limit` or `auth` and counts as lost, not as 0.
+- `run-isolation` runs each CLI call in a new temp folder that is its own git repository, and deletes it after the call (`metadata.workdir_removed`).
+- `run-resume` continues a stale or stopped run with `--resume <run_id>`: only the missing rows run.
+- `run-interleave` runs every harness of one experiment in one loop (repeat, case, harness, model), and records `harness.settings.version_end` when a CLI updated itself during the run.
 - `run-user-config` adds each harness's isolation flags when the experiment sets `user_config: isolated`, and records them in `run.json` `harness.settings`.
 - `run-declared` runs a CLI declared in `configs/harnesses.yaml`, with no adapter code.
 - `run-agentic` runs an agent task (`access: edit`): copies the starter workspace in, adds the edit flags, stores the final workspace, and scores it with a hidden check.
@@ -32,6 +34,7 @@ Preconditions:
 - **User setup.** Run `LAB_ROOT=$ROOT node lab run $ROOT/experiments/smoke-opencode.yaml --dry-run`. Each line says `user setup loaded` or `user setup skipped (<flags>)`. No live call: `npm test -- --test-name-pattern "user_config"` proves the flags reach the call, `run.json` records them, and the configuration id ends in `__isolated`.
 - **Declared harness.** No live call: `node --test tests/harnesses.test.mjs` declares a fake CLI in a temp `configs/harnesses.yaml` and runs it as a real process. For a real CLI, add its entry, then `LAB_ROOT=$ROOT node lab doctor` lists it with source `declared`, and `LAB_ROOT=$ROOT node lab validate` reports any problem in the entry.
 - **Agent task.** No live call: `node --test tests/agentic.test.mjs` runs fake agents that fix the bug (score 1), do nothing (score below 1), try to forge the sandbox result line, read a file outside the sandbox or patch globals (refused), and edit the lab or name the repository (`left_workdir`, the experiment stops). Dry run: `LAB_ROOT=$ROOT node lab run $ROOT/experiments/agentic-sweep.yaml --dry-run` shows `access edit (<flags>)` on each line. Live, one free call: `LAB_ROOT=$ROOT node lab run $ROOT/experiments/agentic-sweep.yaml --harness opencode --repeats 1 --cases agentic-slugify-bug`. Then `$ROOT/results/<run_id>/artifacts/agentic-slugify-bug/beam-free__opencode/r0/workspace/workspace.json` lists the changed files, and `git status datasets` in the data root shows no change.
+- **Resume and interleaving, no live call.** `node --test tests/validity.test.mjs` crashes a fake run after two rows (stale heartbeat), resumes it, and checks that only two calls ran, the rows are in order and `validate` passes; it also checks that two fake harnesses alternate per case, that each call folder is new and deleted, and that a usage-limit row is lost while a timeout scores 0. By hand on a temp root: run any experiment, then edit its `run.json` to `"status": "running"` with an old `runner.heartbeat_at`; `LAB_ROOT=$ROOT node lab runs` shows `stale` and the resume command, and `LAB_ROOT=$ROOT node lab validate` prints a `warning:` line and still exits `0`.
 - **Proof.** Keep stdout, `$ROOT/results/<run_id>/run.json` and `raw.jsonl`. Check `run.json` `harness.settings.workdir_git_fence` is `true`.
 
 ## Gotchas
@@ -42,3 +45,10 @@ Preconditions:
 - `gemini-cli` with a free Google sign-in fails with `error.type` `auth` (`IneligibleTierError`). Set `GEMINI_API_KEY`, or run Gemini models through `command-code`.
 - A harness that is not installed is skipped with a message; the other harnesses still run.
 - An agent with edit access has a real shell. OpenCode starts its tools from `PWD`, not from the spawn folder; the runner sets `PWD` for that reason. A `left_workdir` error that names a changed file stops the experiment and leaves the run unscored: restore the repository with git, then `node lab score <run_id>`.
+
+## Data folder
+
+- `node lab doctor` prints where runs are written. With `lab.local.yaml` (`data_dir`) at the main checkout, every worktree prints the same `<data_dir>/results`.
+- Proof: run a one-case fake or fixture run with `LAB_DATA=<temp folder>`; the run folder appears there and not in `results/`; `node lab runs` and `/api/state` list it next to the committed runs.
+- Lock proof: while one `node lab run` is going, a second `node lab run` or `node lab score` from any worktree fails at once with `Another lab command is writing to the run store`. After the first one ends, `<data_dir>/.lab-run.lock` is gone. `tests/store.test.mjs` covers refusal, a takeover race of 6 processes, takeover of a crashed lock, release after a failed run, and every tamper case of the guard.
+- Ledger proof: after a one-case fake run, `lab.ledger.jsonl` at the main checkout has `open`, `row`, `close` and `scores` entries for it. Change one character of that run's `raw.jsonl`: `node lab validate` reports `does not match the evidence ledger`, the dashboard's `/api/state` lists the run with `trust.state: "untrusted"`, and `node lab score <run>` skips it. Undo the change and all three accept it again. `node lab adopt <run>` after a change makes it trusted as it is now.

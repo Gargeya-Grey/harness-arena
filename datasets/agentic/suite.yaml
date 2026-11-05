@@ -1,5 +1,5 @@
 id: agentic
-version: "1.0.2"
+version: "1.1.0"
 description: >
   Agent tasks. Each case copies a small starter project into the run's isolated
   workdir; the agent edits files and may run commands there. The runner stores

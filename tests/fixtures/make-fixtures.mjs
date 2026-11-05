@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { costUsd } from '../../lab/lib/metrics.mjs';
 import { sha256 } from '../../lab/lib/fsutil.mjs';
 import { redactEvent } from '../../lab/lib/redact.mjs';
+import { ensureLedger } from '../../lab/lib/ledger.mjs';
 import { loadSuite, loadPrompt, renderMessages, REPO_ROOT } from '../../lab/lib/repo.mjs';
 
 const OUT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'repo');
@@ -284,5 +285,9 @@ write('boards/haiku-harness.json', `${JSON.stringify({
   configs: ['claude-haiku__claude-code-2.1.306__default', 'claude-haiku__anthropic-api-2023-06-01__default'],
   view: {},
 }, null, 2)}\n`);
+
+// Without a ledger no run counts: the fixture store vouches for its runs as written.
+fs.rmSync(path.join(OUT, 'lab.ledger.jsonl'), { force: true });
+ensureLedger(OUT);
 
 console.log(`Fixtures written to ${OUT}`);

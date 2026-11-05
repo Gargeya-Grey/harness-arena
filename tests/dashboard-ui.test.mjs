@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { buildState } from '../lab/lib/state.mjs';
-import { S, setData, chooseContext, readHash, hashFor, defaultSel, shownSetups, chartNames } from '../dashboard/public/js/model.js';
+import { S, setData, chooseContext, readHash, hashFor, defaultSel, shownSetups, chartNames, cellObs } from '../dashboard/public/js/model.js';
 import { renderRatings } from '../dashboard/public/js/ratings.js';
 import { renderAnswer, renderHead } from '../dashboard/public/js/summary.js';
 import { renderSetups } from '../dashboard/public/js/setups.js';
@@ -68,6 +68,33 @@ test.beforeEach(() => {
 test.afterEach(() => {
   delete globalThis.document;
   delete globalThis.requestAnimationFrame;
+});
+
+test('an observation of a run that does not count is in no view: every view reads one index', () => {
+  const first = data.observations[0];
+  const before = cellObs(first.case_id, first.config_id, first.context_key).length;
+  const copy = structuredClone(data);
+  copy.observations.push({ ...first, id: `${first.id}-excluded`, run_id: 'excluded-run', trusted: false, status: 'error' });
+  setData(copy);
+  const list = cellObs(first.case_id, first.config_id, first.context_key);
+  assert.equal(list.length, before);
+  assert.ok(list.every((item) => item.trusted !== false));
+});
+
+test('runs: a run that does not count says why, and a run that stopped without finishing can resume', () => {
+  const copy = structuredClone(data);
+  const c = copy.contexts.find((item) => item.key === S.ctxKey);
+  const ids = c.runs.map((r) => (typeof r === 'string' ? r : r.run_id));
+  const [a, b] = copy.runs.filter((r) => ids.includes(r.run_id));
+  Object.assign(a, { trust: { state: 'untrusted', scores: 'mismatch', reason: 'it is not in the ledger' } });
+  Object.assign(b, { status: 'running', liveness: 'stale', resumable: true, trust: { state: 'open', scores: 'match' } });
+  setData(copy);
+  renderRuns();
+  const markup = node('runs').innerHTML;
+  assert.match(markup, /not counted: not in the ledger/);
+  assert.match(markup, /Stopped without finishing/);
+  assert.match(markup, new RegExp(`data-act="resume" data-run="${b.run_id}"`));
+  assert.match(markup, /not counted: did not finish/);
 });
 
 test('the head names the test and counts what it holds', () => {

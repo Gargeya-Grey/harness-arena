@@ -1,0 +1,41 @@
+import { t } from './_util.mjs';
+
+export default {
+  name: 'countPathsAvoiding',
+  signature: 'countPathsAvoiding(w, h, blocked) -> number',
+  kind: 'efficiency',
+  task: [
+    'Count the paths on the integer grid from (0, 0) to (w, h) in which every step moves one unit right (x + 1) or one unit up (y + 1), and no visited point (the start and the end included) is in blocked.',
+    'w and h are integers from 0 to 1000000.',
+    'blocked is an array of [x, y] integer pairs with at most 12 entries; it can contain the same point twice, and points outside the rectangle 0 <= x <= w, 0 <= y <= h (they can have negative coordinates) block nothing.',
+    'If the start or the end is blocked the answer is 0.',
+    'Return the number of paths modulo 1000000007 as a number.',
+  ].join(' '),
+  edges: {
+    'zero-size': 'from 0 to 1000000',
+    duplicate: 'the same point twice',
+    outside: 'points outside the rectangle',
+    'start-or-end': 'If the start or the end is blocked',
+    'huge-grid': 'modulo 1000000007',
+  },
+  tests: [
+    t('basic', [2, 2, []], 6),
+    t('basic', [2, 2, [[1, 1]]], 2),
+    t('zero-size', [0, 0, []], 1),
+    t('start-or-end', [0, 0, [[0, 0]]], 0),
+    t('start-or-end', [3, 3, [[3, 3]]], 0),
+    t('start-or-end', [3, 3, [[0, 0]]], 0),
+    t('basic', [1, 1, [[0, 1], [1, 0]]], 0),
+    t('outside', [2, 2, [[5, 5], [-1, 0], [0, 9]]], 6),
+    t('duplicate', [2, 2, [[1, 1], [1, 1]]], 2),
+    t('basic', [3, 2, [[1, 0], [0, 1]]], 0),
+    t('basic', [0, 5, [[0, 3]]], 0),
+    t('basic', [5, 0, []], 1),
+    t('basic', [4, 4, [[1, 1], [2, 2], [3, 0]]]),
+    t('basic', [10, 10, [[2, 3], [3, 2], [5, 5], [7, 4], [4, 7]]]),
+    t('huge-grid', [1000000, 1000000, []]),
+    t('huge-grid', [1000000, 1000000, [[500000, 500000], [1, 2], [2, 1], [999999, 1000000], [250000, 750000]]]),
+    t('huge-grid', [1000000, 999999, [[1000000, 999999], [3, 3]]], 0),
+    t('huge-grid', [123456, 987654, [[100000, 100000], [100000, 100000], [123456, 987653], [5, 7], [-4, 2], [200000, 2000000]]]),
+  ],
+};
