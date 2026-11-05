@@ -134,10 +134,14 @@ data_dir: ../Model-Lab-Data   # relative to this file, or an absolute path
 
 The guard only sees what changes while it watches. The ledger catches a forged or edited run later, whenever it is read, however the change was made.
 
-- `lab.ledger.jsonl` at the main checkout (shared by every worktree, not committed) records each run as it is written: when it opens, the sha256 of each row, a halt (written first, before any other write), the sha256 of every file when it closes, and the scores files.
-- The first `node lab run` or `node lab score` creates it and records every run already stored, as it is then.
-- `validate`, `score`, `--resume` and the dashboard check each run against it. A run whose files do not match, or that is not in it, is flagged in the dashboard, reported by `validate`, never scored, and never resumed. A run the ledger halted stays halted, whatever its `run.json` says.
+- `lab.ledger.jsonl` at the main checkout (shared by every worktree, not committed) records each run as it is written: when it opens (with a hash of `run.json`'s fixed fields), each row and every file its call wrote, a halt, a resume (before the resume writes anything), the sha256 of every file when it closes, and the scores files.
+- The first `node lab run`, `node lab score` or `node lab adopt` creates it and records every run already stored, as it is then (the main checkout's `results/` included).
+- `validate`, `score`, `--resume` and the dashboard check each run against it. A run whose files do not match, that is not in it, or whose folder is not named after its `run_id` is flagged in the dashboard ("not in ledger"), reported by `validate`, left out of every aggregate, never scored and never resumed. A run the ledger halted stays halted, whatever its `run.json` says.
+- When the guard halts a call, the runner puts the ledger back to the bytes it held before that call, plus the halt entry. Anything the agent wrote to the ledger is dropped and kept aside as `lab.ledger.halted-<run>-<id>.jsonl` for you to read.
+- Scores are derived data. Scores that do not match their ledger entry do not count, and `node lab score <run>` recomputes and records them.
 - A crash between a row and its ledger entry leaves one unrecorded last row; a resume drops it and calls it again.
+- `node lab adopt <run-id>...` (or `--all`) vouches for runs as they are now: a run copied from another clone, committed later, or checked by hand after a halt.
+- The ledger has its own lock (`.lab-run.lock` beside it), so a command with another data folder cannot write to it during an agent call.
 - It detects tampering; it does not prevent it. An agent runs with your file permissions. Real prevention needs OS isolation (a separate user or a sandbox), which the lab does not do yet.
 - Without a ledger file (a fresh clone, the fixtures), every run reads as before.
 

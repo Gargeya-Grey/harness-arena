@@ -30,7 +30,7 @@ export function renderRuns() {
         <td data-label="Models" class="run-models">${(r.models || []).join(', ') || html`<span class="muted">none</span>`}</td>
         <td data-label="Rows" class="col-num"><span class="num${incomplete ? ' bad' : ''}">${r.rows} / ${r.expected_rows}</span></td>
         <td data-label="Errors" class="col-num"><span class="num${r.errors ? ' bad' : ''}">${r.errors}</span></td>
-        <td data-label="Status" class="run-status"><span class="pill${badStatus ? ' is-bad' : ''}">${r.status}</span></td>
+        <td data-label="Status" class="run-status"><span class="pill${badStatus ? ' is-bad' : ''}">${r.status}</span>${r.trust?.state === 'untrusted' || r.trust?.state === 'halted' ? html` <span class="pill is-bad" title="${r.trust.reason || ''}">${r.trust.state === 'untrusted' ? 'not in ledger' : 'halted'}</span>` : ''}</td>
       </tr>`;
     });
     table = html`<div class="runs-wrap" role="region" aria-label="Runs table" tabindex="0"><table class="ledger ledger-runs">

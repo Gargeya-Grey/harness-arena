@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { processAlive } from './checks.mjs';
 import { paths } from './repo.mjs';
+import { ledgerPath } from './ledger.mjs';
 
 export const LOCK_FILE = '.lab-run.lock';
 const FRESH_MS = 5000;
@@ -22,7 +23,9 @@ const held = new Set();
  */
 export function storeFolders(root) {
   const { data } = paths(root);
-  return [...new Set([data, path.join(root, 'results')].filter(Boolean))];
+  // The ledger's folder too: every command that appends to the shared ledger holds its lock,
+  // so a command with another data folder cannot write the ledger during an agent call.
+  return [...new Set([data, path.join(root, 'results'), path.dirname(ledgerPath(root))].filter(Boolean))];
 }
 
 /** Take every lock in a fixed order (sorted), or none: a refused lock releases the others. */

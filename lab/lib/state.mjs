@@ -8,7 +8,7 @@ import { paths, loadRegistry, loadCases, runDirs } from './repo.mjs';
 import { SchemaSet } from './schema.mjs';
 import { clusteredInterval, mean, percentile, sum, variance } from './metrics.mjs';
 import { errorClass, modelCheck, runLiveness } from './checks.mjs';
-import { ledgerPath, readLedger, scoresCount, trustRun } from './ledger.mjs';
+import { evidenceOk, ledgerPath, readLedger, scoresCount, trustRun } from './ledger.mjs';
 
 const TEXT_INLINE_LIMIT = 2 * 1024 * 1024;
 
@@ -344,7 +344,8 @@ export function buildState(root, { validate = true } = {}) {
     } catch (error) {
       trust = { state: 'untrusted', reason: `its files cannot be read (${error.code || error.message})` };
     }
-    if (trust.state === 'untrusted') note(manifestPath, `does not match the evidence ledger: ${trust.reason}; its scores do not count`);
+    if (trust.state === 'untrusted') note(manifestPath, `does not match the evidence ledger: ${trust.reason}; it is left out of every aggregate`);
+    else if (trust.scores === 'mismatch' && listFiles(path.join(runDir, 'scores'), '.jsonl').length) note(manifestPath, `its scores do not match the evidence ledger (${trust.scores_reason}); they do not count until node lab score ${manifest.run_id} recomputes them`);
 
     const rawPath = path.join(runDir, 'raw.jsonl');
     const { rows: rawRows, problems: rawProblems } = readJsonl(rawPath);
@@ -442,6 +443,8 @@ export function buildState(root, { validate = true } = {}) {
         error: raw.error || null,
         error_class: errorClass(raw.error),
         run_scored: runScored,
+        // From the evidence ledger: false leaves the row out of every aggregate.
+        trusted: evidenceOk(trust),
         model_check: raw.metadata?.model_check ?? modelCheck(raw.metadata?.harness_model ?? config.model, raw.metadata?.model_reported),
         metadata: raw.metadata || null,
         scores,
@@ -481,7 +484,8 @@ export function buildState(root, { validate = true } = {}) {
   }
 
   for (const ctx of contexts.values()) {
-    const ctxRows = observations.filter((item) => item.context_key === ctx.key);
+    // A run that does not match the evidence ledger counts in no aggregate: no n, cost, errors or scores.
+    const ctxRows = observations.filter((item) => item.context_key === ctx.key && item.trusted !== false);
     const hasQuality = ctx.evaluators.some((item) => item.dimension === 'quality');
     ctx.aggregates = {};
     for (const id of ctx.config_ids) {

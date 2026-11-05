@@ -182,6 +182,7 @@ export function validateRepo(root) {
     try {
       const trust = trustRun(ledger, manifest.run_id, runDir);
       if (trust.state === 'untrusted') report(manifestFile, `does not match the evidence ledger: ${trust.reason}`);
+      else if (trust.scores === 'mismatch' && listFiles(path.join(runDir, 'scores'), '.jsonl').length) report(manifestFile, `its scores do not match the evidence ledger (${trust.scores_reason}); run node lab score ${manifest.run_id}`);
     } catch (error) {
       report(manifestFile, `cannot be checked against the evidence ledger: ${error.message}`);
     }

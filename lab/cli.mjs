@@ -9,6 +9,7 @@ import { scoreCommand } from './commands/score.mjs';
 import { validateCommand } from './commands/validate.mjs';
 import { newCase } from './commands/new-case.mjs';
 import { doctorCommand, reportCommand, runsCommand } from './commands/info.mjs';
+import { adoptCommand } from './commands/adopt.mjs';
 
 const HELP = `Model Lab: run the same suite through any CLI harness, then compare.
 
@@ -25,7 +26,11 @@ Commands
                           only the missing rows run. --force for a run with no heartbeat
   new-case <suite> <slug> Add a case to a suite with every value to fill marked; --agent adds
                           a starter workspace and a hidden check; --prompt <id> names the fields
-  score <run-id>... | --all   Recompute scores from raw.jsonl (no API calls); --force also scores a stopped run
+  score <run-id>... | --all   Recompute scores from raw.jsonl (no API calls); --force also scores a stopped run.
+                          A run that does not match the evidence ledger is never scored
+  adopt <run-id>... | --all   Vouch for runs as they are now in the evidence ledger (lab.ledger.jsonl):
+                          runs copied in, committed later, or checked by hand. --all adopts
+                          every run the ledger does not trust yet
   validate                Check inputs and every stored record against schemas/
   doctor                  Show which harnesses are installed here (built-in and configs/harnesses.yaml)
   runs                    List runs, newest first
@@ -86,6 +91,9 @@ async function main(argv) {
       return 0;
     case 'new-case':
       newCase(root, positionals[0], positionals[1], { agent: values.agent, prompt: values.prompt });
+      return 0;
+    case 'adopt':
+      adoptCommand(root, positionals, { all: values.all });
       return 0;
     case 'validate':
       return validateCommand(root);

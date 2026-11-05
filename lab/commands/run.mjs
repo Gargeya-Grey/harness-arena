@@ -17,7 +17,7 @@ import { extractSvg } from '../evaluators/index.mjs';
 import { resolveRunDir, scoreRun } from './score.mjs';
 import { modelCheck, normalizeErrorType, runLiveness } from '../lib/checks.mjs';
 import { storeFolders, takeLocks } from '../lib/lock.mjs';
-import { appendEntry, closeEntry, ensureLedger, ledgerPath, lineSha, readLedger, rowLine, trustRun } from '../lib/ledger.mjs';
+import { appendEntry, callFiles, closeEntry, ensureLedger, ledgerBytes, ledgerPath, lineSha, manifestCore, readLedger, restoreLedger, rowLine, rowLines, trustRun } from '../lib/ledger.mjs';
 
 const DEFAULT_TIMEOUT_S = 300;
 const USER_CONFIG = new Set(['loaded', 'isolated']);
@@ -295,8 +295,8 @@ function own(file) {
   if (!stat.isFile()) throw new Error(`${path.basename(file)} in the run folder is not a plain file`);
   if (!(stat.mode & 0o200)) fs.chmodSync(file, 0o666);
   if (stat.nlink > 1) {
-    const copy = `${file}.lab-${process.pid}.tmp`;
-    fs.copyFileSync(file, copy);
+    const copy = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+    fs.writeFileSync(copy, fs.readFileSync(file), { flag: 'wx' });
     fs.rmSync(file, { force: true });
     fs.renameSync(copy, file);
   }
@@ -348,6 +348,7 @@ async function openRun(root, plan, harnessName, modelKeys, { log, resume = null,
     session.runId = resume.manifest.run_id;
     session.runDir = resume.runDir;
     session.manifest = resume.manifest;
+    session.recorded = resume.recorded ?? {};
     for (const row of resume.rows) {
       session.done.add(rowKey(row.case_id, row.model_key, row.repeat));
       session.attempts += 1;
@@ -411,7 +412,8 @@ async function openRun(root, plan, harnessName, modelKeys, { log, resume = null,
     notes: `Run by lab ${harnessName}; experiment file sha256 ${plan.experimentSha}.`,
   };
   writeJson(path.join(session.runDir, 'run.json'), session.manifest);
-  record(plan, { kind: 'open', run_id: session.runId });
+  record(plan, { kind: 'open', run_id: session.runId, core: manifestCore(session.manifest) });
+  session.recorded = {};
   log(`\n${session.runId}\n  harness ${adapter.name} ${detected.version} · ${models.length} model(s) · ${plan.cases.length} case(s) · ${plan.repeats} repeat(s) · workdir ${plan.workdirMode}`);
   if (isolated && !isolationArgs.length) log(`  note: ${adapter.name} cannot skip the user setup; it loads, and the run records user_config loaded`);
   for (const m of models) {
@@ -439,6 +441,8 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
   // turn. The heartbeat writes run.json, so it comes before the guard's first stamp.
   beat();
   const stampBefore = guarded ? tryGuardStamp(plan.guard) : null;
+  // The ledger as it is before the call: a halt puts it back to exactly this.
+  const ledgerBefore = guarded ? ledgerBytes(plan.guard.ledger) : null;
   if (stampBefore?.error) {
     // Nothing was called yet, so no agent is to blame: stop before spending the call.
     if (isolatedDir) removeFolder(callCwd);
@@ -496,10 +500,13 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
     if (halt) {
       // The halt goes to the ledger first, before any other write: whatever the agent did
       // to the run folder, a resume or a score of this run is then refused.
+      // The ledger goes back to the bytes it held before the call, plus this halt: any
+      // entry the agent wrote (a forged close for a planted run) is dropped, and kept aside.
       try {
-        record(plan, { kind: 'halt', run_id: session.runId, reason: 'left_workdir' });
+        const aside = restoreLedger(plan.guard.ledger, ledgerBefore, { kind: 'halt', run_id: session.runId, reason: 'left_workdir' }, { realDir: plan.guard.ledgerDir, asideName: `lab.ledger.halted-${session.runId}-${crypto.randomBytes(3).toString('hex')}.jsonl` });
+        if (aside) log(`  the ledger changed during the call; it is restored, and the changed copy is kept as ${path.basename(aside)}`);
       } catch (error) {
-        log(`  warning: the halt could not be written to the ledger (${error.message}); this run has no close entry, so it reads as not trusted`);
+        log(`  warning: the ledger could not be restored after the halt (${error.message}). Do not trust any run until you check ${plan.guard.ledger}`);
       }
     }
   }
@@ -558,32 +565,36 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
       ...(result.extra && Object.keys(result.extra).length ? { harness_extra: result.extra } : {}),
     },
   };
-  if (!result.error && plan.artifact) {
-    const artifacts = writeArtifact(runDir, plan.artifact, row, redactPaths(result.text), adapter.name);
-    if (artifacts) row.artifacts = artifacts;
-  }
-  if (testCase.input?.workspace != null) {
-    // The agent's final workspace is evidence, kept even when the call failed or timed
-    // out: the evaluator rebuilds it from this alone.
-    const base = `artifacts/${safeSegment(row.case_id)}/${safeSegment(row.model_key)}__${safeSegment(adapter.name)}/r${repeat}/workspace`;
-    // A call that crashed before its row was written may have left a snapshot; it is not this call's.
-    fs.rmSync(path.join(runDir, ...base.split('/')), { recursive: true, force: true });
-    try {
-      const artifact = snapshotWorkspace({ fixtureDir: workspaceDir(plan.suite, testCase), fixtureSha, workDir: callCwd, runDir, base, artifactId: `${row.case_id}__${row.model_key}__r${repeat}__workspace`, createdAt: isoNow() });
-      row.artifacts = [...(row.artifacts || []), artifact];
-    } catch (error) {
-      log(`  ${testCase.case_id} r${repeat} ${m.modelKey}: workspace not stored: ${error.message}`);
-    }
-  }
-  if (isolatedDir) row.metadata.workdir_removed = removeFolder(callCwd);
   try {
+    if (!result.error && plan.artifact) {
+      const artifacts = writeArtifact(runDir, plan.artifact, row, redactPaths(result.text), adapter.name);
+      if (artifacts) row.artifacts = artifacts;
+    }
+    if (testCase.input?.workspace != null) {
+      // The agent's final workspace is evidence, kept even when the call failed or timed
+      // out: the evaluator rebuilds it from this alone.
+      const base = `artifacts/${safeSegment(row.case_id)}/${safeSegment(row.model_key)}__${safeSegment(adapter.name)}/r${repeat}/workspace`;
+      // A call that crashed before its row was written may have left a snapshot; it is not this call's.
+      fs.rmSync(path.join(runDir, ...base.split('/')), { recursive: true, force: true });
+      try {
+        const artifact = snapshotWorkspace({ fixtureDir: workspaceDir(plan.suite, testCase), fixtureSha, workDir: callCwd, runDir, base, artifactId: `${row.case_id}__${row.model_key}__r${repeat}__workspace`, createdAt: isoNow() });
+        row.artifacts = [...(row.artifacts || []), artifact];
+      } catch (error) {
+        log(`  ${testCase.case_id} r${repeat} ${m.modelKey}: workspace not stored: ${error.message}`);
+      }
+    }
+    if (isolatedDir) row.metadata.workdir_removed = removeFolder(callCwd);
     appendJsonl(own(path.join(runDir, 'raw.jsonl')), row);
-    record(plan, { kind: 'row', run_id: session.runId, sha256: lineSha(rowLine(row)) });
     own(path.join(runDir, 'harness-events.ndjson'));
     for (const event of result.events || []) {
       // Events keep what the call did, not how this machine is set up (lab/lib/redact.mjs).
       appendJsonl(path.join(runDir, 'harness-events.ndjson'), { case_id: row.case_id, model_key: row.model_key, repeat, event: redactEvent(event) });
     }
+    // The row entry comes last: the row's line, and every file this call wrote.
+    const now = callFiles(runDir);
+    const written = Object.fromEntries(Object.entries(now).filter(([rel, sha]) => session.recorded[rel] !== sha));
+    record(plan, { kind: 'row', run_id: session.runId, sha256: lineSha(rowLine(row)), files: written });
+    session.recorded = now;
     session.done.add(rowKey(row.case_id, row.model_key, repeat));
     if (row.error) session.failures += 1;
     heartbeat(session);
@@ -735,7 +746,7 @@ export async function runCommand(root, file, options = {}) {
   // One writer at a time on every store (lab/lib/lock.mjs); a second runner is refused here.
   const release = takeLocks(storeFolders(root), { command: `node lab run ${plan.experiment.id}`, root, log });
   try {
-    ensureLedger(ledgerPath(root), runDirs(root), { log });
+    ensureLedger(root, { log });
     plan.guard = guardScope(root);
     const results = [];
     const sessions = [];
@@ -814,25 +825,16 @@ async function resumeRun(root, ref, { log, force, dryRun }) {
   }
   // The ledger decides what a resume may keep: a run it halted or cannot match is refused,
   // and the one unrecorded last row a crash may leave is dropped and called again.
-  if (!dryRun) ensureLedger(ledgerPath(root), runDirs(root), { log });
+  if (!dryRun) ensureLedger(root, { log });
   const trust = trustRun(readLedger(ledgerPath(root)), manifest.run_id, runDir);
   if (trust.state === 'halted') throw new Error(`${manifest.run_id} was halted by the workdir guard (evidence ledger: ${trust.reason}); it cannot be resumed. Start a new run.`);
   if (trust.state === 'untrusted') throw new Error(`Cannot resume ${manifest.run_id}: it does not match the evidence ledger (${trust.reason}). Start a new run.`);
   const rawFile = path.join(runDir, 'raw.jsonl');
-  // A torn last line is cut below, as before; a complete last row with no entry is cut here.
-  let droppedRow = false;
-  if (trust.unrecorded_last && !readJsonl(rawFile).problems.length) {
-    droppedRow = true;
-    if (!dryRun) {
-      const before = fs.readFileSync(rawFile, 'utf8');
-      const cut = before.endsWith('\n') ? before.slice(0, -1).lastIndexOf('\n') + 1 : before.lastIndexOf('\n') + 1;
-      fs.truncateSync(rawFile, Buffer.byteLength(before.slice(0, cut), 'utf8'));
-      log(`  note: dropped the last row of ${manifest.run_id}: the ledger has no entry for it (a crash between the two writes); it is called again`);
-    }
-  }
   const { rows: readRows, problems } = readJsonl(rawFile);
-  // In a dry run nothing was cut: the dropped row still counts as one to call.
-  const rows = droppedRow && dryRun ? readRows.slice(0, -1) : readRows;
+  // A complete last row with no ledger entry (a crash between the two writes) is dropped
+  // and called again; a torn last line is cut below, as before.
+  const droppedRow = Boolean(trust.unrecorded_last && !problems.length);
+  const rows = droppedRow ? readRows.slice(0, -1) : readRows;
   // A crash in the middle of an append leaves a torn last line with no newline. It was
   // never a record; it is cut off (and the cut recorded), so the next row starts clean.
   // A complete last row without its newline gets the newline, or the next row would join it.
@@ -846,15 +848,23 @@ async function resumeRun(root, ref, { log, force, dryRun }) {
   } else if (text && !text.endsWith('\n')) {
     addNewline = true;
   }
-  if (!dryRun && tornLine) fs.truncateSync(rawFile, Buffer.byteLength(text.slice(0, text.lastIndexOf('\n') + 1), 'utf8'));
-  if (!dryRun && addNewline) fs.appendFileSync(rawFile, '\n', 'utf8');
   const total = plan.cases.length * plan.repeats * manifest.models.length;
   if (dryRun) {
-    log(`Resume ${manifest.run_id}: ${rows.length} row(s) kept, ${total - rows.length} call(s) to make${tornLine ? '; a torn last line would be dropped' : ''}.`);
+    log(`Resume ${manifest.run_id}: ${rows.length} row(s) kept, ${total - rows.length} call(s) to make${tornLine ? '; a torn last line would be dropped' : ''}${droppedRow ? '; an unrecorded last row would be dropped' : ''}.`);
     log('Dry run: nothing was called or written.');
     return [];
   }
   plan.guard = guardScope(root);
-  const session = await openRun(root, plan, manifest.harness.name, manifest.models.map((item) => item.model_key), { log, effort: group?.effort, resume: { manifest, runDir, rows, tornLine } });
+  // The resume entry comes before any write: it reopens the run with the rows it keeps
+  // and its files now, so a crash during the resume leaves a run that is open, not changed.
+  const kept = rowLines(runDir).lines.slice(0, rows.length);
+  const recorded = callFiles(runDir);
+  record(plan, { kind: 'resume', run_id: manifest.run_id, lines: kept, files: recorded, core: manifestCore(manifest) });
+  if (droppedRow || tornLine) {
+    fs.truncateSync(rawFile, Buffer.byteLength(text.slice(0, (text.endsWith('\n') ? text.slice(0, -1) : text).lastIndexOf('\n') + 1), 'utf8'));
+    if (droppedRow) log(`  note: dropped the last row of ${manifest.run_id}: the ledger has no entry for it (a crash between the two writes); it is called again`);
+  }
+  if (addNewline && !droppedRow) fs.appendFileSync(rawFile, '\n', 'utf8');
+  const session = await openRun(root, plan, manifest.harness.name, manifest.models.map((item) => item.model_key), { log, effort: group?.effort, resume: { manifest, runDir, rows, tornLine, recorded } });
   return withSigint(log, (signal) => execute(root, plan, [session], { log, signal }));
 }

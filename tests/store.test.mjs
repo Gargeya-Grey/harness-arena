@@ -12,7 +12,8 @@ import { ADAPTERS } from '../lab/adapters/index.mjs';
 import { runCommand } from '../lab/commands/run.mjs';
 import { resolveRunDir, scoreCommand } from '../lab/commands/score.mjs';
 import { LOCK_FILE, takeLock } from '../lab/lib/lock.mjs';
-import { ledgerPath, readLedger, trustRun } from '../lab/lib/ledger.mjs';
+import { appendEntry, ledgerPath, readLedger, trustRun } from '../lab/lib/ledger.mjs';
+import { adoptCommand } from '../lab/commands/adopt.mjs';
 import { scoreRun } from '../lab/commands/score.mjs';
 import { crashInLedger } from './crash.mjs';
 import { validateRepo } from '../lab/commands/validate.mjs';
@@ -399,11 +400,18 @@ test('ledger: created by the first run with every stored run adopted; a run edit
   const skipped = [];
   assert.deepEqual(scoreRun(root, result.runDir, { log: (line) => skipped.push(line), force: true }), []);
   assert.match(skipped.join('\n'), /does not match the evidence ledger/);
-  // A forged score in a finished run is caught the same way.
+  // A forged score in a finished run does not count; scores are derived, so a re-score repairs them.
   fs.writeFileSync(raw, fs.readFileSync(raw, 'utf8').replace('"5"', '"4"'));
   assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
   fs.appendFileSync(path.join(result.runDir, 'scores', 'exact-match@1.jsonl'), '{"forged":true}\n');
-  assert.match(trustOf(root, result.runId, result.runDir).reason, /scores/);
+  const forged = trustOf(root, result.runId, result.runDir);
+  assert.equal(forged.scores, 'mismatch');
+  assert.match(forged.scores_reason, /scores\/exact-match@1\.jsonl changed/);
+  assert.ok(buildState(root).observations.filter((item) => item.run_id === result.runId).every((item) => item.run_scored === false));
+  assert.ok(validateRepo(root).problems.some((line) => line.includes(result.runId) && /scores do not match/.test(line)));
+  assert.ok(scoreRun(root, result.runDir, { log: () => {} }).length > 0);
+  assert.equal(trustOf(root, result.runId, result.runDir).scores, 'match');
+  assert.deepEqual(validateRepo(root).problems, []);
   assert.ok(data);
 });
 
@@ -493,7 +501,7 @@ test('ledger: a crash between the row and its entry leaves one unrecorded row; a
   const manifest = JSON.parse(fs.readFileSync(path.join(result.runDir, 'run.json'), 'utf8'));
   fs.writeFileSync(path.join(result.runDir, 'run.json'), JSON.stringify({ ...manifest, status: 'running', finished_at: null, runner: { pid: manifest.runner.pid, heartbeat_at: '2026-01-01T00:00:00.000Z' } }));
   crashInLedger(root, result.runId, 1);
-  assert.deepEqual(trustOf(root, result.runId, result.runDir), { state: 'open', unrecorded_last: true });
+  assert.deepEqual(trustOf(root, result.runId, result.runDir), { state: 'open', scores: 'match', unrecorded_last: true });
   // A second unrecorded row is not a crash: it is refused.
   fs.appendFileSync(raw, `${lines[2]}\n`);
   assert.equal(trustOf(root, result.runId, result.runDir).state, 'untrusted');
@@ -513,6 +521,157 @@ test('with a data folder, a lock held on the checkout\'s results/ refuses the ru
   fs.writeFileSync(file, ['id: both', 'suite: smoke', 'prompt: qa-single-turn', 'repeats: 1', 'cases: [smoke-001]', 'harness: fake-both', 'models: [claude-haiku]', 'evaluators:', '  - id: exact-match', '    version: "1"', '    dimension: quality', ''].join('\n'));
   writeLock(path.join(root, 'results'), otherRunner(t));
   await assert.rejects(runCommand(root, file, { log: () => {} }), /Another lab command/);
+});
+
+function smokeExperiment(root, id, harness, cases = ['smoke-001', 'smoke-002']) {
+  const file = path.join(root, 'experiments', `${id}.yaml`);
+  fs.writeFileSync(file, [`id: ${id}`, 'suite: smoke', 'prompt: qa-single-turn', 'repeats: 1', `cases: [${cases.join(', ')}]`, `harness: ${harness}`, 'models: [claude-haiku]', 'evaluators:', '  - id: exact-match', '    version: "1"', '    dimension: quality', ''].join('\n'));
+  return file;
+}
+
+const crashed = (runDir) => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(runDir, 'run.json'), 'utf8'));
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ ...manifest, status: 'running', finished_at: null, runner: { pid: manifest.runner.pid, heartbeat_at: '2026-01-01T00:00:00.000Z' } }));
+};
+
+test('ledger: a copy of a trusted run in another folder is not trusted and counts in no aggregate', async (t) => {
+  const { root, data } = setup(t);
+  fake(t, 'fake-copy', () => '4');
+  const [result] = await runCommand(root, smokeExperiment(root, 'copy', 'fake-copy'), { log: () => {} });
+  const aggregate = () => Object.values(buildState(root).contexts.find((ctx) => ctx.runs.includes(result.runId)).aggregates)[0];
+  const before = aggregate();
+  fs.cpSync(result.runDir, path.join(data, 'results', `${result.runId}-copy`), { recursive: true });
+  const copy = buildState(root).runs.find((run) => run.trust?.reason?.includes('-copy'));
+  assert.equal(copy?.trust.state, 'untrusted');
+  const after = aggregate();
+  assert.equal(after.n, before.n);
+  assert.equal(after.counted_n, before.counted_n);
+  assert.equal(after.total_cost_usd, before.total_cost_usd);
+});
+
+test('ledger: a crashed run edited before its resume (a stored file, run.json) is refused', async (t) => {
+  const { root } = setup(t, { agentic: true });
+  fake(t, 'fake-launder', () => 'done');
+  const [result] = await runCommand(root, agentExperiment(root, 'launder', 'fake-launder', 2), { log: () => {} });
+  crashed(result.runDir);
+  crashInLedger(root, result.runId, 1);
+  // The recorded files of row 1 still match: the crash alone is open, not changed.
+  fs.writeFileSync(path.join(result.runDir, 'raw.jsonl'), `${fs.readFileSync(path.join(result.runDir, 'raw.jsonl'), 'utf8').split('\n')[0]}\n`);
+  const recorded = readLedger(ledgerPath(root)).runs.get(result.runId).files;
+  const stored = Object.keys(recorded).find((rel) => rel.endsWith('/workspace.json'));
+  assert.ok(stored, 'row 1 recorded its workspace files');
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'open');
+  fs.appendFileSync(path.join(result.runDir, ...stored.split('/')), '\n// edited\n');
+  assert.match(trustOf(root, result.runId, result.runDir).reason, /changed since its row was recorded/);
+  await assert.rejects(runCommand(root, null, { resume: result.runId, log: () => {} }), /does not match the evidence ledger/);
+  // run.json's fixed fields count too.
+  fs.writeFileSync(path.join(result.runDir, ...stored.split('/')), fs.readFileSync(path.join(result.runDir, ...stored.split('/')), 'utf8').replace('\n// edited\n', ''));
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'open');
+  const manifest = JSON.parse(fs.readFileSync(path.join(result.runDir, 'run.json'), 'utf8'));
+  fs.writeFileSync(path.join(result.runDir, 'run.json'), JSON.stringify({ ...manifest, experiment: { ...manifest.experiment, user_config: 'isolated' } }));
+  assert.match(trustOf(root, result.runId, result.runDir).reason, /run\.json changed since the run started/);
+});
+
+test('ledger: entries the agent writes during a halted call are dropped, and kept aside', async (t) => {
+  const { root, data } = setup(t, { agentic: true });
+  const [committed] = runDirs(root);
+  fake(t, 'fake-forge', () => {
+    // A planted run, and ledger entries that vouch for it.
+    const planted = path.join(data, 'results', '20261105T000009Z__smoke__planted__abcdef');
+    fs.cpSync(committed.dir, planted, { recursive: true });
+    const manifest = JSON.parse(fs.readFileSync(path.join(planted, 'run.json'), 'utf8'));
+    fs.writeFileSync(path.join(planted, 'run.json'), JSON.stringify({ ...manifest, run_id: path.basename(planted) }));
+    appendEntry(ledgerPath(root), { kind: 'adopt', run_id: path.basename(planted), files: {}, lines: [] });
+    return 'done';
+  });
+  const [result] = await runCommand(root, agentExperiment(root, 'forge', 'fake-forge'), { log: () => {} });
+  assert.equal(result.halted, true);
+  const ledger = readLedger(ledgerPath(root));
+  assert.equal(ledger.runs.has('20261105T000009Z__smoke__planted__abcdef'), false);
+  assert.equal(trustOf(root, '20261105T000009Z__smoke__planted__abcdef', path.join(data, 'results', '20261105T000009Z__smoke__planted__abcdef')).state, 'untrusted');
+  assert.equal(fs.readdirSync(path.dirname(ledgerPath(root))).filter((name) => name.startsWith('lab.ledger.halted-')).length, 1);
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'halted');
+});
+
+test('ledger: a runner that dies after the halt and before the close still leaves a halted run', async (t) => {
+  const { root } = setup(t, { agentic: true });
+  fake(t, 'fake-die', () => {
+    fs.writeFileSync(path.join(root, 'planted.txt'), 'x');
+    return 'done';
+  });
+  const append = fs.appendFileSync;
+  t.mock.method(fs, 'appendFileSync', function appendFile(file, text, ...rest) {
+    if (String(file) === ledgerPath(root) && String(text).includes('"kind":"close"')) throw new Error('killed');
+    return append.call(this, file, text, ...rest);
+  });
+  const [result] = await runCommand(root, agentExperiment(root, 'die', 'fake-die'), { log: () => {} });
+  t.mock.restoreAll();
+  // As if run.json had never been closed: running, stale, no halted mark.
+  const manifest = JSON.parse(fs.readFileSync(path.join(result.runDir, 'run.json'), 'utf8'));
+  delete manifest.harness.settings.halted;
+  fs.writeFileSync(path.join(result.runDir, 'run.json'), JSON.stringify({ ...manifest, status: 'running', finished_at: null, runner: { pid: manifest.runner.pid, heartbeat_at: '2026-01-01T00:00:00.000Z' } }));
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'halted');
+  await assert.rejects(runCommand(root, null, { resume: result.runId, force: true, log: () => {} }), /halted by the workdir guard/);
+});
+
+test('ledger: a resume of a stopped run reopens it first, so during the resume (or after a crash in it) it reads as open', async (t) => {
+  const { root } = setup(t);
+  const seen = [];
+  let calls = 0;
+  let resuming = false;
+  let result;
+  fake(t, 'fake-reopen', () => {
+    calls += 1;
+    if (!resuming && calls === 1) process.emit('SIGINT', 'cancel');
+    if (resuming) seen.push(trustOf(root, result.runId, result.runDir).state);
+    return '4';
+  });
+  [result] = await runCommand(root, smokeExperiment(root, 'reopen', 'fake-reopen', ['smoke-001', 'smoke-002', 'smoke-003']), { log: () => {} });
+  // A stopped run is closed in the ledger, as interrupted.
+  assert.equal(JSON.parse(fs.readFileSync(path.join(result.runDir, 'run.json'), 'utf8')).runner.interrupted, true);
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
+  resuming = true;
+  await runCommand(root, null, { resume: result.runId, log: () => {} });
+  assert.deepEqual(seen, ['open', 'open']);
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
+});
+
+test('ledger: an adopted crashed run with a torn line resumes', async (t) => {
+  const { root } = setup(t);
+  fake(t, 'fake-adopted', () => '4');
+  const [result] = await runCommand(root, smokeExperiment(root, 'adopted', 'fake-adopted', ['smoke-001', 'smoke-002', 'smoke-003']), { log: () => {} });
+  const raw = path.join(result.runDir, 'raw.jsonl');
+  const lines = fs.readFileSync(raw, 'utf8').split('\n');
+  fs.writeFileSync(raw, `${lines[0]}\n${lines[1].slice(0, 30)}`);
+  fs.rmSync(path.join(result.runDir, 'scores'), { recursive: true, force: true });
+  crashed(result.runDir);
+  fs.rmSync(ledgerPath(root));
+  const [resumed] = await runCommand(root, null, { resume: result.runId, log: () => {} });
+  assert.equal(resumed.status, 'completed');
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
+});
+
+test('ledger: node lab adopt vouches for a run the ledger does not know; a torn ledger line swallows no entry', async (t) => {
+  const { root, data } = setup(t);
+  fake(t, 'fake-adopt', () => '4');
+  const [result] = await runCommand(root, smokeExperiment(root, 'adopt', 'fake-adopt'), { log: () => {} });
+  const name = '20261105T000010Z__smoke__other__abcdef';
+  const other = path.join(data, 'results', name);
+  fs.cpSync(result.runDir, other, { recursive: true });
+  const manifest = JSON.parse(fs.readFileSync(path.join(other, 'run.json'), 'utf8'));
+  fs.writeFileSync(path.join(other, 'run.json'), JSON.stringify({ ...manifest, run_id: name }));
+  assert.equal(trustOf(root, name, other).state, 'untrusted');
+  fs.appendFileSync(ledgerPath(root), '{"torn":');
+  assert.deepEqual(adoptCommand(root, [name], { log: () => {} }), [name]);
+  assert.equal(trustOf(root, name, other).state, 'trusted');
+  assert.equal(readLedger(ledgerPath(root)).problems.length, 1, 'only the torn line is lost');
+});
+
+test('the ledger has a lock of its own: a command holding it refuses a run', async (t) => {
+  const { root } = setup(t);
+  fake(t, 'fake-ledger-lock', () => '4');
+  writeLock(path.dirname(ledgerPath(root)), otherRunner(t));
+  await assert.rejects(runCommand(root, smokeExperiment(root, 'ledgerlock', 'fake-ledger-lock'), { log: () => {} }), /Another lab command/);
 });
 
 test('a dashboard job keeps the data folder: its child process gets LAB_DATA', async (t) => {

@@ -16,6 +16,7 @@ import { readJson, readJsonl, writeJson } from '../lab/lib/fsutil.mjs';
 import { bootstrapClustered, bootstrapMean, clusteredInterval } from '../lab/lib/metrics.mjs';
 import { buildState } from '../lab/lib/state.mjs';
 import { crashInLedger } from './crash.mjs';
+import { appendEntry, ledgerPath } from '../lab/lib/ledger.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES = path.join(REPO, 'tests', 'fixtures', 'repo');
@@ -313,6 +314,8 @@ test('errors of a halted or unscored run do not count as 0', async (t) => {
   const manifest = readJson(path.join(result.runDir, 'run.json'));
   writeJson(path.join(result.runDir, 'run.json'), { ...manifest, harness: { ...manifest.harness, settings: { ...manifest.harness.settings, halted: 'left_workdir' } } });
   fs.rmSync(path.join(result.runDir, 'scores'), { recursive: true, force: true });
+  // A real halt also writes a halt entry to the evidence ledger.
+  appendEntry(ledgerPath(root), { kind: 'halt', run_id: result.runId, reason: 'left_workdir' });
   const ctx = buildState(root).contexts.find((item) => item.runs.includes(result.runId));
   const agg = Object.values(ctx.aggregates)[0];
   assert.equal(agg.counted_n, 0);

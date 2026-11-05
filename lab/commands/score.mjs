@@ -25,6 +25,7 @@ export function scoreRun(root, runDir, { log = () => {}, force = false } = {}) {
   // run it halted counts as halted whatever run.json says.
   const ledger = readLedger(ledgerPath(root));
   const trust = trustRun(ledger, manifest.run_id, runDir);
+  // Scores are derived: a mismatch of scores/ alone is repaired by scoring again.
   if (trust.state === 'untrusted') {
     log(`  skip: this run does not match the evidence ledger (${trust.reason}); it is not scored`);
     return [];
@@ -89,7 +90,7 @@ export function scoreCommand(root, refs, { all = false, force = false, log = con
   // Scores live in the data folder too, so scoring waits for no runner: one writer at a time.
   const release = takeLocks(storeFolders(root), { command: 'node lab score', root, log });
   try {
-    ensureLedger(ledgerPath(root), runDirs(root), { log });
+    ensureLedger(root, { log });
     for (const dir of dirs) {
       log(path.basename(dir));
       for (const item of scoreRun(root, dir, { log, force })) {
