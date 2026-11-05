@@ -13,7 +13,7 @@ import { resumeCommand, runCommand } from '../lab/commands/run.mjs';
 import { validateRepo } from '../lab/commands/validate.mjs';
 import { errorClass, modelCheck, normalizeErrorType, runLiveness } from '../lab/lib/checks.mjs';
 import { readJson, readJsonl, writeJson } from '../lab/lib/fsutil.mjs';
-import { bootstrapClustered, bootstrapMean } from '../lab/lib/metrics.mjs';
+import { bootstrapClustered, bootstrapMean, clusteredInterval } from '../lab/lib/metrics.mjs';
 import { buildState } from '../lab/lib/state.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -68,6 +68,10 @@ test('error classes: a usage limit or sign-in failure is lost, every other error
   assert.equal(normalizeErrorType({ type: 'harness_error', message: 'API Error: 429 Too Many Requests' }), 'rate_limit');
   assert.equal(normalizeErrorType({ type: 'harness_error', message: 'Not logged in. Please log in.' }), 'auth');
   assert.equal(normalizeErrorType({ type: 'timeout', message: 'claude did not exit within 300 s' }), 'timeout');
+  // Free text from stderr: a stack line or a path is not a limit or a sign-in failure.
+  assert.equal(normalizeErrorType({ type: 'no_result', message: 'at Object.<anonymous> (cli.js:429:15)' }), 'no_result');
+  assert.equal(normalizeErrorType({ type: 'harness_error', message: 'GET /auth/token failed in some-auth' }), 'harness_error');
+  assert.equal(normalizeErrorType({ type: 'harness_error', message: 'status 401 from the API' }), 'auth');
   assert.equal(errorClass({ type: 'rate_limit', message: '' }), 'lost');
   assert.equal(errorClass({ type: 'not_installed', message: '' }), 'lost');
   assert.equal(errorClass({ type: 'timeout', message: '' }), 'failed');
@@ -82,6 +86,9 @@ test('model check: a dated or listed id matches, another model does not, no repo
   assert.equal(modelCheck('opencode/beam-free#high', 'opencode/beam-free'), 'match');
   assert.equal(modelCheck('claude-opus-5-5', 'claude-sonnet-5-5'), 'mismatch');
   assert.equal(modelCheck('claude-haiku-5-5', 'claude-haiku-5'), 'mismatch');
+  assert.equal(modelCheck('gemini-3.8-flash', 'gemini-3.8-flash-lite'), 'mismatch', 'a smaller sibling model is a swap');
+  assert.equal(modelCheck('gpt-6-luna', 'gpt-6-luna-mini'), 'mismatch');
+  assert.equal(modelCheck('gpt-6-luna', 'gpt-6-luna-latest'), 'match');
   assert.equal(modelCheck('gpt-6-luna', null), 'unknown');
 });
 
@@ -90,8 +97,13 @@ test('clustered interval: three cases with three repeats are three tasks, not ni
   assert.deepEqual(bootstrapClustered(groups, 'x'), [0, 1]);
   const naive = bootstrapMean(groups.flat(), 'x');
   assert.ok(naive[0] > 0, `the naive interval ${naive} treats repeats as independent`);
-  assert.equal(bootstrapClustered([[1, 1]], 'x'), null, 'below 3 values');
-  assert.deepEqual(bootstrapClustered([[1, 1, 1]], 'x'), [1, 1]);
+  assert.equal(bootstrapClustered([[1, 1, 1]], 'x'), null, 'one case with repeats says nothing across cases');
+  assert.equal(bootstrapClustered([[1], [1]], 'x'), null, 'below 3 cases');
+  // Every case passing collapses the bootstrap to [1, 1]; the shown interval does not.
+  assert.deepEqual(bootstrapClustered([[1, 1], [1, 1], [1, 1]], 'x'), [1, 1]);
+  const shown = clusteredInterval([[1, 1], [1, 1], [1, 1]], 'x');
+  assert.equal(shown[1], 1);
+  assert.ok(shown[0] > 0.4 && shown[0] < 0.5, `three passing cases give [${shown}]`);
 });
 
 test('a failed call scores 0 and a lost call leaves the score; the model check reaches the dashboard', async (t) => {
@@ -265,4 +277,84 @@ test('new-case scaffolds an agent task that validate refuses until every marker 
   assert.equal(problems.length, 5, problems.join('\n'));
   assert.throws(() => newCase(root, 'agentic', 'scaffold-only-test', { log: () => {} }), /already exists/);
   assert.throws(() => newCase(root, 'agentic', 'Bad Slug', { log: () => {} }), /lowercase/);
+});
+
+test('a run waiting its turn stays live: liveness follows the process, not only the heartbeat', () => {
+  const hourOld = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const dayOld = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+  const running = (heartbeat_at) => ({ status: 'running', harness: { settings: { timeout_s: 900 } }, runner: { pid: 1234, heartbeat_at } });
+  assert.equal(runLiveness(running(hourOld), Date.now(), () => true), 'live');
+  assert.equal(runLiveness(running(hourOld), Date.now(), () => false), 'stale');
+  assert.equal(runLiveness(running(dayOld), Date.now(), () => true), 'stale', 'the process id is someone else by then');
+  assert.equal(runLiveness({ status: 'running' }), 'unknown');
+  assert.equal(runLiveness({ status: 'completed' }), null);
+});
+
+test('every open run beats before each call, so the waiting harness never looks stale', async (t) => {
+  const root = tempRoot(t);
+  const seen = [];
+  const read = () => fs.readdirSync(path.join(root, 'results')).filter((name) => name.includes('__beat__')).map((name) => readJson(path.join(root, 'results', name, 'run.json')).runner.heartbeat_at);
+  fake(t, 'fake-p', (question) => (seen.push(read()), answer(question)));
+  fake(t, 'fake-q', (question) => (seen.push(read()), answer(question)));
+  const file = experiment(root, 'beat', ['repeats: 1', 'cases: [smoke-001, smoke-002]', 'targets:', '  - model: claude-haiku', '    harness: fake-p', '  - model: claude-haiku', '    harness: fake-q']);
+  await runCommand(root, file, { log: () => {} });
+  assert.equal(seen.length, 4);
+  // One beat writes every open run just before each call: both runs show the same moment.
+  for (const beat of seen) assert.deepEqual(beat, [beat[0], beat[0]], `both runs beat together: ${beat}`);
+});
+
+test('errors of a halted or unscored run do not count as 0', async (t) => {
+  const root = tempRoot(t);
+  fake(t, 'fake-halt', (question) => (question.includes('France') ? { error: { type: 'timeout', message: 'did not exit' } } : answer(question)));
+  const file = experiment(root, 'halt', ['repeats: 1', 'cases: [smoke-001, smoke-002]', 'harness: fake-halt', 'models: [claude-haiku]']);
+  const [result] = await runCommand(root, file, { log: () => {} });
+  const manifest = readJson(path.join(result.runDir, 'run.json'));
+  writeJson(path.join(result.runDir, 'run.json'), { ...manifest, harness: { ...manifest.harness, settings: { ...manifest.harness.settings, halted: 'left_workdir' } } });
+  fs.rmSync(path.join(result.runDir, 'scores'), { recursive: true, force: true });
+  const ctx = buildState(root).contexts.find((item) => item.runs.includes(result.runId));
+  const agg = Object.values(ctx.aggregates)[0];
+  assert.equal(agg.counted_n, 0);
+  assert.equal(agg.mean_quality, null, 'no 0.00 from errors alone');
+  assert.equal(agg.failed_n, 1, 'the error still shows');
+});
+
+test('resume --dry-run calls nothing; a torn last line is dropped and recorded', async (t) => {
+  const root = tempRoot(t);
+  let calls = 0;
+  fake(t, 'fake-torn', (question) => (calls += 1, answer(question)));
+  const file = experiment(root, 'torn', ['repeats: 1', 'cases: [smoke-001, smoke-002, smoke-003]', 'harness: fake-torn', 'models: [claude-haiku]']);
+  const [result] = await runCommand(root, file, { log: () => {} });
+  const rawFile = path.join(result.runDir, 'raw.jsonl');
+  const lines = fs.readFileSync(rawFile, 'utf8').split('\n');
+  fs.writeFileSync(rawFile, `${lines[0]}\n${lines[1].slice(0, 40)}`);
+  const manifest = readJson(path.join(result.runDir, 'run.json'));
+  writeJson(path.join(result.runDir, 'run.json'), { ...manifest, status: 'running', finished_at: null, runner: { pid: manifest.runner.pid, heartbeat_at: '2026-01-01T00:00:00.000Z' } });
+  const logs = [];
+  assert.deepEqual(await resumeCommand(root, result.runId, { log: (line) => logs.push(line), dryRun: true }), []);
+  assert.equal(calls, 3, 'a dry run makes no call');
+  assert.match(logs.join('\n'), /1 row\(s\) kept, 2 call\(s\) to make; a torn last line would be dropped/);
+  assert.equal(fs.readFileSync(rawFile, 'utf8').endsWith('\n'), false, 'a dry run writes nothing');
+  await resumeCommand(root, result.runId, { log: () => {} });
+  assert.equal(calls, 5);
+  assert.deepEqual(rowsOf(result.runDir).map((row) => row.case_id), ['smoke-001', 'smoke-002', 'smoke-003']);
+  assert.equal(readJson(path.join(result.runDir, 'run.json')).runner.resumes[0].dropped_torn_line, true);
+  assert.deepEqual(problemsOf(root), []);
+});
+
+test('a call cut off by Ctrl+C is not stored, so the resume runs it again', async (t) => {
+  const root = tempRoot(t);
+  let calls = 0;
+  fake(t, 'fake-cut', (question) => {
+    calls += 1;
+    if (calls === 2) {
+      process.emit('SIGINT', 'SIGINT');
+      return { error: { type: 'no_result', message: 'killed by Ctrl+C' } };
+    }
+    return answer(question);
+  });
+  const file = experiment(root, 'cut', ['repeats: 1', 'cases: [smoke-001, smoke-002]', 'harness: fake-cut', 'models: [claude-haiku]']);
+  const [result] = await runCommand(root, file, { log: () => {} });
+  assert.deepEqual(rowsOf(result.runDir).map((row) => row.case_id), ['smoke-001']);
+  await resumeCommand(root, result.runId, { log: () => {} });
+  assert.deepEqual(rowsOf(result.runDir).map((row) => [row.case_id, row.error]), [['smoke-001', null], ['smoke-002', null]]);
 });

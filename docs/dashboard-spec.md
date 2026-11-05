@@ -475,7 +475,7 @@ Configurations are told apart by their letter, not by colour. Charts draw in ink
 
 | Metric | Definition | Uncertainty and edge cases |
 |---|---|---|
-| Quality | Mean evaluator value per configuration, 0-1; a failed call counts as 0, a lost call (usage limit, sign-in, CLI missing) is left out | Bootstrap 95% interval clustered by case (cases, then repeats) when `n >= 3`; show `n` and the case count; mark insufficient data |
+| Quality | Mean evaluator value per configuration, 0-1; a failed call counts as 0, a lost call (usage limit, sign-in, CLI missing) is left out | Bootstrap 95% interval clustered by case (cases, then repeats), widened to Wilson on the case count, from 3 cases; show `n` and the case count; mark insufficient data |
 | Pass rate | Passed observations / counted observations (scored plus failed) | Same clustered bootstrap; unscored and lost excluded and counted |
 | Reliability | Repeat agreement: frequency of the majority outcome per case, averaged across cases | Only cases with 2+ repeats; score variance shown separately |
 | Cost | Notional API-equivalent cost from stored `cost_usd` | Label "not billed"; subscription amortization deferred |

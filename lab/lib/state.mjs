@@ -6,7 +6,7 @@ import path from 'node:path';
 import { listDirs, listFiles, readJson, readJsonl, resolveInside, safeSegment, isoNow } from './fsutil.mjs';
 import { paths, loadRegistry, loadCases } from './repo.mjs';
 import { SchemaSet } from './schema.mjs';
-import { bootstrapClustered, mean, percentile, sum, variance } from './metrics.mjs';
+import { clusteredInterval, mean, percentile, sum, variance } from './metrics.mjs';
 import { errorClass, modelCheck, runLiveness } from './checks.mjs';
 
 const TEXT_INLINE_LIMIT = 2 * 1024 * 1024;
@@ -160,11 +160,14 @@ function observationStatus(raw, quality) {
 /**
  * The rows that count for quality: every scored row, plus every error the
  * configuration caused, at 0. A lost row (quota, sign-in, CLI missing) does not
- * count; it shows as lost_n. Without a quality evaluator nothing counts.
+ * count; it shows as lost_n. Without a quality evaluator nothing counts. A run that
+ * is still running, or was never scored (halted by the guard), counts nothing: its
+ * answers have no score yet, so its errors alone would pull the mean down.
  */
 function countedRows(rows, hasQuality) {
   if (!hasQuality) return [];
   return rows.flatMap((row) => {
+    if (!row.run_scored) return [];
     if (row.error) return row.error_class === 'failed' ? [{ case_id: row.case_id, value: 0, passed: false }] : [];
     return row.quality == null ? [] : [{ case_id: row.case_id, value: row.quality, passed: Boolean(row.passed) }];
   });
@@ -229,9 +232,9 @@ function aggregate(rows, config, { hasQuality = true } = {}) {
     // Quality counts the configuration's own errors as 0; answered_quality leaves them out.
     mean_quality: mean(qualities),
     answered_quality: mean(scored.map((row) => row.quality)),
-    quality_ci: bootstrapClustered(byCaseValues(counted, (row) => row.value), config.id),
+    quality_ci: clusteredInterval(byCaseValues(counted, (row) => row.value), config.id),
     pass_rate: counted.length ? passed.length / counted.length : null,
-    pass_rate_ci: bootstrapClustered(byCaseValues(counted, (row) => (row.passed ? 1 : 0)), `${config.id}|pass`),
+    pass_rate_ci: clusteredInterval(byCaseValues(counted, (row) => (row.passed ? 1 : 0)), `${config.id}|pass`),
     model_mismatch_n: rows.filter((row) => row.model_check === 'mismatch').length,
     model_unknown_n: rows.filter((row) => row.model_check === 'unknown').length,
     total_cost_usd: totalCost,
@@ -377,6 +380,7 @@ export function buildState(root, { validate = true } = {}) {
 
     const runConfigIds = new Set();
     let errors = 0;
+    const runScored = manifest.status !== 'running' && listFiles(scoresDir, '.jsonl').length > 0;
     for (const raw of rawRows) {
       const config = buildConfig(manifest, raw.model_key, raw, registry);
       if (!configs[config.id]) {
@@ -417,6 +421,7 @@ export function buildState(root, { validate = true } = {}) {
         cost_usd: raw.cost_usd ?? null,
         error: raw.error || null,
         error_class: errorClass(raw.error),
+        run_scored: runScored,
         model_check: raw.metadata?.model_check ?? modelCheck(raw.metadata?.harness_model ?? config.model, raw.metadata?.model_reported),
         metadata: raw.metadata || null,
         scores,

@@ -283,7 +283,7 @@ export function renderTiles() {
   };
   setHtml(
     host,
-    html`${winner('Best quality', q, (r) => fixed(r.agg.mean_quality), thin('quality', 'no scored runs'), (r) => r.agg.scored_n, '')}
+    html`${winner('Best quality', q, (r) => fixed(r.agg.mean_quality), thin('quality', 'no scored runs'), (r) => r.agg.counted_n ?? r.agg.scored_n, '')}
     ${winner('Fastest p50', p, (r) => msText(r.agg.p50_latency_ms), thin('p50', 'no successful calls'), (r) => r.agg.latency_n, '')}
     ${winner('Lowest cost per pass', k, (r) => usdText(r.agg.cost_per_passed_case), thin('cpp', 'no passed cases'), (r) => r.agg.passed_n, ' passed')}
     ${tile('Error rate', obsN ? pctText(errN / obsN, 1) : NA, obsN ? html`<span>${errN} of ${obsN} attempts failed</span>` : html`<span class="muted">no attempts</span>`, obsN ? `${scoredN} scored by an evaluator` : '', obsN ? `n ${obsN}` : '', errN ? ' bad' : '')}`,
@@ -293,12 +293,12 @@ export function renderTiles() {
 // Plain data for exports.
 export function leaderTable() {
   const rows = leaderRows();
-  const header = ['Configuration', 'Harness', 'Harness version', 'Effort', 'Access', 'Quality', 'Quality CI low', 'Quality CI high', 'Scored n', 'Pass rate', 'Pass CI low', 'Pass CI high', 'Passed n', 'Errors', 'Attempts n', 'Latency p50 ms', 'Latency p95 ms', 'Total cost USD (API-equivalent, not billed)', 'Cost per passed case USD', 'Mean input tokens', 'Mean cache read tokens', 'Mean output tokens', 'Tokens per second', 'Human mean', 'Human n'];
+  const header = ['Configuration', 'Harness', 'Harness version', 'Effort', 'Access', 'Quality', 'Quality CI low', 'Quality CI high', 'Counted n', 'Pass rate', 'Pass CI low', 'Pass CI high', 'Passed n', 'Errors', 'Attempts n', 'Latency p50 ms', 'Latency p95 ms', 'Total cost USD (API-equivalent, not billed)', 'Cost per passed case USD', 'Mean input tokens', 'Mean cache read tokens', 'Mean output tokens', 'Tokens per second', 'Human mean', 'Human n'];
   const data = rows.map((r) => {
     const a = r.agg || {};
     return [
       r.cfg.display_name, r.cfg.harness.name, r.cfg.harness.version, r.cfg.effort || 'default', r.cfg.access_method,
-      a.mean_quality, a.quality_ci ? a.quality_ci[0] : null, a.quality_ci ? a.quality_ci[1] : null, a.scored_n,
+      a.mean_quality, a.quality_ci ? a.quality_ci[0] : null, a.quality_ci ? a.quality_ci[1] : null, a.counted_n ?? a.scored_n,
       a.pass_rate, a.pass_rate_ci ? a.pass_rate_ci[0] : null, a.pass_rate_ci ? a.pass_rate_ci[1] : null, a.passed_n,
       a.errors_n, a.n, a.p50_latency_ms, a.p95_latency_ms, a.total_cost_usd, a.cost_per_passed_case,
       a.mean_input_tokens, a.mean_cache_read_tokens, a.mean_output_tokens, a.mean_tokens_per_second, a.human_mean, a.human_n,

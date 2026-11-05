@@ -124,7 +124,11 @@
             "additionalProperties": false,
             "properties": {
               "at": { "type": "string", "format": "date-time" },
-              "rows_before": { "type": "integer", "minimum": 0 }
+              "rows_before": { "type": "integer", "minimum": 0 },
+              "dropped_torn_line": {
+                "type": "boolean",
+                "description": "raw.jsonl ended in a half-written line from the crash; it was never a record and was dropped."
+              }
             }
           }
         }

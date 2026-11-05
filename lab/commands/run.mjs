@@ -199,8 +199,8 @@ function removeFolder(dir) {
   }
 }
 
-function heartbeat(session) {
-  session.manifest.runner.heartbeat_at = isoNow();
+function heartbeat(session, at = isoNow()) {
+  session.manifest.runner.heartbeat_at = at;
   writeJson(path.join(session.runDir, 'run.json'), session.manifest);
 }
 
@@ -231,7 +231,7 @@ async function openRun(root, plan, harnessName, modelKeys, { log, resume = null 
     const runner = session.manifest.runner || {};
     session.manifest.status = 'running';
     session.manifest.finished_at = null;
-    session.manifest.runner = { pid: process.pid, heartbeat_at: isoNow(), resumes: [...(runner.resumes || []), { at: isoNow(), rows_before: resume.rows.length }] };
+    session.manifest.runner = { pid: process.pid, heartbeat_at: isoNow(), resumes: [...(runner.resumes || []), { at: isoNow(), rows_before: resume.rows.length, ...(resume.tornLine ? { dropped_torn_line: true } : {}) }] };
     session.manifest.notes = `${session.manifest.notes || ''} Resumed at ${isoNow()} with ${resume.rows.length} row(s) already written.`.trim();
     heartbeat(session);
     log(`\n${session.runId}\n  resuming: ${resume.rows.length} row(s) kept, ${plan.cases.length * plan.repeats * models.length - resume.rows.length} to go`);
@@ -296,7 +296,7 @@ async function openRun(root, plan, harnessName, modelKeys, { log, resume = null 
 }
 
 /** One call: model x case x repeat. Appends its row. Returns true when the guard halts the experiment. */
-async function callOne(root, plan, session, testCase, m, repeat, { log }) {
+async function callOne(root, plan, session, testCase, m, repeat, { log, beat = () => heartbeat(session), signal = null }) {
   const { adapter, runDir, runId } = session;
   const messages = renderMessages(plan.prompt.messages, testCase.input);
   const isolatedDir = plan.workdirMode !== 'repo';
@@ -309,8 +309,9 @@ async function callOne(root, plan, session, testCase, m, repeat, { log }) {
   // changed the lab's files (inputs, code, stored runs) or named the repository.
   // It is a tripwire, not an OS sandbox: see README "Agent tasks".
   const guarded = isolatedDir && (plan.access === 'edit' || testCase.input?.workspace != null);
-  // The heartbeat writes run.json, so it comes before the guard's first stamp.
-  heartbeat(session);
+  // Every open run of the experiment beats, so none looks stale while it waits its
+  // turn. The heartbeat writes run.json, so it comes before the guard's first stamp.
+  beat();
   const stampBefore = guarded ? guardStamp(root) : null;
   const fixtureSha = testCase.input?.workspace != null ? treeHash(workspaceDir(plan.suite, testCase)) : null;
   const startedAt = isoNow();
@@ -333,7 +334,6 @@ async function callOne(root, plan, session, testCase, m, repeat, { log }) {
     // An adapter bug becomes an error row; it must not leave the run "running".
     result = { error: { type: 'harness_error', message: `adapter threw: ${error?.message || error}` }, events: [] };
   }
-  session.attempts += 1;
   let halt = false;
   if (guarded) {
     let escape = null;
@@ -346,6 +346,14 @@ async function callOne(root, plan, session, testCase, m, repeat, { log }) {
     }
     if (escape) result = { ...result, error: { type: 'left_workdir', message: `The agent ${escape}.` } };
   }
+  // Ctrl+C in a terminal also stops the harness, so its call fails for no fault of its
+  // own. That call is not stored: a resume runs it again.
+  if (!halt && signal?.aborted && result.error && result.error.type !== 'left_workdir') {
+    if (isolatedDir) removeFolder(callCwd);
+    log(`  ${testCase.case_id} r${repeat} ${m.modelKey}: stopped during the call; not stored, a resume runs it again`);
+    return false;
+  }
+  session.attempts += 1;
   const usage = result.usage || { input_tokens: null, output_tokens: null, cache_read_tokens: null, cache_write_tokens: null };
   const latency = result.wall_ms ?? null;
   const output = usage.output_tokens;
@@ -461,6 +469,11 @@ async function closeRun(root, plan, session, { log, aborted, halted }) {
   return { runId: session.runId, runDir, status: manifest.status, attempts: session.attempts, failures: session.failures, halted: Boolean(halted) };
 }
 
+function beatAll(sessions) {
+  const at = isoNow();
+  for (const session of sessions) heartbeat(session, at);
+}
+
 /**
  * Every harness runs in one loop: repeat, then case, then harness, then model. A
  * slow hour, a usage limit or a CLI update then hits all harnesses alike, not
@@ -478,7 +491,7 @@ async function execute(root, plan, sessions, { log, signal }) {
             aborted = true;
             break outer;
           }
-          if (await callOne(root, plan, session, testCase, m, repeat, { log })) {
+          if (await callOne(root, plan, session, testCase, m, repeat, { log, signal, beat: () => beatAll(sessions) })) {
             haltedBy = session;
             break outer;
           }
@@ -486,6 +499,8 @@ async function execute(root, plan, sessions, { log, signal }) {
       }
     }
   }
+  // A stop during the last call ends the loop normally; the run is still incomplete.
+  if (signal?.aborted) aborted = true;
   const results = [];
   for (const session of sessions) {
     const halted = haltedBy ? (session === haltedBy ? 'left_workdir' : 'experiment_halted') : null;
@@ -506,7 +521,7 @@ function withSigint(log, work) {
 
 export async function runCommand(root, file, options = {}) {
   const log = options.log || console.log;
-  if (options.resume) return resumeCommand(root, options.resume, { log, force: options.force });
+  if (options.resume) return resumeCommand(root, options.resume, { log, force: options.force, dryRun: options.dryRun });
   const plan = planExperiment(root, file, options);
   const totalCalls = [...plan.groups.values()].reduce((sum, models) => sum + models.length, 0) * plan.cases.length * plan.repeats;
   log(`Experiment ${plan.experiment.id}: suite ${plan.suite.id} ${plan.suite.version}, prompt ${plan.prompt.id} v${plan.prompt.version}, ${totalCalls} call(s) across ${plan.groups.size} harness(es)`);
@@ -541,7 +556,7 @@ export async function runCommand(root, file, options = {}) {
  * stopped it. The rows it has stay as they are; only the missing ones run, with the
  * same suite, prompt, models and harness version, or the resume is refused.
  */
-export async function resumeCommand(root, ref, { log = console.log, force = false } = {}) {
+export async function resumeCommand(root, ref, { log = console.log, force = false, dryRun = false } = {}) {
   const runDir = resolveRunDir(root, ref);
   const manifest = readJson(path.join(runDir, 'run.json'));
   const liveness = runLiveness(manifest);
@@ -569,7 +584,25 @@ export async function resumeCommand(root, ref, { log = console.log, force = fals
     if (now.harnessModel !== item.model || (now.effort ?? null) !== (item.reasoning_effort ?? null)) differs.push(`${item.model_key} is now "${now.harnessModel}" at effort ${now.effort ?? 'default'}`);
   }
   if (differs.length) throw new Error(`Cannot resume ${manifest.run_id}; its inputs changed:\n  ${differs.join('\n  ')}\nStart a new run.`);
-  const { rows } = readJsonl(path.join(runDir, 'raw.jsonl'));
-  const session = await openRun(root, plan, manifest.harness.name, manifest.models.map((item) => item.model_key), { log, resume: { manifest, runDir, rows } });
+  const rawFile = path.join(runDir, 'raw.jsonl');
+  const { rows, problems } = readJsonl(rawFile);
+  // A crash in the middle of an append leaves a torn last line with no newline. It was
+  // never a record; it is dropped (and the drop recorded), so the next row starts clean.
+  let tornLine = false;
+  if (problems.length) {
+    const text = fs.readFileSync(rawFile, 'utf8');
+    const lines = text.split('\n');
+    const torn = problems.length === 1 && !text.endsWith('\n') && problems[0].line === lines.length;
+    if (!torn) throw new Error(`Cannot resume ${manifest.run_id}: raw.jsonl line ${problems[0].line} is not valid JSON (${problems[0].message}).`);
+    tornLine = true;
+    if (!dryRun) fs.writeFileSync(rawFile, lines.slice(0, -1).map((line) => `${line}\n`).join(''), 'utf8');
+  }
+  const total = plan.cases.length * plan.repeats * manifest.models.length;
+  if (dryRun) {
+    log(`Resume ${manifest.run_id}: ${rows.length} row(s) kept, ${total - rows.length} call(s) to make${tornLine ? '; a torn last line would be dropped' : ''}.`);
+    log('Dry run: nothing was called or written.');
+    return [];
+  }
+  const session = await openRun(root, plan, manifest.harness.name, manifest.models.map((item) => item.model_key), { log, resume: { manifest, runDir, rows, tornLine } });
   return withSigint(log, (signal) => execute(root, plan, [session], { log, signal }));
 }

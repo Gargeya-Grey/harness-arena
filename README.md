@@ -59,7 +59,7 @@ To add any other model that OpenCode reaches (`opencode models` lists them), add
 | `  --harness <name>` / `--models <a,b>` | Runs only the targets that match. |
 | `  --repeats <n>` / `--cases <a,b>` | Overrides the experiment. The run records the override. |
 | `  --dry-run` | Shows the plan: model id per harness, effort, whether the user setup loads. Calls nothing. |
-| `node lab run --resume <run-id>` | Continues a run that stopped before its last row: it crashed (`node lab runs` shows `stale`) or you stopped it. Only the missing rows run. It refuses when the suite, prompt, models or harness version changed. `--force` resumes a run written before the heartbeat existed. |
+| `node lab run --resume <run-id>` | Continues a run that stopped before its last row: it crashed (`node lab runs` shows `stale`) or you stopped it. Only the missing rows run. It refuses when the suite, prompt, models or harness version changed. With `--dry-run` it lists what it would run and calls nothing. `--force` resumes a run written before the heartbeat existed. |
 | `node lab new-case <suite> <slug>` | Adds a case with every value to write marked `<<FILL IN>>`, and bumps the suite version. `--agent` also makes the starter workspace and the hidden check. `validate` fails until no marker is left. |
 | `node lab score <run-id> \| --all` | Computes scores again from `raw.jsonl`. Makes no model calls. |
 | `node lab validate` | Checks every input and stored record against `schemas/`. |
@@ -115,7 +115,7 @@ node lab run experiments/agentic-sweep.yaml --harness opencode --repeats 1 --cas
 ## How a comparison works
 
 - **Quality** counts every call. A call that failed through the configuration (timeout, no answer, harness crash, `left_workdir`) scores 0. A call that was **lost** (a usage limit or rate limit, a failed sign-in, a missing CLI) says nothing about the configuration: it leaves the score and shows in the Lost column. `answered_quality` in `/api/state` is the mean over answered calls only.
-- **Intervals** resample cases, then the repeats inside each case. Repeats of one case are not independent, so three cases with three repeats count as three tasks.
+- **Intervals** resample cases, then the repeats inside each case, and are never narrower than the Wilson interval on the number of cases. Repeats of one case are not independent, so three cases with three repeats count as three tasks. Below 3 cases there is no interval.
 - **Model check.** Each row records `metadata.model_check`: `match`, `mismatch` (the harness reports another model, for example a fallback under load) or `unknown` (the harness reports none). The dashboard marks a configuration with a mismatch, and a model key with `pinned: false` (a free alias the provider can change).
 - **Harnesses interleave.** One experiment runs repeat by repeat and case by case across every harness, so a slow hour or a usage limit hits all of them alike. The runner reads each harness version again at the end; a CLI that updated itself during the run gets `harness.settings.version_end`.
 

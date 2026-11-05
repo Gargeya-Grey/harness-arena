@@ -66,6 +66,7 @@ async function main(argv) {
     case 'run': {
       if (!positionals[0] && !values.resume) throw new Error('Name an experiment file: node lab run experiments/<name>.yaml, or resume a run: node lab run --resume <run-id>');
       if (positionals[0] && values.resume) throw new Error('Give an experiment file or --resume <run-id>, not both');
+      if (values.resume && (values.harness || values.models || values.repeats || values.cases)) throw new Error('--resume continues the run as it was planned; --harness, --models, --repeats and --cases do not apply');
       const results = await runCommand(root, positionals[0] ? path.resolve(positionals[0]) : null, {
         resume: values.resume,
         force: values.force,
