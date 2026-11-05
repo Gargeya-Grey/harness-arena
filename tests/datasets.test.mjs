@@ -59,7 +59,7 @@ const REFERENCES = path.join(HERE, 'fixtures', 'coding-solutions');
 test('every coding case has a reference solution that passes its hidden tests', () => {
   const jsFunction = getEvaluator('js-function', '1');
   const cases = casesOf('coding');
-  assert.ok(cases.length >= 18, 'the suite should hold the 8 original and 10 new cases');
+  assert.ok(cases.length >= 18, 'the suite should hold the 8 original and 12 new cases');
   for (const testCase of cases) {
     const file = path.join(REFERENCES, `${testCase.case_id}.mjs`);
     assert.ok(fs.existsSync(file), `${testCase.case_id}: missing ${path.relative(HERE, file)}`);

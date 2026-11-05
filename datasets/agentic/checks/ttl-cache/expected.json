@@ -16,6 +16,6 @@
     "the loader without options caches for good": 1
   },
   "files": {
-    "test/cache.test.mjs": { "includes": ["ttlMs"] }
+    "test/cache.test.mjs": { "includes": ["now"] }
   }
 }
