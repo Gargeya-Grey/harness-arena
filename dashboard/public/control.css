@@ -2,7 +2,6 @@
    status marks come from theme.css; this file holds what only this page draws. */
 
 /* ---------- Page column ---------- */
-.main { padding: 56px 44px 160px; }
 .view { display: none; max-width: 1120px; margin: 0 auto; }
 .view.active { display: block; animation: page-in .42s var(--ease) backwards; }
 @keyframes page-in { from { opacity: 0; transform: translateY(6px); } }
@@ -31,6 +30,9 @@
 .row-text p { font-size: 12.5px; line-height: 18px; color: var(--muted); overflow-wrap: anywhere; }
 .row-ctl { display: flex; align-items: center; gap: 10px; flex: none; }
 .row .mono { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+.problem-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.problem-list li { display: grid; gap: 4px; justify-items: start; font-size: 12.5px; line-height: 18px; color: var(--muted); overflow-wrap: anywhere; }
+.problem-list code { max-width: 100%; color: var(--text); }
 
 /* Meter rows (Home, Activity) */
 .meter { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 16px; width: 100%; min-height: 60px; padding: 12px 18px; cursor: pointer; transition: background-color var(--t-fast) var(--ease); }
@@ -40,7 +42,11 @@
 .meter-label { width: 130px; flex: none; font-size: 13.5px; color: var(--muted); }
 .meter-val { flex: 1; min-width: 0; }
 .meter-val b { display: block; font: 500 15px/20px var(--sans); animation: swap-in var(--t-med) var(--ease); }
-.meter-val span { display: block; font-size: 12.5px; line-height: 18px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meter-val > span { display: block; font-size: 12.5px; line-height: 18px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meter-val .meter-meta { white-space: normal; color: var(--faint); }
+.meter-val .meter-say { white-space: normal; color: var(--muted); font-size: 13.5px; line-height: 20px; }
+.meter-act { flex: none; font-size: 13px; color: var(--accent); }
+a.meter:hover { text-decoration: none; }
 .meter > .i { width: 16px; height: 16px; color: var(--faint); transition: transform var(--t-fast) var(--ease), color var(--t-fast) var(--ease); }
 .meter:hover > .i { color: var(--accent); transform: translateX(2px); }
 @keyframes swap-in { from { opacity: 0; } }
@@ -61,7 +67,7 @@
 .steps { list-style: none; margin: 0; padding: 8px 0; }
 .step { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 14px; padding: 14px 18px; }
 .step:not(:last-child)::after { content: ''; position: absolute; left: 31px; top: 46px; bottom: -10px; border-left: 1.5px dotted var(--faint); }
-.step-n { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; font: 500 12px/1 var(--mono); color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--sel-line); background: var(--canvas); }
+.step-n { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; font: 600 12.5px/1 var(--sans); color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--sel-line); background: var(--canvas); }
 .step.last .step-n { background: var(--accent); color: var(--canvas); box-shadow: 0 0 10px var(--glow); }
 .step-text { display: grid; gap: 4px; justify-items: start; }
 .step-text h3 { font: 500 15px/20px var(--sans); padding-top: 4px; }
@@ -112,9 +118,9 @@ select[data-custom] { position: absolute; opacity: 0; pointer-events: none; widt
 /* ---------- Chips and tags ---------- */
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .mchip { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: var(--r-pill); background: var(--well);
-  box-shadow: inset 0 1px 0 var(--rim); font: 400 12px/1 var(--mono); color: var(--muted); cursor: pointer; transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease); }
+  box-shadow: inset 0 1px 0 var(--rim); font: 400 13px/1 var(--sans); color: var(--muted); cursor: pointer; transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease); }
 .mchip:hover { color: var(--text); }
-.mchip[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--sel-line); }
+.mchip:is([aria-pressed="true"], [aria-checked="true"]) { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--sel-line); }
 .mchip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .chip { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 10px; border-radius: var(--r-pill); background: var(--accent-soft); color: var(--accent); font: 500 12px/16px var(--sans); white-space: nowrap; }
 .chip.muted { background: var(--glass-hi); color: var(--muted); }
@@ -164,15 +170,53 @@ select[data-custom] { position: absolute; opacity: 0; pointer-events: none; widt
 .seg { max-width: 520px; }
 
 /* ---------- Narrow ---------- */
-@media (max-width: 900px) {
-  .main { padding: 34px 26px 150px; }
-}
 @media (max-width: 720px) {
   .row, .hero { flex-wrap: wrap; }
   .meter-label { width: 96px; }
-  .main { padding: 28px 16px 120px; }
   .hero { padding: 20px; gap: 16px; }
   .plan-actions { grid-template-columns: 1fr; }
   .row-ctl { flex-wrap: wrap; }
   .swatches { gap: 6px; }
 }
+
+/* ---------- Home: head, the running job ---------- */
+.head-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px 24px; flex-wrap: wrap; }
+.head-row > div { min-width: 0; flex: 1 1 420px; }
+.sect-link { margin-left: auto; font-size: 13px; font-weight: 500; }
+.live { margin-top: 34px; padding: 20px 22px; display: grid; gap: 14px; }
+.live-top { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--glow); animation: pulse 1.6s ease-in-out infinite; flex: none; }
+@keyframes pulse { 50% { opacity: .35; } }
+.live-text { flex: 1 1 260px; min-width: 0; }
+.live-text h2 { font: 500 16px/22px var(--sans); overflow-wrap: anywhere; }
+.live-text p { font-size: 13.5px; line-height: 20px; color: var(--muted); }
+.live-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* A progress bar: a well with a filled part. Open-ended when the total is not known yet. */
+.progress { position: relative; height: 6px; border-radius: 6px; background: var(--well); box-shadow: var(--well-in); overflow: hidden; }
+.progress i { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: inherit; background: var(--accent); box-shadow: 0 0 8px var(--glow); transition: width var(--t-slow) var(--ease); }
+.progress.is-open-ended i { width: 30% !important; animation: slide 1.4s var(--ease) infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+
+/* ---------- Run: narrow it down, progress ---------- */
+.narrow { display: block; }
+.narrow > summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 56px; padding: 14px 18px; cursor: pointer; list-style: none; border-radius: var(--r-group); }
+.narrow > summary::-webkit-details-marker { display: none; }
+.narrow > summary:hover { background: var(--hover); }
+.narrow > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.narrow > summary .i { width: 16px; height: 16px; color: var(--muted); transition: transform var(--t-med) var(--ease); }
+.narrow[open] > summary .i { transform: rotate(90deg); }
+.narrow-h { font: 500 15px/20px var(--sans); }
+.narrow-sum { margin-left: auto; font-size: 13px; color: var(--muted); }
+.narrow > .group { box-shadow: inset 0 1px 0 var(--line); border-radius: 0 0 var(--r-group) var(--r-group); }
+.narrow > .group > li:first-child::before { display: none; }
+.target span { color: var(--muted); font-family: var(--sans); }
+.prog { display: grid; gap: 10px; }
+.prog-text { font-size: 14px; line-height: 21px; }
+.job-name { font: 500 14px/20px var(--sans); }
+.log-box > summary { font: 500 13.5px/20px var(--sans); color: var(--muted); cursor: pointer; width: max-content; }
+.log-box > summary:hover { color: var(--text); }
+.log-box[open] > summary { margin-bottom: 10px; }
+.job-cmd { margin-bottom: 8px; }
+.job-cmd code { font-size: 12px; }
+.job-note { font-size: 13.5px; line-height: 20px; color: var(--muted); }

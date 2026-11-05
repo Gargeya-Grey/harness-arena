@@ -30,10 +30,3 @@ export function artifactHtml(a, alt, big = false) {
       return html`<a class="art-file" href="${a.url}" download>${a.role || 'artifact'} file (${a.mime || a.kind})</a>`;
   }
 }
-
-// A small preview for a grid cell. Only still images; other kinds open in the inspector.
-export function thumbHtml(obs) {
-  if (obs.status === 'error') return '';
-  const a = visualArtifacts(obs).find((x) => (x.kind === 'svg' || x.kind === 'image') && x.url);
-  return a ? html`<img class="art-thumb" src="${a.url}" alt="" loading="lazy">` : '';
-}

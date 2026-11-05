@@ -1,49 +1,68 @@
-// Runs: a ledger of every run in every context, then the schema problems.
-import { S } from './model.js';
-import { html, setHtml, dateTime } from './util.js';
+// Runs: where the answers of this test came from. One row per run, newest first.
+// A run can be scored again from here; a stopped run needs a second click to confirm.
+import { S, ctx } from './model.js';
+import { shortDate, utcTime, plural } from './words.js';
+import { html, setHtml } from './util.js';
 
-export function renderRuns() {
-  const host = document.getElementById('runs-body');
+// Why a run stopped, in words. The value comes from harness.settings.halted in run.json.
+const HALT = { left_workdir: 'the agent wrote outside its folder' };
+const haltText = (run) => {
+  const why = run && run.harness && run.harness.settings && run.harness.settings.halted;
+  return why ? HALT[why] || String(why).replace(/[_-]+/g, ' ') : '';
+};
+
+export function runsOf(c = ctx()) {
+  if (!c || !S.data) return [];
+  const ids = new Set(c.runs.map((r) => (typeof r === 'string' ? r : r.run_id)));
+  return (S.data.runs || []).filter((r) => ids.has(r.run_id)).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+}
+
+function statusCell(r) {
+  const halt = haltText(r);
+  if (halt) return html`<span class="state is-warn">Stopped</span><span class="sub">${halt}</span>`;
+  if (r.status === 'running') return html`<span class="state is-live">Running</span>`;
+  if (r.status === 'failed') return html`<span class="state is-bad">Failed</span>`;
+  if (r.rows < r.expected_rows) return html`<span class="state is-warn">Incomplete</span>`;
+  return html`<span class="state">Finished</span>`;
+}
+
+// armed: the run id waiting for its second click. busy: a job runs, so nothing can start.
+export function renderRuns({ armed = '', busy = false } = {}) {
+  const host = document.getElementById('runs');
   const note = document.getElementById('runs-note');
-  const d = S.data;
-  const runs = d ? d.runs || [] : [];
-  const problems = d ? d.problems || [] : [];
-  const statuses = [...new Set(runs.map((r) => r.status))].sort();
-  if (S.runStatus !== 'all' && !statuses.includes(S.runStatus)) S.runStatus = 'all';
-  const shownRuns = S.runStatus === 'all' ? runs : runs.filter((r) => r.status === S.runStatus);
-  note.textContent = runs.length ? `n = ${shownRuns.length} of ${runs.length} run${runs.length === 1 ? '' : 's'}, newest first. Select a start time to open its context.` : '';
-  const filter = runs.length ? html`<div class="toolbar" role="group" aria-label="Status filter"><span class="label">Status</span>${['all', ...statuses].map((st) => html`<button type="button" class="ctl" data-act="run-status" data-value="${st}" data-fk="run-status:${st}" aria-pressed="${String(S.runStatus === st)}">${st === 'all' ? 'All' : st} <span class="num">${st === 'all' ? runs.length : runs.filter((r) => r.status === st).length}</span></button>`)}</div>` : '';
-  let table;
-  if (!runs.length) {
-    table = html`<div class="empty">No runs yet. Run <code>node lab run experiments/smoke-harness-sweep.yaml</code>, then Refresh.</div>`;
-  } else {
-    const rows = shownRuns.map((r) => {
-      const incomplete = r.rows < r.expected_rows;
-      const badStatus = r.status !== 'completed';
-      return html`<tr>
-        <td data-label="Started"><button type="button" class="link-btn" data-act="open-run" data-run="${r.run_id}" data-fk="run:${r.run_id}" aria-label="Open run from ${dateTime(r.created_at)}, ${r.experiment_id || r.run_id}"><time class="mono" datetime="${r.created_at}">${dateTime(r.created_at)}</time></button></td>
-        <td data-label="Experiment">${r.experiment_id || html`<span class="muted">none</span>`}
-          <details class="run-details"><summary>Run details<span class="sr"> for ${r.run_id}</span></summary>
-            <dl><dt>Run ID</dt><dd class="mono">${r.run_id}</dd><dt>Harness</dt><dd>${r.harness ? html`${r.harness.name} <span class="mono">${r.harness.version}</span>` : 'unknown'}</dd><dt>Models</dt><dd>${(r.models || []).join(', ') || 'none'}</dd></dl>
-          </details></td>
-        <td data-label="Harness" class="run-harness">${r.harness ? html`${r.harness.name} <span class="mono">${r.harness.version}</span>` : html`<span class="muted">unknown</span>`}</td>
-        <td data-label="Models" class="run-models">${(r.models || []).join(', ') || html`<span class="muted">none</span>`}</td>
-        <td data-label="Rows" class="col-num"><span class="num${incomplete ? ' bad' : ''}">${r.rows} / ${r.expected_rows}</span></td>
-        <td data-label="Errors" class="col-num"><span class="num${r.errors ? ' bad' : ''}">${r.errors}</span></td>
-        <td data-label="Status" class="run-status"><span class="pill${badStatus ? ' is-bad' : ''}">${r.status}</span></td>
-      </tr>`;
-    });
-    table = html`<div class="runs-wrap" role="region" aria-label="Runs table" tabindex="0"><table class="ledger ledger-runs">
-      <caption class="sr">All runs, newest first</caption>
-      <thead><tr><th scope="col">Started (UTC)</th><th scope="col">Experiment</th><th scope="col" class="run-harness">Harness</th><th scope="col" class="run-models">Models</th><th scope="col" class="col-num">Rows</th><th scope="col" class="col-num">Errors</th><th scope="col" class="run-status">Status</th></tr></thead>
-      <tbody>${rows}</tbody></table></div>`;
+  if (!host) return;
+  const list = runsOf();
+  if (note) note.textContent = plural(list.length, 'run');
+  if (!list.length) {
+    setHtml(host, html`<p class="quiet-line">No runs stored for this test.</p>`);
+    return;
   }
-  const prob = problems.length
-    ? html`<div class="problems"><h3 class="bad">Problems (${problems.length})</h3>
-        <div class="runs-wrap" role="region" aria-label="Problems table" tabindex="0"><table class="ledger ledger-problems">
-          <caption class="sr">Records that failed to parse or validate</caption>
-          <thead><tr><th scope="col">File</th><th scope="col">Message</th></tr></thead>
-          <tbody>${problems.map((p) => html`<tr><td data-label="File"><span class="mono problem-file">${p.file}</span></td><td data-label="Message"><span class="problem-msg">${p.message}</span></td></tr>`)}</tbody></table></div></div>`
-    : html`<div class="problems problems-ok">All records valid against the schemas.</div>`;
-  setHtml(host, html`${filter}${table}${prob}`);
+  const rows = list.map((r) => {
+    const halt = haltText(r);
+    const on = armed === r.run_id;
+    const label = halt ? (on ? 'Confirm: score it' : 'Score anyway') : 'Score again';
+    const why = busy ? 'Wait for the current job to end.' : halt ? 'This run stopped early. Its files may not match its answers.' : 'Check every answer of this run again. No model is called.';
+    const action = r.status === 'running'
+      ? html`<span class="nil">–</span>`
+      : html`<button type="button" class="btn secondary small${on ? ' is-armed' : ''}" data-act="score" data-run="${r.run_id}" data-force="${halt ? '1' : '0'}" data-fk="score:${r.run_id}" title="${why}"${busy ? html` disabled` : ''}>${label}</button>`;
+    const short = r.rows < r.expected_rows;
+    return html`<tr class="${on ? 'is-armed' : ''}">
+      <th scope="row" class="c-when"><span class="v">${shortDate(r.created_at)}</span><span class="sub">${utcTime(r.created_at)}</span></th>
+      <td class="c-what" data-label="Experiment"><span class="v">${r.experiment_id || 'no experiment'}</span><span class="sub">${r.harness ? `${r.harness.name} ${r.harness.version}` : 'harness unknown'}</span></td>
+      <td class="c-num" data-label="Answers"><span class="v${short ? ' warn' : ''}">${r.rows} of ${r.expected_rows}</span></td>
+      <td class="c-num" data-label="Errors"><span class="v${r.errors ? ' bad' : ''}">${r.errors || 'none'}</span></td>
+      <td class="c-state" data-label="Status">${statusCell(r)}</td>
+      <td class="c-act">${action}</td>
+    </tr>
+    ${on ? html`<tr class="arm-row"><td colspan="6"><p class="arm-note" role="alert">This run stopped early. The agent may have changed files after its last answer. Select <strong>Confirm: score it</strong> to score it anyway.</p></td></tr>` : ''}`;
+  });
+  setHtml(
+    host,
+    html`<table class="tbl runs-tbl">
+      <caption class="sr">Runs of this test, newest first</caption>
+      <thead><tr><th scope="col" class="c-when">Started</th><th scope="col" class="c-what">Experiment</th><th scope="col" class="c-num">Answers</th><th scope="col" class="c-num">Errors</th><th scope="col" class="c-state">Status</th><th scope="col" class="c-act"><span class="sr">Action</span></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <details class="run-ids"><summary class="disclose">Run ids</summary><ul>${list.map((r) => html`<li><code>${r.run_id}</code></li>`)}</ul></details>`,
+  );
 }

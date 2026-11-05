@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Results · Model Lab</title>
+<meta name="description" content="What a test found: which setup passed more, which was faster, and every answer behind it.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/fonts/fonts.css">
+<link rel="stylesheet" href="/theme.css">
+<link rel="stylesheet" href="/results.css">
+<script src="/boot.js"></script>
+<script type="module" src="/results.js"></script>
+</head>
+<body>
+<div class="app">
+  <aside class="rail" id="rail" aria-label="Model Lab"></aside>
+
+  <main class="main" id="main">
+    <div class="page">
+      <a class="jobbar" id="jobbar" href="/#run" hidden>
+        <span class="jobbar-dot" aria-hidden="true"></span>
+        <span class="jobbar-text" id="jobbar-text"></span>
+        <span class="jobbar-bar" aria-hidden="true"><i id="jobbar-fill"></i></span>
+        <span class="jobbar-open">Open</span>
+      </a>
+
+      <header class="test-head">
+        <div class="test-id">
+          <h1 id="test-title">Results</h1>
+          <p class="test-meta" id="test-meta">Reading the stored runs…</p>
+        </div>
+        <div class="test-acts" id="test-acts" hidden>
+          <button type="button" class="btn secondary small" data-act="change-test" data-fk="change-test">Change test</button>
+          <div class="share">
+            <button type="button" class="btn secondary small" id="share-btn" data-act="share-menu" data-fk="share" aria-expanded="false" aria-controls="share-pop"><svg class="i" aria-hidden="true"><use href="#i-share"/></svg>Share</button>
+            <div class="share-pop" id="share-pop" hidden>
+              <p class="share-h">Link</p>
+              <button type="button" class="share-item" data-act="share-link" data-fk="share:link">Copy link</button>
+              <button type="button" class="share-item" data-act="share-save" data-fk="share:save">Save view…</button>
+              <p class="share-h">Table</p>
+              <button type="button" class="share-item" data-act="share-md" data-fk="share:md">Copy as Markdown</button>
+              <button type="button" class="share-item" data-act="share-csv" data-fk="share:csv">Download CSV</button>
+              <button type="button" class="share-item" data-act="share-json" data-fk="share:json">Download JSON</button>
+              <p class="share-h">Picture</p>
+              <button type="button" class="share-item" data-act="share-wide" data-fk="share:wide">Wide picture (16:9)</button>
+              <button type="button" class="share-item" data-act="share-square" data-fk="share:square">Square picture (1:1)</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section class="answer glass" id="answer" aria-label="The answer" hidden></section>
+
+      <div class="empty-page glass" id="empty" hidden></div>
+
+      <section class="sect" id="setups-sect" aria-labelledby="setups-h" hidden>
+        <div class="sect-label">
+          <h2 id="setups-h">Setups</h2>
+          <div class="sect-acts">
+            <button type="button" class="btn quiet small" id="choose-btn" data-act="choose" data-fk="choose">Choose setups</button>
+            <button type="button" class="btn quiet small" id="details-btn" data-act="details" data-fk="details" aria-pressed="false">Details</button>
+          </div>
+        </div>
+        <div class="tbl-wrap glass" id="setups" tabindex="-1"></div>
+        <div class="sect-foot" id="setups-foot" hidden></div>
+      </section>
+
+      <section class="sect" id="cases-sect" aria-labelledby="cases-h" hidden>
+        <div class="sect-label">
+          <h2 id="cases-h">Case by case</h2>
+          <span class="sect-note" id="cases-note"></span>
+          <div class="sect-acts">
+            <button type="button" class="switch" id="only-btn" role="switch" aria-checked="false" data-act="only" data-fk="only"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>Only where setups differ</button>
+          </div>
+        </div>
+        <div class="tbl-wrap glass" id="cases"></div>
+        <p class="sect-foot legend" aria-hidden="true"><span><span class="tm tm-pass">✓</span>passed</span><span><span class="tm tm-fail">✕</span>failed</span><span><span class="tm tm-error">!</span>no answer</span><span><span class="tm tm-unscored">○</span>not checked</span><span class="legend-hint">Select a mark to read that answer.</span></p>
+      </section>
+
+      <section class="sect" id="charts-sect" aria-labelledby="charts-h" hidden>
+        <div class="sect-label"><h2 id="charts-h">Charts</h2></div>
+        <div class="charts" id="charts-main"></div>
+        <details class="more-charts" id="charts-more">
+          <summary class="disclose"><span id="charts-more-label">More charts</span></summary>
+          <div class="charts" id="charts-more-body"></div>
+        </details>
+      </section>
+
+      <section class="sect" id="ratings-sect" aria-labelledby="ratings-h" hidden>
+        <div class="sect-label"><h2 id="ratings-h">Your ratings</h2><span class="sect-note" id="ratings-note"></span></div>
+        <div class="tbl-wrap glass" id="ratings"></div>
+      </section>
+
+      <section class="sect" id="runs-sect" aria-labelledby="runs-h" hidden>
+        <div class="sect-label"><h2 id="runs-h">Runs</h2><span class="sect-note" id="runs-note"></span></div>
+        <div class="tbl-wrap glass" id="runs"></div>
+        <p class="sect-foot">Score again checks the stored answers once more. It calls no model.</p>
+      </section>
+    </div>
+  </main>
+
+  <aside class="insp" id="inspector" aria-labelledby="insp-title" hidden></aside>
+</div>
+
+<dialog class="dlg" id="pick-test" aria-labelledby="pick-test-h">
+  <div class="dlg-head"><h2 id="pick-test-h">Change test</h2><button type="button" class="icon-btn" data-act="dlg-close" data-dlg="pick-test" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+  <div class="dlg-body" id="pick-test-body"></div>
+</dialog>
+
+<dialog class="dlg dlg-narrow" id="pick-setups" aria-labelledby="pick-setups-h">
+  <div class="dlg-head"><div><h2 id="pick-setups-h">Choose setups</h2><p class="dlg-sub">Up to 8 at once. The table keeps the best first.</p></div><button type="button" class="icon-btn" data-act="dlg-close" data-dlg="pick-setups" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+  <div class="dlg-body" id="pick-setups-body"></div>
+  <div class="dlg-foot">
+    <button type="button" class="btn primary" id="choose-apply" data-act="choose-apply">Show these</button>
+    <button type="button" class="btn secondary" data-act="choose-best">Show the best 8</button>
+    <p class="dlg-status" id="pick-setups-count" role="status"></p>
+  </div>
+</dialog>
+
+<dialog class="dlg dlg-narrow" id="save-view" aria-labelledby="save-view-h">
+  <form id="save-view-form" novalidate>
+    <div class="dlg-head"><div><h2 id="save-view-h">Save view</h2><p class="dlg-sub" id="view-note"></p></div><button type="button" class="icon-btn" data-act="dlg-close" data-dlg="save-view" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+    <div class="dlg-body">
+      <label class="field-label" for="view-title">Name</label>
+      <input type="text" id="view-title" maxlength="80" autocomplete="off" required>
+    </div>
+    <div class="dlg-foot">
+      <button type="submit" class="btn primary">Save view</button>
+      <button type="button" class="btn secondary" data-act="dlg-close" data-dlg="save-view">Cancel</button>
+      <p class="dlg-status" id="view-status" role="status"></p>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dlg dlg-wide" id="review" aria-labelledby="review-title"></dialog>
+
+<p class="status" id="status" aria-hidden="true"></p>
+<div class="sr" id="live" aria-live="polite"></div>
+</body>
+</html>

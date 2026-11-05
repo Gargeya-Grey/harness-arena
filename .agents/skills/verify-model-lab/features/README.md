@@ -6,8 +6,8 @@ One file per user-facing feature. Each file says how a user reaches the feature 
 |---|---|---|---|
 | Run an experiment | CLI | [run-experiment.md](run-experiment.md) | run-dry, run-filter, run-live, run-errors, run-isolation, run-user-config, run-declared |
 | Validate and report | CLI | [validate-report.md](validate-report.md) | validate, report |
-| Control page | Dashboard | [control-page.md](control-page.md) | home, run-preview, run-start, run-stop, runs-score, harnesses, checks, activity, appearance, offline |
-| Compare configurations | Dashboard | [dashboard-compare.md](dashboard-compare.md) | lineup, overview, answers, charts, inspector, theme, narrow, dropdowns |
-| Review, boards and export | Dashboard | [dashboard-review-boards.md](dashboard-review-boards.md) | blind-review, boards, export, runs |
+| Control page | Dashboard | [control-page.md](control-page.md) | home, run-preview, run-start, run-progress, run-stop, lab, appearance, shell, offline |
+| Results page | Dashboard | [results-page.md](results-page.md) | head, answer, setups, choose, cases, side-panel, charts, ratings, runs, change-test, jobbar, old-links |
+| Rate answers, saved views and Share | Dashboard | [results-rate-share.md](results-rate-share.md) | rate, saved-views, share |
 
-Pick the file whose sub-feature names the change. A change to `dashboard/public/styles.css` or `js/charts.js` touches every comparison sub-feature: check light, dark and a narrow width. A change to `control.css`, `control.js` or `dashboard/jobs.mjs` touches every control-page sub-feature.
+Pick the file whose sub-feature names the change. A change to `results.css`, `results.js` or a module in `js/` touches every Results sub-feature: check light, dark, 390px and 1440px. A change to `js/verdict.js` changes the answer: run `tests/verdict.test.mjs`. A change to `control.css`, `control.js` or `dashboard/jobs.mjs` touches every control-page sub-feature. A change to `theme.css` or `shell.js` touches both pages.

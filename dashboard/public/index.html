@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Model Lab</title>
-<meta name="description" content="Run test cases through your own harnesses and models, then compare the answers.">
+<meta name="description" content="Run test cases through your own harnesses and models, then see which setup did better.">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/fonts/fonts.css">
 <link rel="stylesheet" href="/theme.css">
@@ -19,63 +19,77 @@
   <main class="main" id="main">
     <!-- Home -->
     <section class="view" id="view-home" aria-labelledby="h-home">
-      <header class="page-head"><h1 id="h-home">Model Lab</h1><p>Run the same cases through your own harnesses and models. Every call is kept as evidence, then compared side by side.</p></header>
-      <div class="hero glass">
-        <div class="hero-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-        <div class="hero-text"><div class="hero-title" id="hero-title">Ready</div><div class="hero-sub" id="hero-sub">Loading the lab</div></div>
-        <div class="hero-act"><a class="btn tertiary" href="/compare.html">Open Compare</a><button type="button" class="btn primary" data-go="run">New run</button></div>
-      </div>
-      <div class="cols">
-        <section class="sect">
-          <div class="sect-label"><h2>Your lab</h2><span class="sect-note">Select a row to open its page</span></div>
-          <ul class="group glass" id="meters"><li class="row"><div class="row-text"><p>Reading the lab</p></div></li></ul>
-        </section>
-        <section class="sect">
-          <div class="sect-label"><h2>First test</h2><span class="sect-note">No model calls until step 3</span></div>
-          <ol class="steps glass">
-            <li class="step"><span class="step-n mono">1</span><div class="step-text"><h3>Check harnesses</h3><p>See which CLIs are installed and signed in on this machine.</p><button type="button" class="btn secondary small" data-go="harnesses">Open Harnesses</button></div></li>
-            <li class="step"><span class="step-n mono">2</span><div class="step-text"><h3>Preview a run</h3><p>Pick an experiment and press Preview. It shows the plan and calls nothing.</p><button type="button" class="btn secondary small" data-go="run">Open Run</button></div></li>
-            <li class="step last"><span class="step-n mono">3</span><div class="step-text"><h3>Start one case</h3><p>Choose one case and one repeat, then Start. Then compare the answers.</p><a class="btn secondary small" href="/compare.html">Open Compare</a></div></li>
-          </ol>
-        </section>
-      </div>
+      <header class="page-head head-row">
+        <div><h1 id="h-home">Model Lab</h1><p>Run the same cases through your own harnesses and models, then see which setup did better.</p></div>
+        <a class="btn primary" href="#run">New run</a>
+      </header>
+
+      <section class="live glass" id="live-job" aria-labelledby="live-title" hidden>
+        <div class="live-top">
+          <span class="live-dot" aria-hidden="true"></span>
+          <div class="live-text"><h2 id="live-title"></h2><p id="live-sub"></p></div>
+          <div class="live-acts"><button type="button" class="btn danger small" id="live-stop">Stop</button><a class="btn secondary small" id="live-open" href="#run">Open</a></div>
+        </div>
+        <div class="progress" id="live-bar" aria-hidden="true"><i></i></div>
+      </section>
+
+      <section class="sect" id="latest-sect">
+        <div class="sect-label"><h2 id="latest-h">Latest results</h2><a class="sect-link" href="/results.html">All results</a></div>
+        <ul class="group glass" id="latest" aria-labelledby="latest-h"><li class="row"><div class="row-text"><p>Reading the results</p></div></li></ul>
+      </section>
+
+      <section class="sect" id="attention-sect" hidden>
+        <div class="sect-label"><h2 id="attention-h">Needs attention</h2></div>
+        <ul class="group glass" id="attention" aria-labelledby="attention-h"></ul>
+      </section>
+
+      <section class="sect" id="first-sect" hidden>
+        <div class="sect-label"><h2>First test</h2><span class="sect-note">No model is called until step 3</span></div>
+        <ol class="steps glass">
+          <li class="step"><span class="step-n">1</span><div class="step-text"><h3>Check the harnesses</h3><p>See which CLIs are installed and signed in on this machine.</p><a class="btn secondary small" href="#lab">Open Lab</a></div></li>
+          <li class="step"><span class="step-n">2</span><div class="step-text"><h3>Preview a run</h3><p>Choose an experiment and press Preview. It shows the plan and calls nothing.</p><a class="btn secondary small" href="#run">Open Run</a></div></li>
+          <li class="step last"><span class="step-n">3</span><div class="step-text"><h3>Run one case</h3><p>Under Narrow it down, choose one case, then Start. The result shows under Results.</p><a class="btn secondary small" href="#run">Open Run</a></div></li>
+        </ol>
+      </section>
     </section>
 
     <!-- Run -->
     <section class="view" id="view-run" aria-labelledby="h-run">
-      <header class="page-head"><h1 id="h-run">Run</h1><p>Choose an experiment and its scope. Preview shows the plan and calls nothing. Start calls the models through your own sign-ins.</p></header>
+      <header class="page-head"><h1 id="h-run">Run</h1><p>Choose an experiment. Preview shows the plan and calls nothing. Start calls the models through your own sign-ins.</p></header>
       <div class="cols">
         <div class="col">
           <section class="sect">
             <div class="sect-label"><h2>Experiment</h2><span class="sect-note" id="exp-note"></span></div>
             <ul class="group glass">
               <li class="row block">
-                <div class="row-text"><h3><label for="exp-select">Experiment</label></h3><p>Files in <code>experiments/</code>.</p></div>
+                <div class="row-text"><h3><label for="exp-select">Experiment</label></h3><p>The files in <code>experiments/</code>.</p></div>
                 <select id="exp-select" data-custom></select>
               </li>
-              <li class="row block" id="exp-detail"></li>
+              <li class="row block" id="exp-detail" hidden></li>
             </ul>
           </section>
           <section class="sect">
-            <div class="sect-label"><h2>Scope</h2><span class="sect-note">Leave a choice empty to run all of it</span></div>
-            <ul class="group glass">
-              <li class="row block">
-                <div class="row-text"><h3><label for="harness-select">Harness</label></h3><p>Only the targets that use this harness.</p></div>
-                <select id="harness-select" data-custom></select>
-              </li>
-              <li class="row block">
-                <div class="row-text"><h3 id="models-h">Models</h3><p>Select models to run only those. None selected runs every target.</p></div>
-                <div class="chips" id="model-chips" role="group" aria-labelledby="models-h"></div>
-              </li>
-              <li class="row block">
-                <div class="row-text"><h3 id="cases-h">Cases</h3><p>Select cases to run only those. Start with one.</p></div>
-                <div class="chips" id="case-chips" role="group" aria-labelledby="cases-h"></div>
-              </li>
-              <li class="row">
-                <div class="row-text"><h3><label for="repeats">Repeats</label></h3><p id="repeats-hint">Each case runs this many times per target.</p></div>
-                <div class="row-ctl"><input type="number" id="repeats" class="short" min="1" max="50" step="1" inputmode="numeric"></div>
-              </li>
-            </ul>
+            <details class="narrow glass" id="narrow">
+              <summary><svg class="i" aria-hidden="true"><use href="#i-chev"/></svg><span class="narrow-h">Narrow it down</span><span class="narrow-sum" id="narrow-sum">Everything in the experiment</span></summary>
+              <ul class="group">
+                <li class="row block" id="harness-row">
+                  <div class="row-text"><h3 id="harness-h">Harness</h3><p>Run only the setups that use this harness.</p></div>
+                  <div class="chips" id="harness-chips" role="radiogroup" aria-labelledby="harness-h"></div>
+                </li>
+                <li class="row block">
+                  <div class="row-text"><h3 id="models-h">Models</h3><p>None chosen runs every model.</p></div>
+                  <div class="chips" id="model-chips" role="group" aria-labelledby="models-h"></div>
+                </li>
+                <li class="row block">
+                  <div class="row-text"><h3 id="cases-h">Cases</h3><p>None chosen runs every case. Start with one.</p></div>
+                  <div class="chips" id="case-chips" role="group" aria-labelledby="cases-h"></div>
+                </li>
+                <li class="row">
+                  <div class="row-text"><h3><label for="repeats">Tries per case</label></h3><p id="repeats-hint">Use 3 or more to compare setups.</p></div>
+                  <div class="row-ctl"><input type="number" id="repeats" class="short" min="1" max="50" step="1" inputmode="numeric"></div>
+                </li>
+              </ul>
+            </details>
           </section>
         </div>
         <aside class="col side" aria-labelledby="plan-h">
@@ -96,86 +110,54 @@
         </aside>
       </div>
       <section class="sect" id="run-output-sect" hidden>
-        <div class="sect-label"><h2>Output</h2><span class="sect-note" id="run-output-note"></span></div>
+        <div class="sect-label"><h2>Progress</h2><span class="sect-note" id="run-output-note"></span></div>
         <div class="job" id="run-job"></div>
       </section>
     </section>
 
-    <!-- Runs -->
-    <section class="view" id="view-runs" aria-labelledby="h-runs">
-      <header class="page-head"><h1 id="h-runs">Runs</h1><p>Every stored run, newest first. Score again recomputes scores from the stored answers and makes no model calls.</p></header>
-      <section class="sect">
-        <div class="sect-label"><h2>Stored runs</h2><span class="sect-note" id="runs-note"></span></div>
-        <ul class="group glass" id="runs-list"><li class="row"><div class="row-text"><p>Loading the runs</p></div></li></ul>
-        <div class="actions"><button type="button" class="btn secondary small" id="score-all">Score all again</button><a class="btn tertiary small" href="/compare.html">Open Compare</a></div>
-      </section>
-    </section>
-
-    <!-- Harnesses -->
-    <section class="view" id="view-harnesses" aria-labelledby="h-harnesses">
-      <header class="page-head"><h1 id="h-harnesses">Harnesses</h1><p>The CLIs that call the models. Each one uses your own sign-in. Check shows which are installed here.</p></header>
-      <section class="sect">
-        <div class="sect-label"><h2>On this machine</h2><span class="sect-note" id="harness-note">Not checked yet</span></div>
-        <ul class="group glass" id="harness-list"></ul>
-        <div class="actions"><button type="button" class="btn primary small" id="doctor-btn">Check harnesses</button></div>
-        <p class="sect-foot">Isolation: what <code>user_config: isolated</code> keeps out. Partial means some of your setup still loads. Connect another CLI in <code>configs/harnesses.yaml</code>.</p>
-      </section>
-    </section>
-
-    <!-- Checks -->
-    <section class="view" id="view-checks" aria-labelledby="h-checks">
-      <header class="page-head"><h1 id="h-checks">Checks</h1><p>Validate checks every input and stored record against the schemas. Report writes a Markdown comparison to the output.</p></header>
+    <!-- Lab -->
+    <section class="view" id="view-lab" aria-labelledby="h-lab">
+      <header class="page-head"><h1 id="h-lab">Lab</h1><p>The harnesses on this machine, checks on the stored records, and how the pages look.</p></header>
       <div class="cols even">
-        <section class="sect">
-          <div class="sect-label"><h2>Commands</h2></div>
-          <ul class="group glass">
-            <li class="row"><div class="row-text"><h3>Validate</h3><p><code>node lab validate</code></p></div><div class="row-ctl"><span class="tag" id="validate-tag" hidden></span><button type="button" class="btn secondary small" data-job="validate">Validate</button></div></li>
-            <li class="row"><div class="row-text"><h3>Report</h3><p><code>node lab report</code>: one Markdown table per context</p></div><div class="row-ctl"><span class="tag" id="report-tag" hidden></span><button type="button" class="btn secondary small" data-job="report">Report</button></div></li>
-            <li class="row"><div class="row-text"><h3>List runs</h3><p><code>node lab runs</code></p></div><div class="row-ctl"><span class="tag" id="runs-tag" hidden></span><button type="button" class="btn secondary small" data-job="runs">List runs</button></div></li>
-          </ul>
-          <p class="sect-foot">The test suite (<code>npm test</code>) is for code changes. Run it in a terminal.</p>
-        </section>
-        <section class="sect" id="checks-output-sect">
-          <div class="sect-label"><h2>Output</h2></div>
-          <div class="job" id="checks-job"><p class="job-empty">The output of a command shows here. Press Validate to start.</p></div>
-        </section>
+        <div class="col">
+          <section class="sect">
+            <div class="sect-label"><h2>Harnesses</h2><span class="sect-note" id="harness-note">Not checked yet</span></div>
+            <ul class="group glass" id="harness-list"></ul>
+            <div class="actions"><button type="button" class="btn primary small" id="doctor-btn">Check harnesses</button></div>
+            <p class="sect-foot">Each harness uses your own sign-in. Isolation says what <code>user_config: isolated</code> keeps out; partial means some of your setup still loads. Add another CLI in <code>configs/harnesses.yaml</code>.</p>
+          </section>
+          <section class="sect">
+            <div class="sect-label"><h2>Records</h2></div>
+            <ul class="group glass">
+              <li class="row block" id="problems-row" hidden></li>
+              <li class="row"><div class="row-text"><h3>Validate</h3><p>Checks every input and stored record against the schemas.</p></div><div class="row-ctl"><span class="tag" id="validate-tag" hidden></span><button type="button" class="btn secondary small" data-job="validate">Validate</button></div></li>
+              <li class="row"><div class="row-text"><h3>Score every run again</h3><p>Checks every stored answer once more. Calls no model.</p></div><div class="row-ctl"><span class="tag" id="score-tag" hidden></span><button type="button" class="btn secondary small" data-job="score">Score all</button></div></li>
+              <li class="row"><div class="row-text"><h3>Report</h3><p>Writes one Markdown table per test to the output.</p></div><div class="row-ctl"><span class="tag" id="report-tag" hidden></span><button type="button" class="btn secondary small" data-job="report">Report</button></div></li>
+            </ul>
+          </section>
+          <section class="sect">
+            <div class="sect-label"><h2>Recent jobs</h2><span class="sect-note" id="jobs-note"></span></div>
+            <ul class="group glass" id="jobs-list"></ul>
+          </section>
+          <section class="sect">
+            <div class="sect-label"><h2>Appearance</h2><span class="sect-note">Saved in this browser</span></div>
+            <ul class="group glass">
+              <li class="row block"><div class="row-text"><h3>Theme colour</h3><p>Changes the accent and the tint of every surface.</p></div>
+                <div class="row-ctl"><div class="swatches" id="swatches" role="radiogroup" aria-label="Theme colour"></div><span class="theme-name" id="theme-name" aria-live="polite"></span></div></li>
+              <li class="row block"><div class="row-text"><h3>Mode</h3><p>System follows your computer. The switch at the foot of the rail does the same.</p></div>
+                <div class="seg" id="mode-seg" role="group" aria-label="Mode" style="--n:3"><span class="seg-knob" aria-hidden="true"></span><button type="button" data-v="system">System</button><button type="button" data-v="light">Light</button><button type="button" data-v="dark">Dark</button></div></li>
+              <li class="row block"><div class="row-text"><h3>Motion</h3><p>Reduced keeps short fades. Off stops every animation.</p></div>
+                <div class="seg" id="motion-seg" role="group" aria-label="Motion" style="--n:3"><span class="seg-knob" aria-hidden="true"></span><button type="button" data-v="full">Full</button><button type="button" data-v="reduced">Reduced</button><button type="button" data-v="off">Off</button></div></li>
+            </ul>
+          </section>
+        </div>
+        <aside class="col side" aria-labelledby="lab-output-h">
+          <section class="sect" id="lab-output-sect">
+            <div class="sect-label"><h2 id="lab-output-h">Output</h2><span class="sect-note" id="lab-output-note"></span></div>
+            <div class="job" id="lab-job"><p class="job-empty">The output of a job shows here. Start one, or select one under Recent jobs.</p></div>
+          </section>
+        </aside>
       </div>
-    </section>
-
-    <!-- Activity -->
-    <section class="view" id="view-activity" aria-labelledby="h-activity">
-      <header class="page-head"><h1 id="h-activity">Activity</h1><p>Commands started from this page since the server started. One runs at a time.</p></header>
-      <div class="cols even">
-        <section class="sect">
-          <div class="sect-label"><h2>Jobs</h2><span class="sect-note" id="jobs-note"></span></div>
-          <ul class="group glass" id="jobs-list"></ul>
-        </section>
-        <section class="sect" id="activity-output-sect">
-          <div class="sect-label"><h2>Output</h2></div>
-          <div class="job" id="activity-job"><p class="job-empty">Select a job to read its output.</p></div>
-        </section>
-      </div>
-    </section>
-
-    <!-- Appearance -->
-    <section class="view" id="view-appearance" aria-labelledby="h-appearance">
-      <header class="page-head"><h1 id="h-appearance">Appearance</h1><p>Colour, light or dark, and motion for every Model Lab page. Saved in this browser at once.</p></header>
-      <section class="sect">
-        <div class="sect-label"><h2>Colour</h2></div>
-        <ul class="group glass">
-          <li class="row block"><div class="row-text"><h3>Theme colour</h3><p>Changes the accent and the tint of every surface.</p></div>
-            <div class="row-ctl"><div class="swatches" id="swatches" role="radiogroup" aria-label="Theme colour"></div><span class="theme-name" id="theme-name" aria-live="polite"></span></div></li>
-          <li class="row block"><div class="row-text"><h3>Mode</h3><p>System follows your computer. The switch at the bottom of the rail does the same.</p></div>
-            <div class="seg" id="mode-seg" role="group" aria-label="Mode" style="--n:3"><span class="seg-knob" aria-hidden="true"></span><button type="button" data-v="system">System</button><button type="button" data-v="light">Light</button><button type="button" data-v="dark">Dark</button></div></li>
-        </ul>
-      </section>
-      <section class="sect">
-        <div class="sect-label"><h2>Motion</h2></div>
-        <ul class="group glass">
-          <li class="row block"><div class="row-text"><h3>Motion</h3><p>Reduced keeps short fades. Off stops every animation.</p></div>
-            <div class="seg" id="motion-seg" role="group" aria-label="Motion" style="--n:3"><span class="seg-knob" aria-hidden="true"></span><button type="button" data-v="full">Full</button><button type="button" data-v="reduced">Reduced</button><button type="button" data-v="off">Off</button></div></li>
-        </ul>
-      </section>
     </section>
   </main>
 </div>

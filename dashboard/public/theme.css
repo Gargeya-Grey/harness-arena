@@ -151,6 +151,15 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 code { font: 400 12px/1.4 var(--mono); padding: 1px 6px; border-radius: 6px; background: var(--well); box-shadow: inset 0 1px 0 var(--rim); overflow-wrap: anywhere; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .i { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.keep { white-space: nowrap; }
+/* A closed fold takes its content out of layout, not only out of sight, so nothing measures it. */
+details:not([open]) > :not(summary) { display: none; }
+/* The fold marker of every <details>: a chevron that turns when the fold opens. */
+summary.disclose { display: inline-flex; align-items: center; gap: 10px; list-style: none; cursor: pointer; }
+summary.disclose::-webkit-details-marker { display: none; }
+summary.disclose::before { content: ""; flex: none; width: 6px; height: 6px; margin: 0 1px 2px 2px; border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor; transform: rotate(-45deg); transition: transform var(--t-med) var(--ease); }
+details[open] > summary.disclose::before { transform: rotate(45deg); margin-bottom: 4px; }
+summary.disclose:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
 .sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 ::-webkit-scrollbar { width: 12px; height: 12px; }
 ::-webkit-scrollbar-thumb { background: var(--raised-2); border: 3px solid var(--canvas); border-radius: 999px; }
@@ -162,7 +171,9 @@ code { font: 400 12px/1.4 var(--mono); padding: 1px 6px; border-radius: 6px; bac
   background: radial-gradient(900px 520px at 62% -12%, color-mix(in srgb, var(--accent) var(--ground), transparent), transparent 70%),
               radial-gradient(700px 500px at 100% 0%, color-mix(in srgb, var(--accent) calc(var(--ground) - 1%), transparent), transparent 70%); }
 .app::after { content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none; background: var(--grain); background-size: 160px; opacity: var(--grain-o); mix-blend-mode: overlay; }
-.main { position: relative; z-index: 1; min-width: 0; }
+.main { position: relative; z-index: 1; min-width: 0; padding: 56px 44px 160px; }
+@media (max-width: 900px) { .main { padding: 34px 26px 150px; } }
+@media (max-width: 720px) { .main { padding: 28px 16px 120px; } }
 
 /* ---------- Rail ---------- */
 .rail { position: sticky; top: 0; height: 100vh; z-index: 20; display: flex; flex-direction: column; gap: 22px; padding: 26px 18px 22px;
@@ -175,7 +186,9 @@ code { font: 400 12px/1.4 var(--mono); padding: 1px 6px; border-radius: 6px; bac
 .word .dot { color: var(--logo-stem); }
 .ver { margin-left: auto; font: 500 12px/1 var(--mono); color: var(--faint); }
 
-.run-card { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 14px; background: var(--glass); box-shadow: var(--lift); }
+.run-card { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 14px; background: var(--glass); box-shadow: var(--lift); color: inherit; text-decoration: none; transition: background-color var(--t-fast) var(--ease); }
+.run-card:hover { text-decoration: none; background: var(--glass-hi); }
+.run-text > span { display: block; }
 .bars { display: grid; grid-template-columns: repeat(5, 3px); gap: 2px; align-items: center; height: 14px; flex: none; }
 .bars i { display: block; width: 3px; height: 12px; border-radius: .5px; background: var(--faint); transform-origin: center; }
 .bars i:nth-child(1) { transform: scaleY(.4); } .bars i:nth-child(2) { transform: scaleY(.75); } .bars i:nth-child(3) { transform: scaleY(1); }
@@ -220,19 +233,7 @@ code { font: 400 12px/1.4 var(--mono); padding: 1px 6px; border-radius: 6px; bac
 .mode-btn:active { transform: scale(.98); }
 .mode-btn .i { width: 16px; height: 16px; }
 
-/* Folded rail: icons only. Compare always folds it so the data gets the width; every page folds it under 900px. */
-.app.folded { --rail-w: 64px; }
-.app.folded .rail { padding: 22px 10px; align-items: center; }
-.app.folded :is(.brand .word, .brand .ver, .run-text, .rail-foot p, .mode-word) { display: none; }
-.app.folded .brand { padding: 0; }
-.app.folded .run-card { padding: 11px; }
-.app.folded .nav { width: 44px; }
-.app.folded .nav-item { padding: 0; justify-content: center; width: 44px; }
-.app.folded .nav-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.app.folded .nav-dot { position: absolute; top: 7px; right: 7px; }
-.app.folded .nav-pill::before { left: 2px; }
-.app.folded .rail-foot { padding: 0; justify-items: center; }
-.app.folded .mode-btn { padding: 0; justify-content: center; justify-self: center; }
+/* Narrow: the rail folds to icons under 900px on every page. */
 @media (max-width: 900px) {
   .app { --rail-w: 64px; }
   .rail { padding: 22px 10px; align-items: center; }
@@ -278,6 +279,13 @@ code { font: 400 12px/1.4 var(--mono); padding: 1px 6px; border-radius: 6px; bac
 .btn.danger { color: var(--danger); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent); }
 .btn.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 10%, transparent); }
 .btn.armed { color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 50%, transparent); background: none; filter: none; }
+.btn.quiet { padding: 0 12px; color: var(--muted); }
+.btn.quiet:hover:not(:disabled) { color: var(--text); background: var(--hover); }
+.btn.quiet[aria-pressed="true"] { color: var(--text); background: var(--hover); }
+.btn.is-armed { color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 50%, transparent); }
+.icon-btn { display: inline-grid; place-items: center; flex: none; width: 40px; height: 40px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease); }
+.icon-btn:hover { background: var(--hover); color: var(--text); }
+.count { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; margin-left: 6px; border-radius: var(--r-pill); background: var(--well); font: 500 12px/1 var(--sans); color: var(--muted); font-variant-numeric: tabular-nums; }
 .btn.small { height: 32px; padding: 0 12px; font-size: 13px; border-radius: 10px; }
 .btn .i { width: 16px; height: 16px; }
 .spinner { width: 13px; height: 13px; border-radius: 50%; border: 2px solid color-mix(in srgb, currentColor 30%, transparent); border-top-color: currentColor; animation: spin .8s linear infinite; flex: none; }

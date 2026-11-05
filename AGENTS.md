@@ -27,7 +27,7 @@ lab/commands/             run, score, validate, doctor/runs/report
 lab/lib/                  yaml.mjs, schema.mjs (subsets), metrics.mjs, state.mjs (derived view)
 dashboard/server.mjs      Local server: /api/state, /api/artifact, annotations, boards, /api/catalog, /api/jobs
 dashboard/jobs.mjs        Starts allowlisted `node lab` commands for the control page (no shell)
-dashboard/public/         Static UI, no build step: index.html control page, compare.html comparison
+dashboard/public/         Static UI, no build step: index.html (Home, Run, Lab), results.html (one test compared)
 configs/models.yaml       Model registry: exact id, params, optional pricing, harness_models
 configs/harnesses.yaml    CLI harnesses declared with no code
 datasets/<suite>/         suite.yaml + cases.jsonl (one case per line); agent suites add workspaces/ and checks/
@@ -121,7 +121,7 @@ Done when `node lab validate` passes and `node lab runs` shows the run with ever
 node lab dashboard
 ```
 
-Open `http://127.0.0.1:4317`: the control page (run, score, validate, doctor) with the comparison under Compare (`/compare.html`). The server binds to localhost only, refuses other Host headers and cross-site writes, and indexes `results/` on every `/api/state` request. A new job command goes in the allowlist in `dashboard/jobs.mjs` with argument checks and a test in `tests/jobs.test.mjs`.
+Open `http://127.0.0.1:4317`: Home, Run and Lab on the control page, and Results (`/results.html`) for one test at a time. Old `/compare.html` links forward to Results. The server binds to localhost only, refuses other Host headers and cross-site writes, and indexes `results/` on every `/api/state` request. A new job command goes in the allowlist in `dashboard/jobs.mjs` with argument checks and a test in `tests/jobs.test.mjs`.
 
 Done when `/api/state` lists the expected contexts and configurations and the browser renders them. To work on the UI without live data: `LAB_ROOT=tests/fixtures/repo node lab dashboard --port 4318`.
 
