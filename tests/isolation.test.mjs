@@ -465,7 +465,24 @@ test('a failed write-back is recorded and said out loud', async (t) => {
   };
   const out = await runInTempHome({ files: [AUTH], homeDir: home, store }, () => 'value');
   assert.equal(out.value, 'value');
-  assert.match(out.home.kept.join('\n'), /write-back failed: database is locked/);
-  assert.match(lines.join(''), /could not be written back \(database is locked\)/);
+  assert.match(out.home.kept.join('\n'), /write back failed: database is locked/);
+  assert.match(lines.join(''), /could not be written back \(write back failed: database is locked\)/);
   assert.equal(out.home.removed, true);
+});
+
+test('a real sign-in file that cannot be replaced gives the warning even when the call throws', async (t) => {
+  const home = fakeHome();
+  const lines = captureStderr(t);
+  const real = path.join(home, AUTH);
+  fs.chmodSync(real, 0o444);
+  t.after(() => fs.chmodSync(real, 0o644));
+  await assert.rejects(
+    runInTempHome({ files: [AUTH], homeDir: home }, (made) => {
+      fs.writeFileSync(path.join(made, AUTH), JSON.stringify({ token: 'rotated' }));
+      throw new Error('parser failed');
+    }),
+    /parser failed/,
+  );
+  assert.equal(JSON.parse(fs.readFileSync(real, 'utf8')).token, 'original');
+  assert.match(lines.join(''), /could not be written back \(\.codex\/auth\.json \(write back failed\)\)/);
 });

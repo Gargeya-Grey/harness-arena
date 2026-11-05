@@ -113,10 +113,11 @@ export async function runInTempHome({ files, writeBack = true, homeDir = os.home
         for (const [rel, before] of copied) writeBackFile({ dir, homeDir, rel, before, home });
         if (store) await store.writeBack({ homeDir, dir, state, home });
       } catch (error) {
-        home.kept.push(`write-back failed: ${error?.message || error}`);
-        // Said out loud too: when the call throws, the row (and home.kept) is lost with it.
-        process.stderr.write(`warning: a refreshed sign-in could not be written back (${error?.message || error}); sign in again if the next call fails with an auth error.\n`);
+        home.kept.push(`write back failed: ${error?.message || error}`);
       }
+      // Said out loud, from every store: when the call throws, the row (and home.kept) is lost with it.
+      const lost = home.kept.filter((note) => /write back failed/.test(note));
+      if (lost.length) process.stderr.write(`warning: a refreshed sign-in could not be written back (${lost.join('; ')}); sign in again if the next call fails with an auth error.\n`);
     }
     home.removed = remove(dir);
     if (!home.removed) {
