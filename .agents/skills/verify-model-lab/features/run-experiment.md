@@ -45,3 +45,8 @@ Preconditions:
 - `gemini-cli` with a free Google sign-in fails with `error.type` `auth` (`IneligibleTierError`). Set `GEMINI_API_KEY`, or run Gemini models through `command-code`.
 - A harness that is not installed is skipped with a message; the other harnesses still run.
 - An agent with edit access has a real shell. OpenCode starts its tools from `PWD`, not from the spawn folder; the runner sets `PWD` for that reason. A `left_workdir` error that names a changed file stops the experiment and leaves the run unscored: restore the repository with git, then `node lab score <run_id>`.
+
+## Data folder
+
+- `node lab doctor` prints where runs are written. With `lab.local.yaml` (`data_dir`) at the main checkout, every worktree prints the same `<data_dir>/results`.
+- Proof: run a one-case dry-run-free fake or fixture run with `LAB_DATA=<temp folder>`; the run folder appears there and not in `results/`; `node lab runs` and `/api/state` list it next to the committed runs.

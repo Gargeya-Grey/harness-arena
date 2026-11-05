@@ -8,7 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { buildState } from '../lab/lib/state.mjs';
-import { labRoot, paths } from '../lab/lib/repo.mjs';
+import { findRunDir, labRoot, paths } from '../lab/lib/repo.mjs';
 import { SchemaSet } from '../lab/lib/schema.mjs';
 import { appendJsonl, isoNow, resolveInside, safeSegment, writeJson } from '../lab/lib/fsutil.mjs';
 import { catalog, createJobs } from './jobs.mjs';
@@ -140,7 +140,9 @@ export function createServer({ root = labRoot(), jobOptions } = {}) {
   function serveArtifact(req, res, url) {
     const runId = url.searchParams.get('run_id') || '';
     const rel = url.searchParams.get('path') || '';
-    const runDir = resolveInside(p.results, safeSegment(runId));
+    const id = safeSegment(runId);
+    const found = id && findRunDir(root, id);
+    const runDir = found ? resolveInside(path.dirname(found), id) : null;
     const abs = runDir && rel ? resolveInside(runDir, rel) : null;
     if (!abs || !fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
       sendJson(res, 404, { error: 'Artifact not found' });

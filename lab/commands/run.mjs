@@ -47,9 +47,10 @@ const UNGUARDED_DIRS = new Set(['.git', 'node_modules', '.cache']);
  */
 export function agentEnv(root, env = process.env) {
   const out = { OLDPWD: undefined };
+  const folders = labFolders(root);
   for (const [key, value] of Object.entries(env)) {
-    if (typeof value !== 'string' || !mentionsFolder(value, [root])) continue;
-    if (/^path$/i.test(key)) out[key] = value.split(path.delimiter).filter((entry) => !mentionsFolder(entry, [root])).join(path.delimiter);
+    if (typeof value !== 'string' || !mentionsFolder(value, folders)) continue;
+    if (/^path$/i.test(key)) out[key] = value.split(path.delimiter).filter((entry) => !mentionsFolder(entry, folders)).join(path.delimiter);
     else out[key] = undefined;
   }
   return out;
@@ -186,8 +187,21 @@ const DASHBOARD_DIRS = ['boards', 'annotations', 'reports'];
 function guardStamp(root) {
   const stamp = treeStamp(root, UNGUARDED_DIRS);
   for (const key of [...stamp.keys()]) if (DASHBOARD_DIRS.some((dir) => key.startsWith(`${dir}/`))) stamp.delete(key);
+  // The data folder holds every stored run, solutions included: an agent must not touch it.
+  const data = paths(root).data;
+  if (data && fs.existsSync(data) && !isInside(data, root)) {
+    for (const [key, value] of treeStamp(data, UNGUARDED_DIRS)) if (!key.startsWith('annotations/')) stamp.set(`data folder: ${key}`, value);
+  }
   return stamp;
 }
+
+const isInside = (dir, parent) => {
+  const rel = path.relative(parent, dir);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+};
+
+/** The folders an agent must not name: the repository, and the data folder with every stored run. */
+const labFolders = (root) => [root, paths(root).data].filter(Boolean);
 
 const rowKey = (caseId, modelKey, repeat) => `${caseId}|${modelKey}|${repeat}`;
 
@@ -349,7 +363,7 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
     if (changed) {
       escape = `changed ${changed} in the lab repository while it ran; the experiment stops and this run is not scored. Check that file with git diff. If you edited it yourself during the call, this is a false alarm: keep your work and run again. Otherwise restore it (git checkout -- <file>) before the next run`;
       halt = true;
-    } else if (mentionsFolder(`${JSON.stringify(result.events ?? [])}\n${result.text ?? ''}`, [root])) {
+    } else if (mentionsFolder(`${JSON.stringify(result.events ?? [])}\n${result.text ?? ''}`, labFolders(root))) {
       escape = 'worked in the lab repository outside its work folder, where it could read the hidden checks';
     }
     if (escape) result = { ...result, error: { type: 'left_workdir', message: `The agent ${escape}.` } };

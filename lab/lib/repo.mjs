@@ -15,15 +15,56 @@ export function labRoot() {
   return process.env.LAB_ROOT ? path.resolve(process.env.LAB_ROOT) : REPO_ROOT;
 }
 
+const LOCAL_CONFIG = 'lab.local.yaml';
+
+/** The main checkout of a git worktree (its `.git` is a file that names the main repository), or null. */
+function mainCheckout(root) {
+  const gitFile = path.join(root, '.git');
+  try {
+    if (!fs.statSync(gitFile).isFile()) return null;
+    const gitdir = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(gitFile, 'utf8'))?.[1]?.trim();
+    // <main>/.git/worktrees/<name>
+    return gitdir ? path.resolve(gitdir, '..', '..', '..') : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The data folder: where runs and human annotations are written, outside git, so that
+ * git clean, a removed worktree or a fresh clone never deletes evidence. Set by LAB_DATA,
+ * else by `data_dir` in lab.local.yaml (not committed) at the root or, in a worktree, at
+ * the main checkout, so every worktree writes to the same store. Null: the root itself.
+ * Tests (node --test) never pick up a local file; they set LAB_DATA when they need one.
+ */
+export function dataDir(root = labRoot(), env = process.env) {
+  if (env.LAB_DATA) return path.resolve(env.LAB_DATA);
+  if (env.NODE_TEST_CONTEXT || env.LAB_ROOT) return null;
+  for (const dir of [root, mainCheckout(root)].filter(Boolean)) {
+    const file = path.join(dir, LOCAL_CONFIG);
+    if (!fs.existsSync(file)) continue;
+    const value = parseYaml(readText(file))?.data_dir;
+    if (typeof value !== 'string' || !value.trim()) throw new Error(`${file}: data_dir must be a folder path`);
+    return path.resolve(dir, value);
+  }
+  return null;
+}
+
 export function paths(root = labRoot()) {
+  const data = dataDir(root);
+  const results = path.join(data ?? root, 'results');
   return {
     root,
+    // Where new runs and annotations go. `resultsDirs` are every folder runs are read
+    // from: the data folder first, then runs committed in the repository's results/.
+    data,
+    results,
+    resultsDirs: [...new Set([results, path.join(root, 'results')])],
     registry: path.join(root, 'configs', 'models.yaml'),
     datasets: path.join(root, 'datasets'),
     prompts: path.join(root, 'prompts'),
     experiments: path.join(root, 'experiments'),
-    results: path.join(root, 'results'),
-    annotations: path.join(root, 'annotations'),
+    annotations: path.join(data ?? root, 'annotations'),
     boards: path.join(root, 'boards'),
     reports: path.join(root, 'reports'),
     cache: path.join(root, '.cache'),
@@ -145,6 +186,27 @@ export function resolveExperiment(experiment, registry) {
   if (!experiment.suite) problems.push('Experiment has no "suite"');
   if (!experiment.prompt) problems.push('Experiment has no "prompt"');
   return { targets, problems };
+}
+
+/** Every run folder, each id once (the data folder wins over a committed copy). */
+export function runDirs(root = labRoot()) {
+  const seen = new Map();
+  for (const base of paths(root).resultsDirs) {
+    if (!fs.existsSync(base)) continue;
+    for (const entry of fs.readdirSync(base, { withFileTypes: true })) {
+      if (entry.isDirectory() && !seen.has(entry.name)) seen.set(entry.name, path.join(base, entry.name));
+    }
+  }
+  return [...seen.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, dir]) => ({ name, dir }));
+}
+
+/** The folder of one run id, or null. */
+export function findRunDir(root, id) {
+  for (const base of paths(root).resultsDirs) {
+    const dir = path.join(base, id);
+    if (fs.existsSync(path.join(dir, 'run.json'))) return dir;
+  }
+  return null;
 }
 
 /** Fill `{{name}}` placeholders. A missing variable is an error, never blank. */

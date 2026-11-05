@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { listDirs, listFiles, readJson, readJsonl } from '../lib/fsutil.mjs';
 import { SchemaSet } from '../lib/schema.mjs';
-import { loadPrompt, loadRegistry, loadSuite, loadYamlFile, paths, resolveExperiment } from '../lib/repo.mjs';
+import { loadPrompt, loadRegistry, loadSuite, loadYamlFile, paths, resolveExperiment, runDirs } from '../lib/repo.mjs';
 import { harnessesFile, loadAdapters, readDeclared } from '../adapters/index.mjs';
 import { getEvaluator } from '../evaluators/index.mjs';
 import { listTree } from '../lib/workspace.mjs';
@@ -157,8 +157,7 @@ export function validateRepo(root) {
     }
   }
 
-  for (const name of listDirs(p.results)) {
-    const runDir = path.join(p.results, name);
+  for (const { name, dir: runDir } of runDirs(root)) {
     const manifestFile = path.join(runDir, 'run.json');
     if (!fs.existsSync(manifestFile)) continue;
     counts.runs += 1;

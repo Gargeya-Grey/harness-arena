@@ -4,16 +4,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { listDirs, readJson, readJsonl } from '../lib/fsutil.mjs';
-import { loadSuite, paths } from '../lib/repo.mjs';
+import { findRunDir, loadSuite, runDirs } from '../lib/repo.mjs';
 import { getEvaluator } from '../evaluators/index.mjs';
 
 export function resolveRunDir(root, ref) {
-  const results = paths(root).results;
   if (fs.existsSync(path.join(ref, 'run.json'))) return path.resolve(ref);
-  const direct = path.join(results, ref);
-  if (fs.existsSync(path.join(direct, 'run.json'))) return direct;
-  const matches = listDirs(results).filter((name) => name.includes(ref));
-  if (matches.length === 1) return path.join(results, matches[0]);
+  const direct = findRunDir(root, ref);
+  if (direct) return direct;
+  const matches = runDirs(root).filter(({ name }) => name.includes(ref));
+  if (matches.length === 1) return matches[0].dir;
   if (matches.length > 1) throw new Error(`"${ref}" matches ${matches.length} runs; give more of the run id`);
   throw new Error(`No run matches "${ref}"`);
 }
@@ -72,7 +71,7 @@ export function scoreRun(root, runDir, { log = () => {}, force = false } = {}) {
 }
 
 export function scoreCommand(root, refs, { all = false, force = false, log = console.log } = {}) {
-  const dirs = all ? listDirs(paths(root).results).map((name) => path.join(paths(root).results, name)).filter((dir) => fs.existsSync(path.join(dir, 'run.json'))) : refs.map((ref) => resolveRunDir(root, ref));
+  const dirs = all ? runDirs(root).map(({ dir }) => dir).filter((dir) => fs.existsSync(path.join(dir, 'run.json'))) : refs.map((ref) => resolveRunDir(root, ref));
   if (!dirs.length) throw new Error('Name a run id (or part of one), or pass --all');
   for (const dir of dirs) {
     log(path.basename(dir));

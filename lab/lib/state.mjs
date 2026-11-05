@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { listDirs, listFiles, readJson, readJsonl, resolveInside, safeSegment, isoNow } from './fsutil.mjs';
-import { paths, loadRegistry, loadCases } from './repo.mjs';
+import { paths, loadRegistry, loadCases, runDirs } from './repo.mjs';
 import { SchemaSet } from './schema.mjs';
 import { clusteredInterval, mean, percentile, sum, variance } from './metrics.mjs';
 import { errorClass, modelCheck, runLiveness } from './checks.mjs';
@@ -314,8 +314,7 @@ export function buildState(root, { validate = true } = {}) {
   const suitesSeen = new Set();
   const cases = {};
 
-  for (const name of listDirs(p.results)) {
-    const runDir = path.join(p.results, name);
+  for (const { dir: runDir } of runDirs(root)) {
     const manifestPath = path.join(runDir, 'run.json');
     if (!fs.existsSync(manifestPath)) continue;
     let manifest;

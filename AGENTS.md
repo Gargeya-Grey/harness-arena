@@ -52,7 +52,7 @@ docs/dashboard-spec.md    Dashboard design: UI, data contract, visual system
 
 ## Invariants
 
-1. Treat `results/` as append-only evidence. A correction is a new run with a new `run_id`.
+1. Treat `results/` as append-only evidence. A correction is a new run with a new `run_id`. New runs and annotations go to the data folder (`data_dir` in `lab.local.yaml`, or `LAB_DATA`), outside git; runs committed in `results/` are still read. Never delete a run folder in either place.
 2. Keep raw and derived separate: `raw.jsonl` holds model responses; scores and `reports/` are recomputed from it without new model calls.
 3. Pin exact provider snapshots in `configs/models.yaml`. Give every params variant its own `model_key`. Effort is set per target in the experiment (`effort: high` or `efforts: [low, high]`); the registry's `reasoning_effort` is only the default when a target sets none. Each effort runs as its own run and shows as its own configuration.
 4. Hold suite version, prompt version, evaluator versions, and decoding params constant within a comparison. Changing one means a new experiment and a new run.

@@ -7,7 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { paths, loadYamlFile, loadCases, loadRegistry, resolveExperiment } from '../lab/lib/repo.mjs';
+import { paths, findRunDir, loadYamlFile, loadCases, loadRegistry, resolveExperiment } from '../lab/lib/repo.mjs';
 import { loadAdapters } from '../lab/adapters/index.mjs';
 import { isoNow } from '../lab/lib/fsutil.mjs';
 
@@ -41,7 +41,7 @@ export function buildArgs(root, body) {
     // Continue a stopped run: only its missing rows run (node lab run --resume).
     const id = String(body.resume);
     if (body.experiment) throw bad('Give an experiment or a run to resume, not both');
-    if (!RUN_ID.test(id) || !fs.existsSync(path.join(p.results, id, 'run.json'))) throw bad(`No run with id "${id.slice(0, 80)}"`);
+    if (!RUN_ID.test(id) || !findRunDir(root, id)) throw bad(`No run with id "${id.slice(0, 80)}"`);
     return ['run', '--resume', id];
   }
   if (command === 'run') {
@@ -73,7 +73,7 @@ export function buildArgs(root, body) {
       const ids = Array.isArray(body.run_ids) ? body.run_ids.map(String) : [];
       if (!ids.length) throw bad('Name one or more run ids, or set all');
       for (const id of ids) {
-        if (!RUN_ID.test(id) || !fs.existsSync(path.join(p.results, id, 'run.json'))) throw bad(`No run with id "${id.slice(0, 80)}"`);
+        if (!RUN_ID.test(id) || !findRunDir(root, id)) throw bad(`No run with id "${id.slice(0, 80)}"`);
       }
       args.push(...ids);
     }

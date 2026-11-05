@@ -11,7 +11,9 @@ import { paths } from '../lib/repo.mjs';
 const pad = (value, width) => String(value).padEnd(width);
 
 export async function doctorCommand({ root, log = console.log } = {}) {
-  log(`Node ${process.version} on ${process.platform}\n`);
+  log(`Node ${process.version} on ${process.platform}`);
+  const data = paths(root).data;
+  log(`Runs are written to ${data ? `${paths(root).results} (data folder)` : `${paths(root).results} (no data folder: set data_dir in lab.local.yaml)`}\n`);
   log(`${pad('harness', 16)}${pad('source', 10)}${pad('status', 12)}${pad('isolation', 11)}detail`);
   const rows = await Promise.all(
     Object.values(loadAdapters(root)).map(async (adapter) => {

@@ -21,6 +21,8 @@ node_modules/
 /annotations/
 
 # Note: results/ is intentionally committed - runs are evidence.
+# New runs go to the data folder named in lab.local.yaml (this machine only; see README).
+lab.local.yaml
 
 # Command Code keeps its notes about the user here; they are personal, not project files.
 .commandcode/

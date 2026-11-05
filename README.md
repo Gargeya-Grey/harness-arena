@@ -55,7 +55,7 @@ To add any other model that OpenCode reaches (`opencode models` lists them), add
 | Command | What it does |
 |---|---|
 | `node lab doctor` | Shows each harness (built-in and declared), its version, whether it is installed, and what isolation it supports. |
-| `node lab run <experiment.yaml>` | Runs every target x case x repeat. Writes one run per harness under `results/`, then scores it. |
+| `node lab run <experiment.yaml>` | Runs every target x case x repeat. Writes one run per harness and effort under the data folder's `results/` (see [Where runs live](#where-runs-live)), then scores it. |
 | `  --harness <name>` / `--models <a,b>` | Runs only the targets that match. |
 | `  --repeats <n>` / `--cases <a,b>` | Overrides the experiment. The run records the override. |
 | `  --dry-run` | Shows the plan: model id per harness, effort, whether the user setup loads. Calls nothing. |
@@ -111,6 +111,23 @@ Start with one case before a full sweep. For example, this call costs nothing on
 node lab run experiments/coding-sweep.yaml --harness opencode --repeats 1 --cases coding-roman
 node lab run experiments/agentic-sweep.yaml --harness opencode --repeats 1 --cases agentic-slugify-bug
 ```
+
+## Where runs live
+
+Runs are evidence, so they live outside git, where `git clean`, a removed worktree or a fresh clone cannot delete them. Name the data folder once per machine in `lab.local.yaml` at the repository root (the file is not committed):
+
+```yaml
+data_dir: ../Model-Lab-Data   # relative to this file, or an absolute path
+```
+
+- New runs go to `<data_dir>/results/`, and human annotations to `<data_dir>/annotations/`.
+- Every git worktree of the repository uses the main checkout's `lab.local.yaml`, so all worktrees write to one store.
+- The runner, `validate`, `score`, the report and the dashboard read the data folder and the runs committed in `results/` together. A run id found in both places is read from the data folder.
+- `LAB_DATA=<folder>` overrides the file for one command. `LAB_ROOT` (fixtures, UI work) and the tests ignore `lab.local.yaml`.
+- `node lab doctor` prints where runs are written.
+- During an agent call the workdir guard also watches the data folder: an agent that changes a stored run halts the experiment.
+
+Without `lab.local.yaml`, runs go to `results/` in the checkout, as before.
 
 ## How a comparison works
 
