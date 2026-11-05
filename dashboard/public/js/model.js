@@ -33,7 +33,9 @@ let index = new Map();
 export function setData(data) {
   S.data = data;
   index = new Map();
-  for (const o of data.observations || []) {
+  // The one owner of "counts nowhere" in the client: every view reads this index, so an
+  // observation of a run that does not count (trusted false) is in no view. Runs lists it.
+  for (const o of (data.observations || []).filter((item) => item.trusted !== false)) {
     let ctxIndex = index.get(o.context_key);
     if (!ctxIndex) {
       ctxIndex = { cells: new Map(), byId: new Map(), list: [] };

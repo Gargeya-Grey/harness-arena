@@ -1067,6 +1067,19 @@ test('ledger: a run scored by only some of its evaluators counts nowhere', async
   assert.ok(buildState(root).observations.filter((item) => item.run_id === result.runId).every((item) => item.trusted === false));
 });
 
+test('ledger: a closed run with no declared evaluators counts for cost, latency and errors, with no quality', async (t) => {
+  const { root } = setup(t);
+  fake(t, 'fake-noeval', () => '4');
+  const file = path.join(root, 'experiments', 'noeval.yaml');
+  fs.writeFileSync(file, ['id: noeval', 'suite: smoke', 'prompt: qa-single-turn', 'repeats: 1', 'cases: [smoke-001]', 'harness: fake-noeval', 'models: [claude-haiku]', 'evaluators: []', ''].join('\n'));
+  const [result] = await runCommand(root, file, { log: () => {} });
+  assert.deepEqual(trustOf(root, result.runId, result.runDir), { state: 'trusted', scores: 'match' });
+  const rows = buildState(root).observations.filter((item) => item.run_id === result.runId);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].trusted, true);
+  assert.equal(rows[0].run_scored, false);
+});
+
 test('ledger: without a ledger no run counts', (t) => {
   const { root } = setup(t);
   const state = buildState(root);

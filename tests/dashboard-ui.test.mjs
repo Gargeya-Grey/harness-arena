@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { buildState } from '../lab/lib/state.mjs';
-import { S, setData, chooseContext } from '../dashboard/public/js/model.js';
+import { S, setData, chooseContext, cellObs } from '../dashboard/public/js/model.js';
 import { renderLeaderboard } from '../dashboard/public/js/leaderboard.js';
 import { renderAnswers } from '../dashboard/public/js/answers.js';
 import { renderRuns } from '../dashboard/public/js/runs.js';
@@ -32,6 +32,17 @@ test.beforeEach(() => {
 test.afterEach(() => {
   delete globalThis.document;
   delete globalThis.requestAnimationFrame;
+});
+
+test('an observation of a run that does not count is in no view: answers, filters, inspector and review read one index', () => {
+  const first = data.observations[0];
+  const before = cellObs(first.case_id, first.config_id, first.context_key).length;
+  const copy = structuredClone(data);
+  copy.observations.push({ ...first, id: `${first.id}-excluded`, run_id: 'excluded-run', trusted: false, status: 'error' });
+  setData(copy);
+  const list = cellObs(first.case_id, first.config_id, first.context_key);
+  assert.equal(list.length, before);
+  assert.ok(list.every((item) => item.trusted !== false));
 });
 
 test('leaderboard explains green, labels every metric and keeps header sublabels out of accessible names', () => {

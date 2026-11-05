@@ -6,8 +6,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LAUNCH_FAILED, LAUNCH_FAILED_CODE, runProcess } from '../lab/adapters/process.mjs';
-import { spawnSync } from 'node:child_process';
+import { runProcess } from '../lab/adapters/process.mjs';
+import { fork, spawnSync } from 'node:child_process';
 import { jobWatch, startProcessWatch, treeWatch } from '../lab/lib/procwatch.mjs';
 
 const windowsOnly = { skip: process.platform !== 'win32' && 'Job Objects are Windows only' };
@@ -100,24 +100,40 @@ test('a timeout during a guarded call ends the harness, not only the launcher', 
   assert.equal(before, false, 'the harness ended with the timeout, before the watch finished');
 });
 
-test('during a guarded call NODE_OPTIONS reaches the harness but not the launcher', windowsOnly, async (t) => {
+test('during a guarded call NODE_OPTIONS, in any spelling, reaches the harness but not the launcher', windowsOnly, async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-preload-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const log = path.join(dir, 'loads.txt');
   const preload = path.join(dir, 'preload.cjs');
   fs.writeFileSync(preload, `require('fs').appendFileSync(${JSON.stringify(log)}, (process.argv[1] ? require('path').basename(process.argv[1]) : 'harness') + '\\n');`);
   const watch = await startProcessWatch();
-  const result = await runProcess('node', ['-e', 'process.exit(0)'], { timeoutMs: 30000, env: { NODE_OPTIONS: `--require "${preload.replaceAll('\\', '/')}"` } });
+  const option = `--require "${preload.replaceAll('\\', '/')}"`;
+  const result = await runProcess('node', ['-e', 'process.exit(0)'], { timeoutMs: 30000, env: { NODE_OPTIONS: option, node_options: option } });
   await watch.finish();
   assert.equal(result.error, null, result.stderr);
-  assert.deepEqual(fs.readFileSync(log, 'utf8').split('\n').filter(Boolean), ['harness']);
+  assert.ok(fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).every((line) => line === 'harness'), fs.readFileSync(log, 'utf8'));
 });
 
-test('the launcher reports a harness it cannot start as a spawn error', async () => {
+test('the launcher reports a harness it cannot start on its private channel', async () => {
   const launcher = fileURLToPath(new URL('../lab/adapters/launcher.mjs', import.meta.url));
-  const result = spawnSync(process.execPath, [launcher], { input: `${JSON.stringify({ command: path.join(os.tmpdir(), 'lab-no-such-harness.exe'), args: [] })}\n`, encoding: 'utf8' });
-  assert.equal(result.status, LAUNCH_FAILED_CODE);
-  assert.ok(result.stderr.startsWith(LAUNCH_FAILED), result.stderr);
+  const child = fork(launcher, [], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
+  const messages = [];
+  child.on('message', (message) => messages.push(message));
+  child.send({ command: path.join(os.tmpdir(), 'lab-no-such-harness.exe'), args: [], env: {} });
+  const code = await new Promise((resolve) => child.on('close', resolve));
+  assert.equal(code, 127);
+  assert.equal(messages.length, 1);
+  assert.equal(typeof messages[0].spawn_error, 'string');
+});
+
+test('a harness cannot fake the launcher report: its own exit 127 and stderr stay its own', windowsOnly, async () => {
+  const watch = await startProcessWatch();
+  const fake = "process.stderr.write('lab-launcher spawn_error: not found\\n'); process.exit(127);";
+  const result = await runProcess('node', ['-e', fake], { timeoutMs: 30000 });
+  await watch.finish();
+  assert.equal(result.error, null);
+  assert.equal(result.code, 127);
+  assert.match(result.stderr, /spawn_error: not found/);
 });
 
 test('the ps watch never counts its own ps processes, and still finds a process left running', async () => {

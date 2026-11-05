@@ -9,9 +9,6 @@ import { fileURLToPath } from 'node:url';
 
 const cache = new Map();
 const LAUNCHER = fileURLToPath(new URL('./launcher.mjs', import.meta.url));
-// What lab/adapters/launcher.mjs prints, with this exit code, when it cannot start the harness.
-export const LAUNCH_FAILED = 'lab-launcher spawn_error:';
-export const LAUNCH_FAILED_CODE = 127;
 
 // The process watch (lab/lib/procwatch.mjs) puts every harness process in a Job Object
 // during a guarded call. A watcher returns a promise; the prompt is sent only once every
@@ -75,26 +72,31 @@ export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, on
   // During a guarded call the harness starts through the launcher, which waits until the
   // process watch holds it (lab/adapters/launcher.mjs).
   const gated = spawnWatchers.size > 0;
+  // spawn sets the real working folder but not PWD, and some CLIs (OpenCode on
+  // Windows) start their tools from PWD. Point it at cwd so the agent starts there.
   const fullEnv = { ...process.env, ...env, ...(cwd ? { PWD: path.resolve(cwd), INIT_CWD: path.resolve(cwd) } : {}) };
-  // NODE_OPTIONS could preload code into the launcher before the job holds it: the
-  // launcher runs without it and gives it back to the harness.
-  const optionKey = Object.keys(fullEnv).find((key) => key.toUpperCase() === 'NODE_OPTIONS');
-  const launcherEnv = { ...fullEnv };
-  if (optionKey) delete launcherEnv[optionKey];
-  const spec = { command: resolved.command, args: [...resolved.prefix, ...args], ...(optionKey ? { node_options: fullEnv[optionKey] } : {}) };
+  // The launcher gets a fixed environment, so no variable (NODE_OPTIONS in any spelling)
+  // can load code into it before the job holds it. The harness gets fullEnv in the spec.
+  const launcherEnv = process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot ?? process.env.SYSTEMROOT ?? 'C:\\Windows' } : {};
+  const spec = { command: resolved.command, args: [...resolved.prefix, ...args] };
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
     let pending = '';
     let settled = false;
+    // Gated: a private IPC channel to the launcher carries the spec and its report.
     const child = spawn(gated ? process.execPath : spec.command, gated ? [LAUNCHER] : spec.args, {
       cwd,
-      // spawn sets the real working folder but not PWD, and some CLIs (OpenCode on
-      // Windows) start their tools from PWD. Point it at cwd so the agent starts there.
       env: gated ? launcherEnv : fullEnv,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: gated ? ['pipe', 'pipe', 'pipe', 'ipc'] : ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
+    let launchError = null;
+    if (gated) {
+      child.on('message', (message) => {
+        if (message && typeof message.spawn_error === 'string') launchError = message.spawn_error;
+      });
+    }
     const finish = (result) => {
       if (settled) return;
       settled = true;
@@ -123,8 +125,7 @@ export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, on
     child.on('error', (error) => finish({ code: null, error: { type: 'spawn_error', message: error.message } }));
     child.on('close', (code) => {
       if (onLine && pending.trim()) onLine(pending);
-      const failed = gated && code === LAUNCH_FAILED_CODE ? stderr.split('\n').find((line) => line.startsWith(LAUNCH_FAILED)) : null;
-      finish({ code, error: failed ? { type: 'spawn_error', message: failed.slice(LAUNCH_FAILED.length).trim() } : null });
+      finish({ code, error: launchError ? { type: 'spawn_error', message: launchError } : null });
     });
     child.stdin.on('error', () => {});
     if (!gated) {
@@ -134,7 +135,7 @@ export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, on
     const holds = !child.pid ? [Promise.reject(new Error('the launcher did not start'))] : [...spawnWatchers].map((watcher) => Promise.resolve().then(() => watcher(child.pid)));
     Promise.all(holds).then(
       () => {
-        child.stdin.write(`${JSON.stringify(spec)}\n`);
+        child.send({ ...spec, env: fullEnv }, () => {});
         child.stdin.end(input ?? '');
       },
       (error) => {
