@@ -1,0 +1,21 @@
+{
+  "probes": {
+    "without ttlMs nothing expires": "v",
+    "alive just before the time is up": "v",
+    "expired exactly when the time is up": "expired",
+    "ttlMs 0 expires at once": "expired",
+    "a per-entry ttl beats the cache ttl": ["expired", 2],
+    "a per-entry Infinity never expires": 1,
+    "setting a key again restarts its time": "new",
+    "has ignores an expired entry": [true, false],
+    "size counts live entries only": 1,
+    "purge returns how many it removed and keeps live entries": [2, 1, 3, 0],
+    "get removes the expired entry it finds": 1,
+    "falsy values are kept": [0, true, "", true],
+    "the loader loads again once the value has expired": { "seen": ["k#1", "k#1", "k#2", "k#2"], "calls": 2 },
+    "the loader without options caches for good": 1
+  },
+  "files": {
+    "test/cache.test.mjs": { "includes": ["ttlMs"] }
+  }
+}

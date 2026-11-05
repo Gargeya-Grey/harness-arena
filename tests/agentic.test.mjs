@@ -267,7 +267,7 @@ test('a workspace case without access: edit is refused by run and by validate', 
 const SOLUTIONS = path.join(HERE, 'fixtures', 'agentic-solutions');
 
 test('every hidden check passes on a known-good solution, so each case can be won', async (t) => {
-  for (const name of ['slugify-bug', 'cart-discount', 'csv-quotes']) {
+  for (const name of fs.readdirSync(SOLUTIONS, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name)) {
     const { scores } = await runWith(t, `fake-solver-${name}`, ({ cwd }) => fs.cpSync(path.join(SOLUTIONS, name), cwd, { recursive: true }), [], `agentic-${name}`);
     assert.equal(scores[0].passed, true, `${name}: ${JSON.stringify(scores[0].details)}`);
   }
