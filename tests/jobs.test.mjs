@@ -69,6 +69,11 @@ test('buildArgs allows only the listed commands and checked arguments', () => {
   ]);
   assert.deepEqual(buildArgs(root, { command: 'validate', experiment: 'ignored' }), ['validate']);
   assert.deepEqual(buildArgs(root, { command: 'score', all: true, force: true }), ['score', '--all', '--force']);
+  const runId = fs.readdirSync(path.join(root, 'results')).find((name) => fs.existsSync(path.join(root, 'results', name, 'run.json')));
+  assert.deepEqual(buildArgs(root, { command: 'run', resume: runId }), ['run', '--resume', runId]);
+  for (const body of [{ command: 'run', resume: '../../etc' }, { command: 'run', resume: 'no-such-run' }, { command: 'run', resume: runId, experiment: 'smoke-opencode.yaml' }]) {
+    assert.throws(() => buildArgs(root, body), (error) => error.status === 400, JSON.stringify(body));
+  }
   const refused = [
     { command: 'dashboard' },
     { command: 'run; rm -rf /' },

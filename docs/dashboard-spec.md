@@ -475,14 +475,15 @@ Configurations are told apart by their letter, not by colour. Charts draw in ink
 
 | Metric | Definition | Uncertainty and edge cases |
 |---|---|---|
-| Quality | Mean evaluator value per configuration, 0-1 | Bootstrap 95% interval when `n >= 3`; show `n`; mark insufficient data |
-| Pass rate | Passed observations / scored observations | Wilson 95% interval; unscored excluded and counted |
+| Quality | Mean evaluator value per configuration, 0-1; a failed call counts as 0, a lost call (usage limit, sign-in, CLI missing) is left out | Bootstrap 95% interval clustered by case (cases, then repeats) when `n >= 3`; show `n` and the case count; mark insufficient data |
+| Pass rate | Passed observations / counted observations (scored plus failed) | Same clustered bootstrap; unscored and lost excluded and counted |
 | Reliability | Repeat agreement: frequency of the majority outcome per case, averaged across cases | Only cases with 2+ repeats; score variance shown separately |
 | Cost | Notional API-equivalent cost from stored `cost_usd` | Label "not billed"; subscription amortization deferred |
 | Cost per passed case | Total cost / passed observations | `null` when no passes; show `n` |
 | Latency | Harness end-to-end duration; model-request duration when available | p50 and p95 nearest-rank; successful calls only; excluded count stated |
 | Tokens | Input, output, cache read, cache write | Show throughput only when duration is present |
-| Error rate | Rows with `error` / all attempts | Includes timeouts and format failures when tagged |
+| Error rate | Rows with `error` / all attempts | Split into failed (scored 0) and lost (not scored) |
+| Model check | Rows whose harness reported another model | Shown on the configuration with the count; `pinned: false` aliases marked |
 | Format compliance | Mean of evaluator values in dimension `format` | Show evaluator id and version |
 | Human rating | Mean 1-5 rating per configuration | Separate dimension; never blended; show reviewer and `n` |
 | Pairwise preference | Wins / comparisons | Show pair count; randomize sides; reveal after submission |

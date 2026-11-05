@@ -9,6 +9,7 @@
 - `run-start` - `#start-btn` asks once (`Start N calls?`, 5 s), the second press starts the run.
 - `run-stop` - the output head's Stop button: first press = `cancel` on stdin (job `stopping`, run finishes its current call); second press ends the process tree.
 - `runs-score` - Runs page: Score again per run, Score anyway (`--force`, confirm step) for a guard-stopped run, `#score-all`.
+- `runs-resume` - Runs page: a run that stopped without finishing (stale, or stopped by the user) shows the chip `stopped without finishing` or `failed` and a **Resume** button; it starts `node lab run --resume <run_id>` as a job and opens Activity.
 - `harnesses` - `#doctor-btn` runs `doctor`; rows parsed from its output.
 - `checks` - `validate`, `report`, `runs` buttons with result tags.
 - `activity` - `#jobs-list`; selecting a job shows its output.

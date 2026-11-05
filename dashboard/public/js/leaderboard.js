@@ -8,8 +8,8 @@ export const MIN_N = 3;
 // Each column: how to read a value, which direction is better, and when a value is firm enough to rank.
 export const COLUMNS = [
   { key: 'config', label: 'Configuration', value: (r) => r.cfg.display_name.toLowerCase(), text: true },
-  { key: 'quality', label: 'Quality', better: 'high', value: (r) => r.agg && r.agg.mean_quality, firm: (a) => a.scored_n >= MIN_N },
-  { key: 'pass', label: 'Pass rate', better: 'high', value: (r) => r.agg && r.agg.pass_rate, firm: (a) => a.scored_n >= MIN_N },
+  { key: 'quality', label: 'Quality', better: 'high', value: (r) => r.agg && r.agg.mean_quality, firm: (a) => a.counted_n >= MIN_N },
+  { key: 'pass', label: 'Pass rate', better: 'high', value: (r) => r.agg && r.agg.pass_rate, firm: (a) => a.counted_n >= MIN_N },
   { key: 'errors', label: 'Errors', better: 'low', value: (r) => (r.agg && r.agg.n ? r.agg.errors_n / r.agg.n : null), firm: (a) => a.n >= MIN_N },
   { key: 'p50', label: 'p50', sub: 'latency', better: 'low', value: (r) => r.agg && r.agg.p50_latency_ms, firm: (a) => a.latency_n >= MIN_N },
   { key: 'p95', label: 'p95', sub: 'latency', better: 'low', value: (r) => r.agg && r.agg.p95_latency_ms, firm: (a) => a.latency_n >= MIN_N },
@@ -61,6 +61,7 @@ function sortedRows(rows) {
     .map((x) => x.r);
 }
 
+const joinDot = (items) => items.map((item, i) => (i ? html` · ${item}` : item));
 const none = () => html`<span class="muted">${NA}</span>`;
 const cell = (main, sub) => html`<span class="cell-main">${main}</span>${sub ? html`<span class="cell-sub">${sub}</span>` : ''}`;
 
@@ -69,7 +70,7 @@ function qualityCell(r) {
   if (!a) return none();
   if (!isNum(a.mean_quality)) return cell('unscored', html`n <span class="num">${a.n}</span>, none scored`);
   const ci = a.quality_ci ? html`<span class="num">${fixed(a.quality_ci[0])}–${fixed(a.quality_ci[1])}</span>` : 'CI n/a';
-  return cell(html`<span class="num">${fixed(a.mean_quality)}</span>`, html`${ci} · n <span class="num">${a.scored_n}</span>`);
+  return cell(html`<span class="num">${fixed(a.mean_quality)}</span>`, html`${ci} · n <span class="num">${a.counted_n}</span> · <span class="num">${a.cases_n}</span> case${a.cases_n === 1 ? '' : 's'}`);
 }
 
 function passCell(r) {
@@ -77,13 +78,15 @@ function passCell(r) {
   if (!a) return none();
   if (!isNum(a.pass_rate)) return cell('unscored');
   const ci = a.pass_rate_ci ? html`<span class="num">${pctText(a.pass_rate_ci[0])}–${pctText(a.pass_rate_ci[1])}</span>` : 'CI n/a';
-  return cell(html`<span class="num">${pctText(a.pass_rate)}</span>`, html`${ci} · <span class="num">${a.passed_n}/${a.scored_n}</span>`);
+  return cell(html`<span class="num">${pctText(a.pass_rate)}</span>`, html`${ci} · <span class="num">${a.passed_n}/${a.counted_n}</span>`);
 }
 
 function errorsCell(r) {
   const a = r.agg;
   if (!a) return none();
-  return html`<span class="cell-main${a.errors_n > 0 ? ' bad' : ''}"><span class="num">${a.errors_n}/${a.n}</span></span>${a.errors_n > 0 ? html`<span class="cell-sub bad"><span class="num">${pctText(a.error_rate, 0)}</span> failed</span>` : html`<span class="cell-sub">none</span>`}`;
+  // failed errors score 0 in quality; lost ones (quota, sign-in, CLI missing) are left out of it.
+  const parts = [a.failed_n ? html`<span class="num">${a.failed_n}</span> failed, scored 0` : '', a.lost_n ? html`<span class="num">${a.lost_n}</span> lost to limits or sign-in, not scored` : ''].filter(Boolean);
+  return html`<span class="cell-main${a.errors_n > 0 ? ' bad' : ''}"><span class="num">${a.errors_n}/${a.n}</span></span>${a.errors_n > 0 ? html`<span class="cell-sub bad">${parts.length ? joinDot(parts) : html`<span class="num">${pctText(a.error_rate, 0)}</span> failed`}</span>` : html`<span class="cell-sub">none</span>`}`;
 }
 
 const latCell = (key, showN) => (r) => {
@@ -121,6 +124,15 @@ function humanCell(r) {
   const a = r.agg;
   if (!a || !isNum(a.human_mean)) return html`<span class="muted">no ratings</span>`;
   return cell(html`<span class="num">${fixed(a.human_mean, 1)}</span>`, html`n <span class="num">${a.human_n}</span>`);
+}
+
+// Is the answer from the model the row names? A mismatch means the harness used another model.
+function modelWarning(r) {
+  const a = r.agg;
+  const notes = [];
+  if (a && a.model_mismatch_n) notes.push(html`<span class="num">${a.model_mismatch_n}</span> answered by another model`);
+  if (r.cfg.pinned === false) notes.push('alias, not a pinned snapshot');
+  return notes.length ? html`<span class="cell-sub bad">${joinDot(notes)}</span>` : '';
 }
 
 const CELLS = { quality: qualityCell, pass: passCell, errors: errorsCell, p50: latCell('p50_latency_ms', true), p95: latCell('p95_latency_ms', false), cost: costCell, cpp: cppCell, tokens: tokensCell };
@@ -192,7 +204,7 @@ export function renderLeaderboard() {
     </th>`;
   });
   const body = shown.map((r) => html`<tr>
-    <th scope="row" class="row-head" data-label="Configuration"><div class="row-id"><span class="lt" aria-hidden="true">${letterOf(r.cfg.id)}</span><span><span class="cell-name">${r.cfg.display_name}</span><span class="cell-sub">${cfgShort(r.cfg)}</span></span></div></th>
+    <th scope="row" class="row-head" data-label="Configuration"><div class="row-id"><span class="lt" aria-hidden="true">${letterOf(r.cfg.id)}</span><span><span class="cell-name">${r.cfg.display_name}</span><span class="cell-sub">${cfgShort(r.cfg)}</span>${modelWarning(r)}</span></div></th>
     ${COLUMNS.slice(1).map((col) => html`<td data-label="${col.label}${col.sub ? ` (${col.sub})` : ''}" class="col-num metric-${col.key}${r.best[col.key] ? ' is-best' : ''}">${CELLS[col.key](r)}${r.best[col.key] ? html`<span class="sr"> (best in column)</span>` : ''}</td>`)}
   </tr>`);
   const sortOptions = COLUMNS.map((col) => html`<option value="${col.key}"${sortKey === col.key ? raw(' selected') : ''}>${col.label}${col.sub ? ` (${col.sub})` : ''}</option>`);

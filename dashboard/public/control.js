@@ -619,12 +619,13 @@ function renderRuns() {
   }
   $('runs-list').innerHTML = runs.map((r) => {
     const halted = r.harness?.settings?.halted;
-    const tone = r.status === 'completed' ? '' : r.status === 'running' ? 'muted' : 'warn';
+    const stale = r.liveness === 'stale';
+    const tone = r.status === 'completed' ? '' : r.status === 'running' && !stale ? 'muted' : 'warn';
     const harness = r.harness ? `${r.harness.name} ${r.harness.version || ''}`.trim() : 'unknown harness';
     const errs = r.errors ? ` · ${plural(r.errors, 'error')}` : '';
-    return `<li class="row"><div class="row-text"><h3>${esc(r.experiment_id || r.suite?.id || 'run')} <span class="chip ${tone}">${esc(r.status)}</span>${halted ? '<span class="chip warn">stopped by the guard</span>' : ''}</h3>
+    return `<li class="row"><div class="row-text"><h3>${esc(r.experiment_id || r.suite?.id || 'run')} <span class="chip ${tone}">${esc(stale ? 'stopped without finishing' : r.status)}</span>${halted ? '<span class="chip warn">stopped by the guard</span>' : ''}</h3>
       <p>${esc(harness)} · ${esc(r.models.join(', '))} · ${r.rows}/${r.expected_rows} rows${errs} · ${esc(ago(r.created_at))}</p><p class="mono">${esc(r.run_id)}</p></div>
-      <div class="row-ctl">${halted ? `<button type="button" class="btn danger small" data-score="${esc(r.run_id)}" data-force="1">Score anyway</button>` : `<button type="button" class="btn secondary small" data-score="${esc(r.run_id)}">Score again</button>`}</div></li>`;
+      <div class="row-ctl">${r.resumable ? `<button type="button" class="btn primary small" data-resume="${esc(r.run_id)}">Resume</button>` : ''}${halted ? `<button type="button" class="btn danger small" data-score="${esc(r.run_id)}" data-force="1">Score anyway</button>` : `<button type="button" class="btn secondary small" data-score="${esc(r.run_id)}">Score again</button>`}</div></li>`;
   }).join('');
 }
 document.addEventListener('click', async (e) => {
@@ -640,6 +641,12 @@ document.addEventListener('click', async (e) => {
     return;
   }
   const job = await startJob({ command: 'score', run_ids: [b.dataset.score], force: Boolean(b.dataset.force) }, 'activity');
+  if (job) showView('activity');
+});
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-resume]');
+  if (!b) return;
+  const job = await startJob({ command: 'run', resume: b.dataset.resume }, 'activity');
   if (job) showView('activity');
 });
 $('score-all').addEventListener('click', async () => {

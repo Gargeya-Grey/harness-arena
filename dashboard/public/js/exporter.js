@@ -14,16 +14,16 @@ function mdRows() {
   const rows = leaderRows();
   const names = chartNames(rows.map((r) => r.cfg));
   const cell = (v) => String(v).replace(/\|/g, '\\|');
-  const head = ['Configuration', 'Quality (CI, n)', 'Pass rate (Wilson CI)', 'Errors', 'Latency p50 / p95', 'Cost total / per pass (API-equivalent, not billed)', 'Tokens in / cache read / out', 'tok/s', 'Human'];
+  const head = ['Configuration', 'Quality (CI, n)', 'Pass rate (CI)', 'Errors (failed scored 0 / lost)', 'Latency p50 / p95', 'Cost total / per pass (API-equivalent, not billed)', 'Tokens in / cache read / out', 'tok/s', 'Human'];
   const lines = [`| ${head.join(' | ')} |`, `| ${head.map(() => '---').join(' | ')} |`];
   rows.forEach((r) => {
     const a = r.agg || {};
-    const q = isNum(a.mean_quality) ? `${fixed(a.mean_quality)} (${a.quality_ci ? `${fixed(a.quality_ci[0])}–${fixed(a.quality_ci[1])}` : 'insufficient repeats'}, n=${a.scored_n})` : 'unscored';
+    const q = isNum(a.mean_quality) ? `${fixed(a.mean_quality)} (${a.quality_ci ? `${fixed(a.quality_ci[0])}–${fixed(a.quality_ci[1])}` : 'insufficient repeats'}, n=${a.counted_n ?? a.scored_n}, ${a.cases_n ?? NA} cases)` : 'unscored';
     const p = isNum(a.pass_rate) ? `${pctText(a.pass_rate)} (${a.pass_rate_ci ? `${pctText(a.pass_rate_ci[0])}–${pctText(a.pass_rate_ci[1])}` : 'insufficient repeats'})` : 'unscored';
     const cost = isNum(a.total_cost_usd) ? `${usdText(a.total_cost_usd)} / ${isNum(a.cost_per_passed_case) ? usdText(a.cost_per_passed_case) : NA}` : NA;
     lines.push(`| ${[
       `${names.get(r.cfg.id)} (${r.cfg.harness.name} ${r.cfg.harness.version}, ${r.cfg.effort || 'default'} effort, ${r.cfg.access_method})`,
-      q, p, `${a.errors_n ?? NA}/${a.n ?? NA}`,
+      q, p, `${a.errors_n ?? NA}/${a.n ?? NA} (${a.failed_n ?? NA} / ${a.lost_n ?? NA})`,
       `${msText(a.p50_latency_ms)} / ${msText(a.p95_latency_ms)}`, cost,
       `${tokText(a.mean_input_tokens)} / ${tokText(a.mean_cache_read_tokens)} / ${tokText(a.mean_output_tokens)}`,
       isNum(a.mean_tokens_per_second) ? fixed(a.mean_tokens_per_second, 1) : NA,

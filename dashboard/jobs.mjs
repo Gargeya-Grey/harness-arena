@@ -37,6 +37,13 @@ export function buildArgs(root, body) {
   const p = paths(root);
   const command = body.command;
   if (!COMMANDS.includes(command)) throw bad(`Unknown command. Allowed: ${COMMANDS.join(', ')}`);
+  if (command === 'run' && body.resume != null) {
+    // Continue a stopped run: only its missing rows run (node lab run --resume).
+    const id = String(body.resume);
+    if (body.experiment) throw bad('Give an experiment or a run to resume, not both');
+    if (!RUN_ID.test(id) || !fs.existsSync(path.join(p.results, id, 'run.json'))) throw bad(`No run with id "${id.slice(0, 80)}"`);
+    return ['run', '--resume', id];
+  }
   if (command === 'run') {
     const file = String(body.experiment || '');
     if (!FILE.test(file)) throw bad('Name an experiment file in experiments/, for example smoke-opencode.yaml');

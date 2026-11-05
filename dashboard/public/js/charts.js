@@ -103,8 +103,8 @@ function drawScatter(w, cfgs, names) {
     else if (!isNum(a.mean_cost_usd)) skipped.push(`${letterOf(c.id)} ${names.get(c.id)} (no cost data)`);
     else items.push({ c, a, name: names.get(c.id) });
   });
-  const n = items.reduce((s, i) => s + (i.a.scored_n || 0), 0);
-  const meta = { n: `n = ${n} scored observation${n === 1 ? '' : 's'} across ${items.length} configuration${items.length === 1 ? '' : 's'}`, note: skipped.length ? `Not plotted: ${skipped.join('; ')}.` : '', csv: [['configuration', 'mean_cost_usd_per_observation', 'mean_quality', 'quality_ci_low', 'quality_ci_high', 'scored_n']].concat(items.map((i) => [i.name, i.a.mean_cost_usd, i.a.mean_quality, i.a.quality_ci ? i.a.quality_ci[0] : null, i.a.quality_ci ? i.a.quality_ci[1] : null, i.a.scored_n])) };
+  const n = items.reduce((s, i) => s + (i.a.counted_n ?? i.a.scored_n ?? 0), 0);
+  const meta = { n: `n = ${n} counted observation${n === 1 ? '' : 's'} (failed calls score 0) across ${items.length} configuration${items.length === 1 ? '' : 's'}`, note: skipped.length ? `Not plotted: ${skipped.join('; ')}.` : '', csv: [['configuration', 'mean_cost_usd_per_observation', 'mean_quality', 'quality_ci_low', 'quality_ci_high', 'counted_n']].concat(items.map((i) => [i.name, i.a.mean_cost_usd, i.a.mean_quality, i.a.quality_ci ? i.a.quality_ci[0] : null, i.a.quality_ci ? i.a.quality_ci[1] : null, i.a.counted_n ?? i.a.scored_n])) };
   if (!items.length) return { ...emptyChart('Nothing to plot. A point needs a mean quality and a mean cost; both come from scored runs with token pricing.'), meta };
 
   const costs = items.map((i) => i.a.mean_cost_usd);

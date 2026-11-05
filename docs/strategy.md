@@ -27,7 +27,7 @@ Non-goals until the basics work: local models, LLM-as-judge, databases.
 | `prompts/<prompt>/vN.yaml` | Frozen template for version N | never edited; add `vN+1` |
 | `experiments/<name>.yaml` | Declared matrix: suite, prompt, targets (model x harness), repeats, evaluators | new file for new comparison |
 | `results/<run_id>/run.json` | Run manifest | written once; `status` updated |
-| `results/<run_id>/raw.jsonl` | Every response with latency, tokens, cost, errors | append-only |
+| `results/<run_id>/raw.jsonl` | Every response with latency, tokens, cost, errors | append-only; a resume appends the missing rows |
 | `results/<run_id>/harness-events.ndjson` | Optional raw harness event stream when the harness exposes one. Redacted, and kept out of git (`.gitignore`): it describes the machine | immutable local sidecar |
 | `results/<run_id>/scores/<evaluator>@<version>.jsonl` | Evaluator output per response | regenerable |
 | `reports/` | Comparison tables/charts | regenerable |
@@ -90,7 +90,10 @@ Quality and reliability are deliberately separate: a model can be right on avera
 - **Params that a harness cannot apply are recorded, not hidden.** CLI harnesses do not forward `temperature` or `max_tokens`; each row lists them in `metadata.params_not_applied`. A requested effort that the harness cannot set is recorded as not applied.
 - **Usage is normalized.** `input_tokens` counts every prompt token, cached ones included. `cache_read_tokens` and `cache_write_tokens` are the parts of it that were read from or written to a cache. Adapters convert each harness's fields to this shape (Anthropic and Claude Code report cache tokens apart from input; the adapter adds them).
 - **Cost** = (uncached input x input rate + cache reads x read rate + cache writes x write rate + output x output rate) / 1,000,000. A cache rate missing from the registry defaults to the input rate. For subscription harnesses the cost is API-equivalent, not a bill.
-- **Errors are typed.** `error.type` is `auth`, `timeout`, `network_error`, `missing_credentials`, `no_result`, `harness_error`, or a provider type. An error row is never scored, so a failed call never counts as a wrong answer.
+- **Errors are typed and classed.** `error.type` is `rate_limit`, `auth`, `not_installed`, `spawn_error`, `timeout`, `no_result`, `harness_error`, `left_workdir`, or a provider type; the runner stores `rate_limit` or `auth` when the message names a usage limit or a sign-in failure (`lab/lib/checks.mjs`). An error row gets no evaluator score. In the aggregate, a **lost** error (`rate_limit`, `auth`, `not_installed`, `spawn_error`) leaves quality and pass rate and is counted as `lost_n`, because it says nothing about the configuration. Every other error is the configuration's own failure and counts as 0 (`failed_n`), so a configuration that times out on hard cases never ranks higher for it.
+- **Intervals are clustered by case.** Quality and pass-rate intervals are a percentile bootstrap that draws cases with replacement, then repeats inside each case (`bootstrapClustered`). Aggregates carry `counted_n` and `cases_n`.
+- **The model is checked.** Each row records `metadata.model_check` (`match`, `mismatch`, `unknown`) from the model the harness reports. A registry entry with `pinned: false` is an alias the provider can change; the dashboard and the report mark both.
+- **Runs show liveness and can resume.** `run.json` holds `runner: { pid, heartbeat_at }`, written before and after every call. A run that says `running` with a dead process or a heartbeat older than its timeout plus 5 minutes is stale. `node lab run --resume <run_id>` continues a stale or user-stopped run in place: it keeps every row, appends the missing ones, and records `runner.resumes`. It refuses a halted run, and a run whose suite, prompt, models, effort or harness version changed.
 
 ## Comparability rules
 
@@ -98,7 +101,7 @@ Quality and reliability are deliberately separate: a model can be right on avera
 - Within a comparison, hold suite version, prompt version, evaluator versions, and decoding params constant. Changing one means a new experiment and a new run.
 - Temperature defaults to 0. Reliability is measured with repeats, not raised temperature, unless temperature itself is the variable.
 - Never compare scores produced by different evaluator versions.
-- Results are append-only. If a run is wrong, mark it failed and rerun; don't patch JSONL.
+- Results are append-only. If a run is wrong, mark it failed and rerun; don't patch JSONL. A resume is not a correction: it only adds rows the run never wrote.
 - Partial or aborted runs are excluded from reports unless explicitly flagged. A declared `cases` subset is partial by design; compare it only against runs using the same subset.
 
 ## Adding things

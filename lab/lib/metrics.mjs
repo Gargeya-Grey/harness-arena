@@ -59,6 +59,31 @@ export function bootstrapMean(values, seed = 'lab', resamples = 2000) {
 }
 
 /**
+ * Percentile bootstrap 95% interval of the mean over clustered values: one array of
+ * values per case. Repeats of one case are not independent samples, so each draw
+ * picks cases with replacement, then repeats inside each picked case. Three cases
+ * with three repeats are three tasks, not nine. Null below 3 values in all.
+ */
+export function bootstrapClustered(groups, seed = 'lab', resamples = 2000) {
+  const clusters = groups.filter((group) => group.length);
+  if (clusters.reduce((total, group) => total + group.length, 0) < 3) return null;
+  const random = seededRandom(seed);
+  const means = [];
+  for (let r = 0; r < resamples; r += 1) {
+    let total = 0;
+    let count = 0;
+    for (let c = 0; c < clusters.length; c += 1) {
+      const group = clusters[Math.floor(random() * clusters.length)];
+      for (let i = 0; i < group.length; i += 1) total += group[Math.floor(random() * group.length)];
+      count += group.length;
+    }
+    means.push(total / count);
+  }
+  means.sort((a, b) => a - b);
+  return [means[Math.floor(0.025 * resamples)], means[Math.ceil(0.975 * resamples) - 1]];
+}
+
+/**
  * Notional API-equivalent cost in USD. `usage.input_tokens` counts every
  * prompt token, cached or not; cache reads and writes are priced separately
  * when the registry gives a rate, else at the input rate.

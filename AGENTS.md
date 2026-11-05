@@ -66,7 +66,7 @@ docs/dashboard-spec.md    Dashboard design: UI, data contract, visual system
 
 ### Add or change test cases
 
-1. Edit `datasets/<suite>/cases.jsonl`; keep `case_id` stable and unique.
+1. Start with `node lab new-case <suite> <slug>` (`--agent` for an agent task), or edit `datasets/<suite>/cases.jsonl` by hand; keep `case_id` stable and unique. `validate` fails while a `<<FILL IN>>` marker is left.
 2. Bump `version` in `suite.yaml`.
 3. Give every case an `input` object matching the prompt's `variables`.
 4. For an agent task, set `input.workspace` to a folder in `datasets/<suite>/workspaces/` (the starter project) and `expected.check` to a folder in `datasets/<suite>/checks/` with `probe.mjs` (exports `probes: [{ name, run({ load }) }]`; each returns a value) and `expected.json` (`{ probes: { <name>: <value> }, files: { <path>: { exists, includes, same_as_starter } } }`). The agent never sees the check, and the sandbox never sees `expected.json`. Its experiment needs `access: edit` and `workdir: isolated`.
@@ -112,6 +112,8 @@ Done when `node lab validate` passes and `--dry-run` lists every target.
 ### Execute a run
 
 `node lab run experiments/<name>.yaml`. The runner writes only under `results/<run_id>/`: `run.json` with `status: running` and input hashes, one raw row per model x case x repeat (failures included with `error` set), the harness event stream, then `completed` or `failed`, then scores.
+
+A run that stopped before its last row (crashed: `stale` in `node lab runs`; or stopped by the user) continues with `node lab run --resume <run_id>`: it appends only the missing rows, and refuses when an input changed.
 
 Done when `node lab validate` passes and `node lab runs` shows the run with every expected row.
 

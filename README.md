@@ -21,7 +21,7 @@ node lab dashboard                                # http://127.0.0.1:4317
 
 `node lab dashboard` opens the control page at `http://127.0.0.1:4317`. From there you run everything without a terminal:
 
-- **Run**: pick an experiment, then a harness, models, cases and repeats. Preview shows the plan and calls nothing. Start asks once (`Start N calls?`), then runs and shows the live output. Stop lets the current call finish and keeps the run.
+- **Run**: pick an experiment, then a harness, models, cases and repeats. Preview shows the plan and calls nothing. Start asks once (`Start N calls?`), then runs and shows the live output. Stop lets the current call finish and keeps the run; **Resume** on the Runs page continues it later.
 - **Runs**: every stored run. Score again makes no model calls.
 - **Compare**: the comparison views (also at `/compare.html`).
 - **Harnesses**, **Checks**, **Activity**: `doctor`; `validate`, `report`, `runs`; the output of every job.
@@ -59,6 +59,8 @@ To add any other model that OpenCode reaches (`opencode models` lists them), add
 | `  --harness <name>` / `--models <a,b>` | Runs only the targets that match. |
 | `  --repeats <n>` / `--cases <a,b>` | Overrides the experiment. The run records the override. |
 | `  --dry-run` | Shows the plan: model id per harness, effort, whether the user setup loads. Calls nothing. |
+| `node lab run --resume <run-id>` | Continues a run that stopped before its last row: it crashed (`node lab runs` shows `stale`) or you stopped it. Only the missing rows run. It refuses when the suite, prompt, models or harness version changed. `--force` resumes a run written before the heartbeat existed. |
+| `node lab new-case <suite> <slug>` | Adds a case with every value to write marked `<<FILL IN>>`, and bumps the suite version. `--agent` also makes the starter workspace and the hidden check. `validate` fails until no marker is left. |
 | `node lab score <run-id> \| --all` | Computes scores again from `raw.jsonl`. Makes no model calls. |
 | `node lab validate` | Checks every input and stored record against `schemas/`. |
 | `node lab runs` | Lists runs, newest first. |
@@ -84,7 +86,7 @@ Every harness uses your own sign-in. OpenCode reaches any provider you connect i
 
 A CLI harness does not forward `temperature` or `max_tokens`. Each raw row lists those params in `metadata.params_not_applied`.
 
-Each CLI call runs in an empty, isolated folder that is its own git repository. Thus no harness reads this repository, or a git repository above the temp folder, into its prompt. To measure a harness inside this repository, set `workdir: repo` in the experiment.
+Each CLI call runs in a new, empty folder directly under the temp folder, and that folder is its own git repository. Thus no harness reads this repository, or a git repository above the temp folder, into its prompt. The runner deletes the folder after it stores the evidence, so no call can read the finished work of an earlier repeat or of another model; each row records `metadata.workdir_removed`. To measure a harness inside this repository, set `workdir: repo` in the experiment.
 
 Cost is optional. With `pricing` in the registry entry, the dashboard shows an API-equivalent cost. Without it, cost is n/a. A subscription bill does not change per call.
 
@@ -101,7 +103,7 @@ Cost is optional. With `pricing` in the registry entry, the dashboard shows an A
 
 **Agent tasks** (`access: edit` in the experiment; `run` and `validate` refuse a workspace case without it). The runner copies the case's starter project (`datasets/<suite>/workspaces/<name>/`) into the call's isolated folder, and the harness gets its edit flags, so the agent can edit files and run commands there. The flags are recorded in `harness.settings.access_flags`. After the call the runner stores every changed or deleted file under `artifacts/.../workspace/` in the run. `workspace-tests@1` rebuilds the final workspace from that evidence alone, and checks it against the hidden check in `datasets/<suite>/checks/<name>/`, which the agent never gets. `probe.mjs` runs in a sandbox like the one of `js-function@1` and only reports what the agent's code returns. `expected.json` holds the answers and file rules (`exists`, `includes`, `same_as_starter`), and only the lab process reads it. So agent code in the sandbox cannot see the answers, and changed globals there can only spoil its own values. You can score a stored run again at any time, with no model call. If the starter project has changed since the run, the row gets no score, and `node lab score` says so, because the rebuild would not be the agent's workspace. The runner stores up to 200 changed files, 1 MB each and 5 MB in all; a file over a limit is listed under `skipped` in the score details, and probes that need it fail. Home paths are removed from stored UTF-8 text files; other files are stored as they are.
 
-An agent is a program with a shell on your machine; the edit flags let it act without asking. Each call starts in its own folder: the runner also sets `PWD`, which OpenCode reads, and removes environment variables that name this repository. Edit access never runs with `workdir: repo`. Two tripwires keep a run honest. If a file anywhere in this repository changes during an agent call (all of it except `.git`, `node_modules` and `.cache`, the current run included), the row gets the error `left_workdir`, the experiment stops, and the run is marked `harness.settings.halted`. `node lab score` skips a stopped run unless you pass `--force`. The message names the file: check it with `git diff`. If you edited that file yourself during the call, it is a false alarm; keep your work and run again. If the agent's tool calls name this repository, in any slash style, where it could read the hidden checks, the row also gets `left_workdir`. A tripwire is not an OS sandbox: a process the agent leaves running, or a path it builds at run time, can get past it. Run agent tasks only with harnesses and models you trust on this machine.
+An agent is a program with a shell on your machine; the edit flags let it act without asking. Each call starts in its own folder: the runner also sets `PWD`, which OpenCode reads, and removes environment variables that name this repository. Edit access never runs with `workdir: repo`. Two tripwires keep a run honest. If a file anywhere in this repository changes during an agent call (all of it except `.git`, `node_modules`, `.cache` and the dashboard's `boards/`, `annotations/` and `reports/`, the current run included), the row gets the error `left_workdir`, the experiment stops, and the run is marked `harness.settings.halted`. `node lab score` skips a stopped run unless you pass `--force`. The message names the file: check it with `git diff`. If you edited that file yourself during the call, it is a false alarm; keep your work and run again. If the agent's tool calls name this repository, in any slash style, where it could read the hidden checks, the row also gets `left_workdir`. A tripwire is not an OS sandbox: a process the agent leaves running, or a path it builds at run time, can get past it. Run agent tasks only with harnesses and models you trust on this machine.
 
 Start with one case before a full sweep. For example, this call costs nothing on the free OpenCode model:
 
@@ -111,6 +113,11 @@ node lab run experiments/agentic-sweep.yaml --harness opencode --repeats 1 --cas
 ```
 
 ## How a comparison works
+
+- **Quality** counts every call. A call that failed through the configuration (timeout, no answer, harness crash, `left_workdir`) scores 0. A call that was **lost** (a usage limit or rate limit, a failed sign-in, a missing CLI) says nothing about the configuration: it leaves the score and shows in the Lost column. `answered_quality` in `/api/state` is the mean over answered calls only.
+- **Intervals** resample cases, then the repeats inside each case. Repeats of one case are not independent, so three cases with three repeats count as three tasks.
+- **Model check.** Each row records `metadata.model_check`: `match`, `mismatch` (the harness reports another model, for example a fallback under load) or `unknown` (the harness reports none). The dashboard marks a configuration with a mismatch, and a model key with `pinned: false` (a free alias the provider can change).
+- **Harnesses interleave.** One experiment runs repeat by repeat and case by case across every harness, so a slow hour or a usage limit hits all of them alike. The runner reads each harness version again at the end; a CLI that updated itself during the run gets `harness.settings.version_end`.
 
 - **Configuration**: model + harness + harness version + effort + user setup. Its id is `<model_key>__<harness>-<version>__<effort|default>`, plus `__isolated` when the run kept the user setup out.
 - **Context**: suite version + prompt version + evaluators + case set + repeats. The dashboard compares configurations only inside one context.

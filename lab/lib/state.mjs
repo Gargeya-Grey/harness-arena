@@ -6,7 +6,8 @@ import path from 'node:path';
 import { listDirs, listFiles, readJson, readJsonl, resolveInside, safeSegment, isoNow } from './fsutil.mjs';
 import { paths, loadRegistry, loadCases } from './repo.mjs';
 import { SchemaSet } from './schema.mjs';
-import { bootstrapMean, mean, percentile, sum, variance, wilson } from './metrics.mjs';
+import { bootstrapClustered, mean, percentile, sum, variance } from './metrics.mjs';
+import { errorClass, modelCheck, runLiveness } from './checks.mjs';
 
 const TEXT_INLINE_LIMIT = 2 * 1024 * 1024;
 
@@ -95,6 +96,8 @@ function buildConfig(manifest, modelKey, raw, registry) {
     context_window: entry.context_window ?? registered.context_window ?? null,
     params: { ...(entry.params || {}), ...(raw?.request?.params || {}) },
     pricing: entry.pricing || null,
+    // A free alias such as opencode/beam-free can point at a new model at any time.
+    pinned: registered.pinned !== false,
     access_method: harness.access_method || 'unknown',
   };
 }
@@ -154,11 +157,34 @@ function observationStatus(raw, quality) {
   return 'ok';
 }
 
-function aggregate(rows, config) {
+/**
+ * The rows that count for quality: every scored row, plus every error the
+ * configuration caused, at 0. A lost row (quota, sign-in, CLI missing) does not
+ * count; it shows as lost_n. Without a quality evaluator nothing counts.
+ */
+function countedRows(rows, hasQuality) {
+  if (!hasQuality) return [];
+  return rows.flatMap((row) => {
+    if (row.error) return row.error_class === 'failed' ? [{ case_id: row.case_id, value: 0, passed: false }] : [];
+    return row.quality == null ? [] : [{ case_id: row.case_id, value: row.quality, passed: Boolean(row.passed) }];
+  });
+}
+
+function byCaseValues(counted, pick) {
+  const groups = new Map();
+  for (const row of counted) {
+    if (!groups.has(row.case_id)) groups.set(row.case_id, []);
+    groups.get(row.case_id).push(pick(row));
+  }
+  return [...groups.values()];
+}
+
+function aggregate(rows, config, { hasQuality = true } = {}) {
   const ok = rows.filter((row) => !row.error);
   const scored = rows.filter((row) => row.quality != null);
-  const passed = scored.filter((row) => row.passed);
-  const qualities = scored.map((row) => row.quality);
+  const counted = countedRows(rows, hasQuality);
+  const passed = counted.filter((row) => row.passed);
+  const qualities = counted.map((row) => row.value);
   const latencies = ok.map((row) => row.latency_ms).filter((v) => typeof v === 'number');
   const modelLatencies = ok.map((row) => row.model_request_duration_ms).filter((v) => typeof v === 'number');
   const costs = rows.map((row) => row.cost_usd).filter((v) => typeof v === 'number');
@@ -193,13 +219,21 @@ function aggregate(rows, config) {
     n: rows.length,
     ok_n: ok.length,
     scored_n: scored.length,
+    counted_n: counted.length,
+    cases_n: new Set(counted.map((row) => row.case_id)).size,
     unscored_n: ok.filter((row) => row.quality == null).length,
     passed_n: passed.length,
     errors_n: rows.length - ok.length,
+    failed_n: rows.filter((row) => row.error_class === 'failed').length,
+    lost_n: rows.filter((row) => row.error_class === 'lost').length,
+    // Quality counts the configuration's own errors as 0; answered_quality leaves them out.
     mean_quality: mean(qualities),
-    quality_ci: bootstrapMean(qualities, config.id),
-    pass_rate: scored.length ? passed.length / scored.length : null,
-    pass_rate_ci: wilson(passed.length, scored.length),
+    answered_quality: mean(scored.map((row) => row.quality)),
+    quality_ci: bootstrapClustered(byCaseValues(counted, (row) => row.value), config.id),
+    pass_rate: counted.length ? passed.length / counted.length : null,
+    pass_rate_ci: bootstrapClustered(byCaseValues(counted, (row) => (row.passed ? 1 : 0)), `${config.id}|pass`),
+    model_mismatch_n: rows.filter((row) => row.model_check === 'mismatch').length,
+    model_unknown_n: rows.filter((row) => row.model_check === 'unknown').length,
     total_cost_usd: totalCost,
     mean_cost_usd: costs.length ? totalCost / costs.length : null,
     cost_per_passed_case: passed.length && totalCost != null ? totalCost / passed.length : null,
@@ -225,6 +259,13 @@ function aggregate(rows, config) {
     repeats: rows.length ? Math.max(...rows.map((row) => row.repeat)) + 1 : 0,
     format_pass_rate: formatScores.length ? mean(formatScores.map((score) => score.value)) : null,
   };
+}
+
+/** A run that stopped before its last row and can continue: stale, or stopped by the user, never halted by the guard. */
+export function resumable(manifest) {
+  if (manifest?.harness?.settings?.halted) return false;
+  if (manifest?.status === 'running') return runLiveness(manifest) === 'stale';
+  return manifest?.status === 'failed' && Boolean(manifest.runner?.interrupted);
 }
 
 function latestAnnotations(list) {
@@ -375,6 +416,8 @@ export function buildState(root, { validate = true } = {}) {
         usage: raw.usage || null,
         cost_usd: raw.cost_usd ?? null,
         error: raw.error || null,
+        error_class: errorClass(raw.error),
+        model_check: raw.metadata?.model_check ?? modelCheck(raw.metadata?.harness_model ?? config.model, raw.metadata?.model_reported),
         metadata: raw.metadata || null,
         scores,
         quality,
@@ -392,6 +435,9 @@ export function buildState(root, { validate = true } = {}) {
       created_at: manifest.created_at,
       finished_at: manifest.finished_at ?? null,
       status: manifest.status,
+      // live, stale (the runner is gone: resume it) or unknown, for a run that says running.
+      liveness: runLiveness(manifest),
+      resumable: resumable(manifest),
       context_key: key,
       suite: manifest.suite,
       prompt: manifest.prompt,
@@ -409,9 +455,10 @@ export function buildState(root, { validate = true } = {}) {
 
   for (const ctx of contexts.values()) {
     const ctxRows = observations.filter((item) => item.context_key === ctx.key);
+    const hasQuality = ctx.evaluators.some((item) => item.dimension === 'quality');
     ctx.aggregates = {};
     for (const id of ctx.config_ids) {
-      ctx.aggregates[id] = aggregate(ctxRows.filter((row) => row.config_id === id), configs[id]);
+      ctx.aggregates[id] = aggregate(ctxRows.filter((row) => row.config_id === id), configs[id], { hasQuality });
     }
     ctx.comparison = comparisonMode(ctx.config_ids.map((id) => configs[id]));
     ctx.latest_run_at = ctx.runs

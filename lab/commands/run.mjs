@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { appendJsonl, isoNow, readText, sha256, writeJson, safeSegment } from '../lib/fsutil.mjs';
+import { appendJsonl, isoNow, readJson, readJsonl, readText, sha256, writeJson, safeSegment } from '../lib/fsutil.mjs';
 import { redactEvent, redactPaths } from '../lib/redact.mjs';
 import { parseYaml } from '../lib/yaml.mjs';
 import { loadPrompt, loadRegistry, loadSuite, paths, renderMessages, resolveExperiment } from '../lib/repo.mjs';
@@ -14,7 +14,8 @@ import { costUsd } from '../lib/metrics.mjs';
 import { copyTree, snapshotWorkspace, stampDiff, treeHash, treeStamp } from '../lib/workspace.mjs';
 import { getAdapter } from '../adapters/index.mjs';
 import { extractSvg } from '../evaluators/index.mjs';
-import { scoreRun } from './score.mjs';
+import { resolveRunDir, scoreRun } from './score.mjs';
+import { modelCheck, normalizeErrorType, runLiveness } from '../lib/checks.mjs';
 
 const DEFAULT_TIMEOUT_S = 300;
 const USER_CONFIG = new Set(['loaded', 'isolated']);
@@ -73,9 +74,14 @@ export function runStamp(date = new Date()) {
 }
 
 /** Load and check everything an experiment references, before any call is made. */
-export function planExperiment(root, file, { harness: onlyHarness, models: onlyModels, repeats: repeatOverride, cases: caseOverride } = {}) {
+export function planExperiment(root, file, options = {}) {
   const text = readText(file);
-  const experiment = parseYaml(text, path.basename(file));
+  return planFromExperiment(root, parseYaml(text, path.basename(file)), { ...options, sha: sha256(text), name: path.basename(file) });
+}
+
+/** The plan for an experiment object: from a file, or the copy a run recorded (resume). */
+export function planFromExperiment(root, experiment, { harness: onlyHarness, models: onlyModels, repeats: repeatOverride, cases: caseOverride, sha = null, name = experiment?.id || 'experiment' } = {}) {
+  const file = name;
   const registry = loadRegistry(root);
   const { targets, problems } = resolveExperiment(experiment, registry);
   const userConfig = experiment.user_config ?? 'loaded';
@@ -118,7 +124,7 @@ export function planExperiment(root, file, { harness: onlyHarness, models: onlyM
   if (repeatOverride != null) recorded.repeats = repeats;
   return {
     experiment: recorded,
-    experimentSha: sha256(text),
+    experimentSha: sha,
     registry,
     suite,
     prompt,
@@ -165,7 +171,41 @@ function writeArtifact(runDir, kind, row, text, harness) {
   return [{ artifact_id: `${row.case_id}__${row.model_key}__r${row.repeat}__raw`, role: 'raw', mime: 'image/svg+xml', path: rel, sha256: sha256(svg), derived: false, created_at: isoNow() }];
 }
 
-async function runHarness(root, plan, harnessName, modelKeys, { log, signal }) {
+// Folders at the repository root that the dashboard and `node lab report` write to
+// while a run may be going. They hold no hidden check, so the guard skips them.
+const DASHBOARD_DIRS = ['boards', 'annotations', 'reports'];
+
+function guardStamp(root) {
+  const stamp = treeStamp(root, UNGUARDED_DIRS);
+  for (const key of [...stamp.keys()]) if (DASHBOARD_DIRS.some((dir) => key.startsWith(`${dir}/`))) stamp.delete(key);
+  return stamp;
+}
+
+const rowKey = (caseId, modelKey, repeat) => `${caseId}|${modelKey}|${repeat}`;
+
+// Each call gets a new folder of its own, directly under the temp folder, and the
+// runner deletes it once the evidence is stored. So no call can read the finished
+// workspace of an earlier repeat or of another model.
+function callFolder() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'model-lab-'));
+}
+
+function removeFolder(dir) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    return !fs.existsSync(dir);
+  } catch {
+    return false;
+  }
+}
+
+function heartbeat(session) {
+  session.manifest.runner.heartbeat_at = isoNow();
+  writeJson(path.join(session.runDir, 'run.json'), session.manifest);
+}
+
+/** Start one run (one harness), or reopen a stopped one to continue it. */
+async function openRun(root, plan, harnessName, modelKeys, { log, resume = null }) {
   const adapter = getAdapter(harnessName, root);
   const detected = await adapter.detect();
   if (!detected.version) {
@@ -174,15 +214,34 @@ async function runHarness(root, plan, harnessName, modelKeys, { log, signal }) {
   const isolated = plan.userConfig === 'isolated';
   const isolationArgs = isolated ? adapter.isolation?.args || [] : [];
   const models = modelKeys.map((key) => modelPlan(plan, adapter, key));
-  const runId = `${runStamp()}__${plan.suite.id}__${plan.experiment.id}__${crypto.randomBytes(3).toString('hex')}`;
-  const runDir = path.join(paths(root).results, runId);
-  const cwd = plan.workdirMode === 'repo' ? root : path.join(os.tmpdir(), 'model-lab', runId);
-  let fenced = false;
-  if (plan.workdirMode === 'repo') fs.mkdirSync(cwd, { recursive: true });
-  else fenced = fenceWorkdir(cwd);
+  const session = { adapter, isolationArgs, models, attempts: 0, failures: 0, done: new Set(), halted: null, fenced: true };
 
-  const manifest = {
-    run_id: runId,
+  if (resume) {
+    if (String(detected.version) !== resume.manifest.harness.version) {
+      throw new Error(`${harnessName} is now ${detected.version}; the run used ${resume.manifest.harness.version}. A resumed run must use the same harness version.`);
+    }
+    session.runId = resume.manifest.run_id;
+    session.runDir = resume.runDir;
+    session.manifest = resume.manifest;
+    for (const row of resume.rows) {
+      session.done.add(rowKey(row.case_id, row.model_key, row.repeat));
+      session.attempts += 1;
+      if (row.error) session.failures += 1;
+    }
+    const runner = session.manifest.runner || {};
+    session.manifest.status = 'running';
+    session.manifest.finished_at = null;
+    session.manifest.runner = { pid: process.pid, heartbeat_at: isoNow(), resumes: [...(runner.resumes || []), { at: isoNow(), rows_before: resume.rows.length }] };
+    session.manifest.notes = `${session.manifest.notes || ''} Resumed at ${isoNow()} with ${resume.rows.length} row(s) already written.`.trim();
+    heartbeat(session);
+    log(`\n${session.runId}\n  resuming: ${resume.rows.length} row(s) kept, ${plan.cases.length * plan.repeats * models.length - resume.rows.length} to go`);
+    return session;
+  }
+
+  session.runId = `${runStamp()}__${plan.suite.id}__${plan.experiment.id}__${crypto.randomBytes(3).toString('hex')}`;
+  session.runDir = path.join(paths(root).results, session.runId);
+  session.manifest = {
+    run_id: session.runId,
     created_at: isoNow(),
     finished_at: null,
     status: 'running',
@@ -209,7 +268,7 @@ async function runHarness(root, plan, harnessName, modelKeys, { log, signal }) {
       session_id: null,
       settings: {
         workdir: plan.workdirMode,
-        ...(plan.workdirMode === 'isolated' ? { workdir_git_fence: fenced } : {}),
+        ...(plan.workdirMode === 'isolated' ? { workdir_git_fence: true, workdir_per_call: 'new temp folder, deleted after the call' } : {}),
         timeout_s: plan.timeoutMs / 1000,
         persist_sessions: plan.persist,
         // answer: the harness replies in text. edit: it may edit files and run commands in its folder.
@@ -222,169 +281,232 @@ async function runHarness(root, plan, harnessName, modelKeys, { log, signal }) {
         ...(plan.maxTurns ? { max_turns: plan.maxTurns } : {}),
       },
     },
+    // The runner process and its last sign of life, so a crashed run shows as stale.
+    runner: { pid: process.pid, heartbeat_at: isoNow() },
     notes: `Run by lab ${harnessName}; experiment file sha256 ${plan.experimentSha}.`,
   };
-  writeJson(path.join(runDir, 'run.json'), manifest);
-  log(`\n${runId}\n  harness ${adapter.name} ${detected.version} · ${models.length} model(s) · ${plan.cases.length} case(s) · ${plan.repeats} repeat(s) · workdir ${plan.workdirMode}`);
+  writeJson(path.join(session.runDir, 'run.json'), session.manifest);
+  log(`\n${session.runId}\n  harness ${adapter.name} ${detected.version} · ${models.length} model(s) · ${plan.cases.length} case(s) · ${plan.repeats} repeat(s) · workdir ${plan.workdirMode}`);
   if (isolated && !isolationArgs.length) log(`  note: ${adapter.name} cannot skip the user setup; it loads, and the run records user_config loaded`);
   for (const m of models) {
     if (m.requestedEffort && !m.effort) log(`  note: ${adapter.name} has no effort control; ${m.modelKey} runs at the harness default, not "${m.requestedEffort}"`);
     if (m.notApplied.length) log(`  note: ${adapter.name} does not forward ${m.notApplied.join(', ')} for ${m.modelKey}; harness defaults apply`);
   }
+  return session;
+}
 
-  let attempts = 0;
-  let failures = 0;
-  let aborted = false;
-  let halted = false;
-  // Repeat-major order spreads each model's calls over time, so a slow minute hurts all models alike.
-  outer: for (let repeat = 0; repeat < plan.repeats; repeat += 1) {
-    for (const testCase of plan.cases) {
-      for (const m of models) {
-        if (signal?.aborted) {
-          aborted = true;
-          break outer;
-        }
-        const messages = renderMessages(plan.prompt.messages, testCase.input);
-        // Every call gets its own fenced folder, so files one call writes never reach another repeat or model.
-        let callCwd = cwd;
-        if (plan.workdirMode !== 'repo') {
-          callCwd = path.join(cwd, safeSegment(testCase.case_id), safeSegment(m.modelKey), `r${repeat}`);
-          if (testCase.input?.workspace != null) copyTree(workspaceDir(plan.suite, testCase), callCwd);
-          fenced = fenceWorkdir(callCwd) && fenced;
-        }
-        // An agent that may act must stay in its folder. The guard notices a call that
-        // changed the lab's files (inputs, code, stored runs) or named the repository.
-        // It is a tripwire, not an OS sandbox: see README "Agent tasks".
-        const guarded = plan.workdirMode !== 'repo' && (plan.access === 'edit' || testCase.input?.workspace != null);
-        // The current run folder is guarded too: the runner writes nothing there during a call.
-        const stampBefore = guarded ? treeStamp(root, UNGUARDED_DIRS) : null;
-        const fixtureSha = testCase.input?.workspace != null ? treeHash(workspaceDir(plan.suite, testCase)) : null;
-        const startedAt = isoNow();
-        let result;
-        try {
-          result = await adapter.call({
-            model: m.harnessModel,
-            messages,
-            params: m.params,
-            effort: m.effort,
-            cwd: callCwd,
-            timeoutMs: plan.timeoutMs,
-            persist: plan.persist,
-            maxTurns: plan.maxTurns,
-            isolated: isolationArgs.length > 0,
-            access: plan.access,
-            ...(guarded ? { env: agentEnv(root) } : {}),
-          });
-        } catch (error) {
-          // An adapter bug becomes an error row; it must not leave the run "running".
-          result = { error: { type: 'harness_error', message: `adapter threw: ${error?.message || error}` }, events: [] };
-        }
-        attempts += 1;
-        let halt = false;
-        if (guarded) {
-          let escape = null;
-          const changed = stampDiff(stampBefore, treeStamp(root, UNGUARDED_DIRS));
-          if (changed) {
-            escape = `changed ${changed} in the lab repository while it ran; the experiment stops and this run is not scored. Check that file with git diff. If you edited it yourself during the call, this is a false alarm: keep your work and run again. Otherwise restore it (git checkout -- <file>) before the next run`;
-            halt = true;
-          } else if (mentionsFolder(`${JSON.stringify(result.events ?? [])}\n${result.text ?? ''}`, [root])) {
-            escape = 'worked in the lab repository outside its work folder, where it could read the hidden checks';
-          }
-          if (escape) result = { ...result, error: { type: 'left_workdir', message: `The agent ${escape}.` } };
-        }
-        const usage = result.usage || { input_tokens: null, output_tokens: null, cache_read_tokens: null, cache_write_tokens: null };
-        const latency = result.wall_ms ?? null;
-        const output = usage.output_tokens;
-        const row = {
-          run_id: runId,
-          case_id: testCase.case_id,
-          model_key: m.modelKey,
-          repeat,
-          started_at: startedAt,
-          latency_ms: latency,
-          tokens_per_second: typeof output === 'number' && latency ? Number((output / (latency / 1000)).toFixed(4)) : null,
-          tool_calls: result.tool_calls ?? 0,
-          skills_used: (result.skills_used ?? []).map((name) => redactPaths(name)),
-          request: {
-            prompt_id: plan.prompt.id,
-            prompt_version: plan.prompt.version,
-            messages,
-            system_prompt: null,
-            params: m.applied,
-          },
-          response: { text: result.error ? null : redactPaths(result.text ?? null), finish_reason: result.finish_reason ?? null },
-          usage,
-          cost_usd: result.error ? null : costUsd(usage, m.entry.pricing),
-          error: result.error ? { type: String(result.error.type), message: redactPaths(String(result.error.message)) } : null,
-          metadata: {
-            harness_model: m.harnessModel,
-            model_reported: result.model_reported ?? null,
-            effort_requested: m.requestedEffort,
-            effort_reported: result.effort_reported ?? null,
-            params_not_applied: m.notApplied,
-            harness_session_id: result.session_id ?? null,
-            harness_duration_ms: result.harness_duration_ms ?? null,
-            model_request_duration_ms: result.model_request_duration_ms ?? null,
-            model_tokens_per_second:
-              typeof output === 'number' && result.model_request_duration_ms ? Number((output / (result.model_request_duration_ms / 1000)).toFixed(4)) : null,
-            turn_count: result.turn_count ?? null,
-            harness_reported_cost_usd: result.harness_cost_usd ?? null,
-            system_prompt_injected: true,
-            workdir: plan.workdirMode,
-            ...(result.extra && Object.keys(result.extra).length ? { harness_extra: result.extra } : {}),
-          },
-        };
-        if (!result.error && plan.artifact) {
-          const artifacts = writeArtifact(runDir, plan.artifact, row, redactPaths(result.text), adapter.name);
-          if (artifacts) row.artifacts = artifacts;
-        }
-        if (testCase.input?.workspace != null) {
-          // The agent's final workspace is evidence, kept even when the call failed or timed
-          // out: the evaluator rebuilds it from this alone.
-          const base = `artifacts/${safeSegment(row.case_id)}/${safeSegment(row.model_key)}__${safeSegment(adapter.name)}/r${repeat}/workspace`;
-          try {
-            const artifact = snapshotWorkspace({ fixtureDir: workspaceDir(plan.suite, testCase), fixtureSha, workDir: callCwd, runDir, base, artifactId: `${row.case_id}__${row.model_key}__r${repeat}__workspace`, createdAt: isoNow() });
-            row.artifacts = [...(row.artifacts || []), artifact];
-          } catch (error) {
-            log(`  ${testCase.case_id} r${repeat} ${m.modelKey}: workspace not stored: ${error.message}`);
-          }
-        }
-        appendJsonl(path.join(runDir, 'raw.jsonl'), row);
-        for (const event of result.events || []) {
-          // Events keep what the call did, not how this machine is set up (lab/lib/redact.mjs).
-          appendJsonl(path.join(runDir, 'harness-events.ndjson'), { case_id: row.case_id, model_key: row.model_key, repeat, event: redactEvent(event) });
-        }
-        if (row.error) failures += 1;
-        if (halt) {
-          log(`  ${testCase.case_id} r${repeat} ${m.modelKey}: ${row.error.message}`);
-          aborted = true;
-          halted = true;
-          break outer;
-        }
-        const shown = row.error ? `ERROR ${row.error.type}: ${row.error.message.split('\n')[0].slice(0, 120)}` : JSON.stringify(String(row.response.text).slice(0, 60));
-        log(`  ${testCase.case_id} r${repeat} ${m.modelKey}: ${shown} · ${latency ?? '?'} ms · ${usage.input_tokens ?? '?'} in / ${usage.output_tokens ?? '?'} out`);
-      }
+/** One call: model x case x repeat. Appends its row. Returns true when the guard halts the experiment. */
+async function callOne(root, plan, session, testCase, m, repeat, { log }) {
+  const { adapter, runDir, runId } = session;
+  const messages = renderMessages(plan.prompt.messages, testCase.input);
+  const isolatedDir = plan.workdirMode !== 'repo';
+  const callCwd = isolatedDir ? callFolder() : root;
+  if (isolatedDir) {
+    if (testCase.input?.workspace != null) copyTree(workspaceDir(plan.suite, testCase), callCwd);
+    session.fenced = fenceWorkdir(callCwd) && session.fenced;
+  }
+  // An agent that may act must stay in its folder. The guard notices a call that
+  // changed the lab's files (inputs, code, stored runs) or named the repository.
+  // It is a tripwire, not an OS sandbox: see README "Agent tasks".
+  const guarded = isolatedDir && (plan.access === 'edit' || testCase.input?.workspace != null);
+  // The heartbeat writes run.json, so it comes before the guard's first stamp.
+  heartbeat(session);
+  const stampBefore = guarded ? guardStamp(root) : null;
+  const fixtureSha = testCase.input?.workspace != null ? treeHash(workspaceDir(plan.suite, testCase)) : null;
+  const startedAt = isoNow();
+  let result;
+  try {
+    result = await adapter.call({
+      model: m.harnessModel,
+      messages,
+      params: m.params,
+      effort: m.effort,
+      cwd: callCwd,
+      timeoutMs: plan.timeoutMs,
+      persist: plan.persist,
+      maxTurns: plan.maxTurns,
+      isolated: session.isolationArgs.length > 0,
+      access: plan.access,
+      ...(guarded ? { env: agentEnv(root) } : {}),
+    });
+  } catch (error) {
+    // An adapter bug becomes an error row; it must not leave the run "running".
+    result = { error: { type: 'harness_error', message: `adapter threw: ${error?.message || error}` }, events: [] };
+  }
+  session.attempts += 1;
+  let halt = false;
+  if (guarded) {
+    let escape = null;
+    const changed = stampDiff(stampBefore, guardStamp(root));
+    if (changed) {
+      escape = `changed ${changed} in the lab repository while it ran; the experiment stops and this run is not scored. Check that file with git diff. If you edited it yourself during the call, this is a false alarm: keep your work and run again. Otherwise restore it (git checkout -- <file>) before the next run`;
+      halt = true;
+    } else if (mentionsFolder(`${JSON.stringify(result.events ?? [])}\n${result.text ?? ''}`, [root])) {
+      escape = 'worked in the lab repository outside its work folder, where it could read the hidden checks';
+    }
+    if (escape) result = { ...result, error: { type: 'left_workdir', message: `The agent ${escape}.` } };
+  }
+  const usage = result.usage || { input_tokens: null, output_tokens: null, cache_read_tokens: null, cache_write_tokens: null };
+  const latency = result.wall_ms ?? null;
+  const output = usage.output_tokens;
+  const modelChecked = modelCheck(m.harnessModel, result.model_reported);
+  const row = {
+    run_id: runId,
+    case_id: testCase.case_id,
+    model_key: m.modelKey,
+    repeat,
+    started_at: startedAt,
+    latency_ms: latency,
+    tokens_per_second: typeof output === 'number' && latency ? Number((output / (latency / 1000)).toFixed(4)) : null,
+    tool_calls: result.tool_calls ?? 0,
+    skills_used: (result.skills_used ?? []).map((name) => redactPaths(name)),
+    request: {
+      prompt_id: plan.prompt.id,
+      prompt_version: plan.prompt.version,
+      messages,
+      system_prompt: null,
+      params: m.applied,
+    },
+    response: { text: result.error ? null : redactPaths(result.text ?? null), finish_reason: result.finish_reason ?? null },
+    usage,
+    cost_usd: result.error ? null : costUsd(usage, m.entry.pricing),
+    // A usage limit or sign-in failure gets its own type, so it is not scored as the configuration's failure.
+    error: result.error ? { type: normalizeErrorType(result.error), message: redactPaths(String(result.error.message)) } : null,
+    metadata: {
+      harness_model: m.harnessModel,
+      model_reported: result.model_reported ?? null,
+      model_check: modelChecked,
+      effort_requested: m.requestedEffort,
+      effort_reported: result.effort_reported ?? null,
+      params_not_applied: m.notApplied,
+      harness_session_id: result.session_id ?? null,
+      harness_duration_ms: result.harness_duration_ms ?? null,
+      model_request_duration_ms: result.model_request_duration_ms ?? null,
+      model_tokens_per_second:
+        typeof output === 'number' && result.model_request_duration_ms ? Number((output / (result.model_request_duration_ms / 1000)).toFixed(4)) : null,
+      turn_count: result.turn_count ?? null,
+      harness_reported_cost_usd: result.harness_cost_usd ?? null,
+      system_prompt_injected: true,
+      workdir: plan.workdirMode,
+      ...(result.extra && Object.keys(result.extra).length ? { harness_extra: result.extra } : {}),
+    },
+  };
+  if (!result.error && plan.artifact) {
+    const artifacts = writeArtifact(runDir, plan.artifact, row, redactPaths(result.text), adapter.name);
+    if (artifacts) row.artifacts = artifacts;
+  }
+  if (testCase.input?.workspace != null) {
+    // The agent's final workspace is evidence, kept even when the call failed or timed
+    // out: the evaluator rebuilds it from this alone.
+    const base = `artifacts/${safeSegment(row.case_id)}/${safeSegment(row.model_key)}__${safeSegment(adapter.name)}/r${repeat}/workspace`;
+    // A call that crashed before its row was written may have left a snapshot; it is not this call's.
+    fs.rmSync(path.join(runDir, ...base.split('/')), { recursive: true, force: true });
+    try {
+      const artifact = snapshotWorkspace({ fixtureDir: workspaceDir(plan.suite, testCase), fixtureSha, workDir: callCwd, runDir, base, artifactId: `${row.case_id}__${row.model_key}__r${repeat}__workspace`, createdAt: isoNow() });
+      row.artifacts = [...(row.artifacts || []), artifact];
+    } catch (error) {
+      log(`  ${testCase.case_id} r${repeat} ${m.modelKey}: workspace not stored: ${error.message}`);
     }
   }
+  if (isolatedDir) row.metadata.workdir_removed = removeFolder(callCwd);
+  appendJsonl(path.join(runDir, 'raw.jsonl'), row);
+  for (const event of result.events || []) {
+    // Events keep what the call did, not how this machine is set up (lab/lib/redact.mjs).
+    appendJsonl(path.join(runDir, 'harness-events.ndjson'), { case_id: row.case_id, model_key: row.model_key, repeat, event: redactEvent(event) });
+  }
+  session.done.add(rowKey(row.case_id, row.model_key, repeat));
+  if (row.error) session.failures += 1;
+  heartbeat(session);
+  if (modelChecked === 'mismatch') log(`  warning: ${adapter.name} reports model "${result.model_reported}", not "${m.harnessModel}"; the row is marked model_check mismatch`);
+  if (isolatedDir && !row.metadata.workdir_removed) log(`  warning: could not delete the call folder ${callCwd}; a process the harness started may still hold it`);
+  if (halt) {
+    log(`  ${testCase.case_id} r${repeat} ${m.modelKey}: ${row.error.message}`);
+    session.halted = 'left_workdir';
+    return true;
+  }
+  const shown = row.error ? `ERROR ${row.error.type}: ${row.error.message.split('\n')[0].slice(0, 120)}` : JSON.stringify(String(row.response.text).slice(0, 60));
+  log(`  ${testCase.case_id} r${repeat} ${m.modelKey}: ${shown} · ${latency ?? '?'} ms · ${usage.input_tokens ?? '?'} in / ${usage.output_tokens ?? '?'} out`);
+  return false;
+}
 
+/** Finish one run: status, harness version at the end, scores. */
+async function closeRun(root, plan, session, { log, aborted, halted }) {
+  const { manifest, runDir, adapter } = session;
   manifest.finished_at = isoNow();
-  if (plan.workdirMode !== 'repo') manifest.harness.settings.workdir_git_fence = fenced;
-  manifest.status = aborted || (attempts > 0 && failures === attempts) ? 'failed' : 'completed';
-  if (aborted) manifest.notes += ' Interrupted before every row was written.';
+  if (plan.workdirMode !== 'repo') manifest.harness.settings.workdir_git_fence = session.fenced;
+  // A CLI that updates itself during a long run changes the harness under the label.
+  const end = await adapter.detect().catch(() => ({ version: null }));
+  if (end.version && String(end.version) !== manifest.harness.version) {
+    manifest.harness.settings.version_end = String(end.version);
+    manifest.notes += ` The harness changed from ${manifest.harness.version} to ${end.version} during the run.`;
+    log(`  warning: ${adapter.name} changed from ${manifest.harness.version} to ${end.version} during the run`);
+  }
+  const stopped = aborted || Boolean(halted);
+  manifest.status = stopped || (session.attempts > 0 && session.failures === session.attempts) ? 'failed' : 'completed';
+  const runner = manifest.runner || {};
+  manifest.runner = { pid: runner.pid ?? process.pid, heartbeat_at: isoNow(), ...(runner.resumes ? { resumes: runner.resumes } : {}), ...(aborted && !halted ? { interrupted: true } : {}) };
+  if (aborted && !halted) manifest.notes += ` Interrupted before every row was written. Continue it with: node lab run --resume ${session.runId}`;
   if (halted) {
-    manifest.harness.settings.halted = 'left_workdir';
-    manifest.notes += ' Stopped: a file of the lab repository changed during an agent call. Not scored; node lab score skips it unless --force.';
+    manifest.harness.settings.halted = halted;
+    manifest.notes += halted === 'left_workdir'
+      ? ' Stopped: a file of the lab repository changed during an agent call. Not scored; node lab score skips it unless --force.'
+      : ' Stopped: another run of this experiment halted when a file of the lab repository changed during an agent call. Not scored; node lab score skips it unless --force.';
   }
   writeJson(path.join(runDir, 'run.json'), manifest);
   // The changed files may include the hidden checks, so a halted run is not scored.
   const written = halted ? [] : scoreRun(root, runDir, { log });
+  log(`\n${session.runId}`);
   for (const item of written) log(`  scored ${path.basename(item.file)}: ${item.passed}/${item.count} passed`);
-  log(`  ${manifest.status}: ${attempts} attempt(s), ${failures} error(s)`);
-  return { runId, runDir, status: manifest.status, attempts, failures, halted };
+  log(`  ${manifest.status}: ${session.attempts} attempt(s), ${session.failures} error(s)`);
+  return { runId: session.runId, runDir, status: manifest.status, attempts: session.attempts, failures: session.failures, halted: Boolean(halted) };
+}
+
+/**
+ * Every harness runs in one loop: repeat, then case, then harness, then model. A
+ * slow hour, a usage limit or a CLI update then hits all harnesses alike, not
+ * only the one whose turn it was. Each harness still writes its own run.
+ */
+async function execute(root, plan, sessions, { log, signal }) {
+  let aborted = false;
+  let haltedBy = null;
+  outer: for (let repeat = 0; repeat < plan.repeats; repeat += 1) {
+    for (const testCase of plan.cases) {
+      for (const session of sessions) {
+        for (const m of session.models) {
+          if (session.done.has(rowKey(testCase.case_id, m.modelKey, repeat))) continue;
+          if (signal?.aborted) {
+            aborted = true;
+            break outer;
+          }
+          if (await callOne(root, plan, session, testCase, m, repeat, { log })) {
+            haltedBy = session;
+            break outer;
+          }
+        }
+      }
+    }
+  }
+  const results = [];
+  for (const session of sessions) {
+    const halted = haltedBy ? (session === haltedBy ? 'left_workdir' : 'experiment_halted') : null;
+    results.push(await closeRun(root, plan, session, { log, aborted: aborted || Boolean(haltedBy), halted }));
+  }
+  return results;
+}
+
+function withSigint(log, work) {
+  const controller = new AbortController();
+  const onSignal = () => {
+    log('\nStopping after the current call. The run is kept and marked failed; continue it later with --resume.');
+    controller.abort();
+  };
+  process.once('SIGINT', onSignal);
+  return work(controller.signal).finally(() => process.removeListener('SIGINT', onSignal));
 }
 
 export async function runCommand(root, file, options = {}) {
   const log = options.log || console.log;
+  if (options.resume) return resumeCommand(root, options.resume, { log, force: options.force });
   const plan = planExperiment(root, file, options);
   const totalCalls = [...plan.groups.values()].reduce((sum, models) => sum + models.length, 0) * plan.cases.length * plan.repeats;
   log(`Experiment ${plan.experiment.id}: suite ${plan.suite.id} ${plan.suite.version}, prompt ${plan.prompt.id} v${plan.prompt.version}, ${totalCalls} call(s) across ${plan.groups.size} harness(es)`);
@@ -394,31 +516,60 @@ export async function runCommand(root, file, options = {}) {
       const flags = plan.userConfig === 'isolated' ? adapter.isolation?.args || [] : [];
       for (const key of models) {
         const m = modelPlan(plan, adapter, key);
-        log(`  ${harness}: ${key} → model "${m.harnessModel}", effort ${m.effort ?? 'default'}, user setup ${flags.length ? `skipped (${flags.join(' ')})` : 'loaded'}${plan.access === 'edit' ? `, access edit (${(adapter.edit?.args || []).join(' ') || 'no flags'})` : ''}${m.notApplied.length ? `, not forwarded: ${m.notApplied.join(', ')}` : ''}`);
+        log(`  ${harness}: ${key} → model "${m.harnessModel}", effort ${m.effort ?? 'default'}, user setup ${flags.length ? `skipped (${flags.join(' ')})` : 'loaded'}${plan.access === 'edit' ? `, access edit (${(adapter.edit?.args || []).join(' ') || 'no flags'})` : ''}${m.notApplied.length ? `, not forwarded: ${m.notApplied.join(', ')}` : ''}${plan.registry[key]?.pinned === false ? ', alias (not a pinned snapshot)' : ''}`);
       }
     }
     log('Dry run: nothing was called or written.');
     return [];
   }
-  const controller = new AbortController();
-  const onSignal = () => {
-    log('\nStopping after the current call. The run is kept and marked failed.');
-    controller.abort();
-  };
-  process.once('SIGINT', onSignal);
   const results = [];
-  try {
-    for (const [harness, models] of plan.groups) {
-      if (controller.signal.aborted || results.some((item) => item.halted)) break;
-      try {
-        results.push(await runHarness(root, plan, harness, models, { log, signal: controller.signal }));
-      } catch (error) {
-        log(`\n${harness}: skipped. ${error.message}`);
-        results.push({ harness, status: 'skipped', error: error.message });
-      }
+  const sessions = [];
+  for (const [harness, models] of plan.groups) {
+    try {
+      sessions.push(await openRun(root, plan, harness, models, { log }));
+    } catch (error) {
+      log(`\n${harness}: skipped. ${error.message}`);
+      results.push({ harness, status: 'skipped', error: error.message });
     }
-  } finally {
-    process.removeListener('SIGINT', onSignal);
   }
-  return results;
+  if (!sessions.length) return results;
+  return withSigint(log, async (signal) => [...results, ...(await execute(root, plan, sessions, { log, signal }))]);
+}
+
+/**
+ * Continue a run that stopped before its last row: it crashed (stale) or the user
+ * stopped it. The rows it has stay as they are; only the missing ones run, with the
+ * same suite, prompt, models and harness version, or the resume is refused.
+ */
+export async function resumeCommand(root, ref, { log = console.log, force = false } = {}) {
+  const runDir = resolveRunDir(root, ref);
+  const manifest = readJson(path.join(runDir, 'run.json'));
+  const liveness = runLiveness(manifest);
+  if (manifest.harness?.settings?.halted) throw new Error(`${manifest.run_id} was halted by the workdir guard; it cannot be resumed. Start a new run.`);
+  if (manifest.status === 'completed') throw new Error(`${manifest.run_id} is completed; nothing to resume.`);
+  if (liveness === 'live') throw new Error(`${manifest.run_id} is still running (process ${manifest.runner.pid}).`);
+  if (manifest.status === 'running' && liveness === 'unknown' && !force) {
+    throw new Error(`${manifest.run_id} says running but has no heartbeat (written before resume existed). If no runner is working on it, pass --force.`);
+  }
+  if (manifest.status === 'failed' && !manifest.runner?.interrupted && !/Interrupted before every row/.test(manifest.notes || '') && !force) {
+    throw new Error(`${manifest.run_id} finished with every call failing; it was not interrupted. Start a new run, or pass --force.`);
+  }
+  const plan = planFromExperiment(root, manifest.experiment, {
+    harness: manifest.harness.name,
+    models: manifest.models.map((item) => item.model_key),
+    sha: /sha256 ([a-f0-9]{64})/.exec(manifest.notes || '')?.[1] ?? null,
+  });
+  const differs = [];
+  if (plan.suite.sha256 !== manifest.suite.sha256) differs.push(`suite ${plan.suite.id} changed (run ${manifest.suite.version}, now ${plan.suite.version})`);
+  if (plan.prompt.sha256 !== manifest.prompt.sha256) differs.push(`prompt ${plan.prompt.id} changed`);
+  if (plan.repeats !== manifest.repeats) differs.push(`repeats ${plan.repeats} differ from the run's ${manifest.repeats}`);
+  const adapter = getAdapter(manifest.harness.name, root);
+  for (const item of manifest.models) {
+    const now = modelPlan(plan, adapter, item.model_key);
+    if (now.harnessModel !== item.model || (now.effort ?? null) !== (item.reasoning_effort ?? null)) differs.push(`${item.model_key} is now "${now.harnessModel}" at effort ${now.effort ?? 'default'}`);
+  }
+  if (differs.length) throw new Error(`Cannot resume ${manifest.run_id}; its inputs changed:\n  ${differs.join('\n  ')}\nStart a new run.`);
+  const { rows } = readJsonl(path.join(runDir, 'raw.jsonl'));
+  const session = await openRun(root, plan, manifest.harness.name, manifest.models.map((item) => item.model_key), { log, resume: { manifest, runDir, rows } });
+  return withSigint(log, (signal) => execute(root, plan, [session], { log, signal }));
 }

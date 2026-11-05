@@ -230,8 +230,12 @@ test('an agent that edits the lab stops the whole experiment, and its run is not
     ['id: two', 'suite: agentic', 'prompt: agent-task', 'repeats: 2', 'cases: [agentic-slugify-bug]', 'workdir: isolated', 'access: edit', 'targets:', '  - model: claude-haiku', '    harness: fake-escaper', '  - model: claude-haiku', '    harness: fake-next', 'evaluators:', '  - id: workspace-tests', '    version: "1"', '    dimension: quality', ''].join('\n'),
   );
   const results = await runCommand(root, file, { log: () => {} });
-  assert.equal(results.length, 1, 'the next harness never started');
-  assert.equal(laterCalls, 0);
+  // Both runs open before the first call (harnesses interleave); the second never gets a call.
+  assert.equal(results.length, 2);
+  assert.equal(laterCalls, 0, 'the next harness never made a call');
+  assert.equal(readJsonl(path.join(results[1].runDir, 'raw.jsonl')).rows.length, 0);
+  assert.equal(readJson(path.join(results[1].runDir, 'run.json')).harness.settings.halted, 'experiment_halted');
+  assert.equal(results[1].status, 'failed');
   const rows = readJsonl(path.join(results[0].runDir, 'raw.jsonl')).rows;
   assert.equal(rows.length, 1, 'the second repeat never ran');
   assert.equal(rows[0].error.type, 'left_workdir');
