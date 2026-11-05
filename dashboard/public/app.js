@@ -15,52 +15,22 @@ import { renderInspector, openInspector, closeInspector, inspectorJson, tabKeys 
 import { openReview, closeReview, setReview, saveReview, wireReview } from './js/review.js';
 import { copyMarkdown, exportText, shareCard } from './js/exporter.js';
 import { wireSelects } from './js/select.js';
+import { mountShell, watchJobs } from './shell.js';
 
 const $ = (id) => document.getElementById(id);
 
-/* ---------- Theme switch (house style) ---------- */
-function initTheme() {
-  const root = document.documentElement;
-  const btn = $('theme-toggle');
-  const dark = window.matchMedia('(prefers-color-scheme: dark)');
-  const shown = () => root.getAttribute('data-theme') || (dark.matches ? 'dark' : 'light');
-  const paint = () => {
-    const next = shown() === 'dark' ? 'light' : 'dark';
-    btn.dataset.next = next;
-    btn.setAttribute('aria-label', `Switch to ${next} mode`);
-    btn.title = `Switch to ${next} mode`;
-  };
-  try {
-    const saved = localStorage.getItem('theme');
-    if (saved === 'light' || saved === 'dark') root.setAttribute('data-theme', saved);
-    // Inside the control page's Compare frame, start dark like the page around it.
-    else if (window.self !== window.top) root.setAttribute('data-theme', 'dark');
-  } catch (e) { /* storage refused: the system setting applies */ }
-  btn.addEventListener('click', () => {
-    const next = shown() === 'dark' ? 'light' : 'dark';
-    root.setAttribute('data-theme', next);
-    try { localStorage.setItem('theme', next); } catch (e) { /* not saved */ }
-    paint();
-    if (S.data) renderCharts();
+/* ---------- Shell: the shared rail, mode switch and job watch ---------- */
+function initShell() {
+  mountShell({ current: 'compare', folded: true });
+  // Charts draw with the theme's colours; redraw them when the mode changes.
+  window.addEventListener('lab:mode', () => { if (S.data) renderCharts(); });
+  // A run or a score started on the control page adds results: read them again.
+  window.addEventListener('lab:job-finished', (event) => {
+    const job = event.detail;
+    if (job.command !== 'run' && job.command !== 'score') return;
+    loadState();
   });
-  if (dark.addEventListener) dark.addEventListener('change', () => { if (!root.getAttribute('data-theme')) { paint(); if (S.data) renderCharts(); } });
-  paint();
-}
-
-function initNav() {
-  // A wrapped app bar is taller than 56px. Keep sticky rails, drawers and
-  // answer-grid height in sync rather than letting them slide under its tabs.
-  const bar = document.querySelector('.navbar');
-  const syncHeight = () => document.documentElement.style.setProperty('--bar-h', `${Math.ceil(bar.getBoundingClientRect().height)}px`);
-  syncHeight();
-  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(syncHeight).observe(bar);
-  else window.addEventListener('resize', syncHeight);
-  document.querySelectorAll('.navbar nav a').forEach((a) => {
-    a.addEventListener('click', (event) => {
-      event.preventDefault();
-      setView(a.dataset.view);
-    });
-  });
+  watchJobs();
 }
 
 /* ---------- Views ---------- */
@@ -82,7 +52,15 @@ function setView(view, { focusTab = false } = {}) {
   VIEWS.forEach((v) => {
     $('view-' + v).hidden = v !== next;
   });
-  document.querySelectorAll('.navbar nav a').forEach((a) => a.setAttribute('aria-current', String(a.dataset.view === next)));
+  document.querySelectorAll('#view-tabs button').forEach((b, i) => {
+    const on = b.dataset.view === next;
+    b.setAttribute('aria-pressed', String(on));
+    if (!on) return;
+    $('view-tabs').style.setProperty('--i', i);
+    // On a narrow screen the tabs scroll sideways: keep the pressed tab in sight.
+    const sc = b.closest('.views-scroll');
+    if (sc && sc.scrollWidth > sc.clientWidth) sc.scrollLeft = b.offsetLeft - (sc.clientWidth - b.offsetWidth) / 2;
+  });
   if (changed && S.insp) closeInspector({ instant: true });
   if (S.data) renderView(next);
   writeHash();
@@ -141,7 +119,7 @@ function renderCtxBar() {
       const suggestion = board ? board.title : ctx() ? `${ctx().suite.id} · ${S.sel.length} configurations` : '';
       extra.innerHTML = String(html`<form class="board-form" data-form="board-save">
         <input id="board-title" type="text" maxlength="80" required aria-label="Board title" placeholder="Board title" value="${suggestion}" autocomplete="off">
-        <button type="submit" class="btn" data-fk="board:save">Save</button>
+        <button type="submit" class="btn primary small" data-fk="board:save">Save</button>
         <button type="button" class="ctl" data-act="board-cancel" data-fk="board:cancel">Cancel</button>
       </form>`);
     } else if (S.boardConfirm && board) {
@@ -556,8 +534,7 @@ function initEvents() {
 }
 
 /* ---------- Boot ---------- */
-initTheme();
-initNav();
+initShell();
 initEvents();
 initDrag();
 wireReview();

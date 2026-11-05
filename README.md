@@ -23,7 +23,8 @@ node lab dashboard                                # http://127.0.0.1:4317
 
 - **Run**: pick an experiment, then a harness, models, cases and repeats. Preview shows the plan and calls nothing. Start asks once (`Start N calls?`), then runs and shows the live output. Stop lets the current call finish and keeps the run.
 - **Runs**: every stored run. Score again makes no model calls.
-- **Compare**: the comparison views (also at `/compare.html`).
+- **Compare**: the comparison views, on their own page at `/compare.html`.
+- **Appearance**: theme colour, light or dark, and motion, for both pages.
 - **Harnesses**, **Checks**, **Activity**: `doctor`; `validate`, `report`, `runs`; the output of every job.
 
 The page runs the same `node lab` commands you would type, one at a time, on this machine only. It accepts no other command.

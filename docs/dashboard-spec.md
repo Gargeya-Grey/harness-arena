@@ -30,7 +30,7 @@
 | Information architecture | Single-page lab plus saved Boards drawer |
 | Charts | Hand-drawn SVG: quality against cost, latency, tokens, reliability, errors; plus an answers grid and per-observation inspector |
 | Export | Per-widget exports plus composed share cards and Markdown captions |
-| Visual direction | Fonts and colour tokens from the owner's house style; layout and components are the app's own. Light and dark themes |
+| Visual direction | One design language for both pages: the owner's Odicto design system, with a light mode derived from it. Light and dark themes |
 | Stack | Node 22 built-ins only: `node:http`, `node:fs`, `node:test`; browser ES modules; hand-written SVG |
 
 ## 3. Domain model
@@ -290,28 +290,26 @@ Bind to `127.0.0.1` only. Reject requests with a non-local `Host` header, and an
 ### 6.1 Shell
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│ app bar: brand · context select · Overview Answers Charts Runs Review│
-│          · refresh · export · theme                                  │
-├──────────────┬──────────────────────────────────────┬────────────────┤
-│ rail         │ page head: comparison badge · counts │ inspector      │
-│ lineup A–H   │ view                                 │ (docked ≥1200px│
-│ config list  │                                      │  else drawer)  │
-│ boards       │                                      │                │
-└──────────────┴──────────────────────────────────────┴────────────────┘
+┌──────┬──────────────┬──────────────────────────────────────┬────────────────┐
+│ app  │ lineup       │ page head: Compare · counts ·        │ inspector      │
+│ rail │ A–H          │   context select · refresh · export  │ (docked ≥1200px│
+│ 64px │ config list  │ view tabs · comparison badge         │  else drawer)  │
+│      │ boards       │ view                                 │                │
+└──────┴──────────────┴──────────────────────────────────────┴────────────────┘
 ```
 
-- ≥1024px: the rail is a sticky 288px column.
-- <1024px: the rail collapses behind a "Lineup · N of 8 selected" toggle above the view.
-- ≥1200px: the inspector docks at 520px. While it is open the rail is hidden, so the view keeps its width. Below 1200px it is a drawer.
-- <1120px: view tabs take their own row; below 900px the context picker also takes its own row. The action group never shrinks over the tabs.
+- The app rail is the shell shared with the control page (§13.3), folded to 64px icons on this page.
+- ≥1024px: the lineup is a sticky 296px column.
+- <1024px: the lineup collapses behind a "Lineup · N of 8 selected" toggle above the view.
+- ≥1200px: the inspector docks at 520px. While it is open the lineup is hidden, so the view keeps its width. Below 1200px it is a drawer.
+- The view tabs, the context picker and the action group wrap onto their own rows as the workspace narrows. On a phone the view tabs scroll sideways and keep the pressed tab in sight.
 - The page never scrolls sideways. Tables respond to the workspace width (including when the inspector is docked), not just the viewport. Below 920px the leaderboard and answers become labeled record blocks; the leaderboard preserves every metric. Wider answers grids scroll inside their own frame with a sticky case column and a visible scroll hint for more than four configurations.
 
-### 6.2 App bar and page head
+### 6.2 Page head
 
 - Context select: each option has two lines. The first names the suite and prompt; the second holds cases, repeats, evaluators, "subset", runs and the latest date, so two contexts never read the same. If two still match, the case ids are added. Changing the context keeps lineup entries that exist in the new context.
-- View tabs: Overview, Answers, Charts, Runs, Review. The view, context and lineup live in the URL hash, so every view is bookmarkable.
-- Refresh reads the results folder again. Export opens the export menu. The theme button switches light and dark.
+- View tabs: Overview, Answers, Charts, Runs, Review, as one segmented control. The view, context and lineup live in the URL hash, so every view is bookmarkable.
+- Refresh reads the results folder again. Export opens the export menu. Light and dark are switched from the app rail.
 - The page head shows the comparison badge (Controlled, Replicate, Single or Descriptive, with what varies) and "N runs · N configurations · latest date".
 
 ### 6.3 Configuration list
@@ -429,25 +427,24 @@ Every surface ships with:
 
 ## 7. Visual system
 
-Only two things come from the owner's house style (`~/.claude/design/DESIGN.md`): the fonts and the colour tokens. Layout, components and charts are the app's own design and do not follow the rest of DESIGN.md.
+Both pages use one visual system: the owner's Odicto design system, with a light mode derived from it. `dashboard/public/theme.css` holds the tokens and the shared components (rail, run card, nav, buttons, wells, segmented control, status marks, toasts). `dashboard/public/shell.js` draws the app rail on both pages. Page rules live in `control.css` (control page) and `styles.css` (Compare).
 
 ### 7.1 Themes and tokens
 
-Light and dark, one set of token names. The theme follows `prefers-color-scheme` until the user picks one with the theme button; `[data-theme]` on the root then wins.
+- Colours are OKLCH, built from the theme hue `--h` and chroma scale `--k` (Appearance: Forest, Ocean, Plum, Ember, Graphite). Lightness is fixed per mode.
+- Dark is Odicto as written. Light keeps the same token names: canvas 0.972, near-white glass, text 0.235, accent 0.48. The light accent was chosen so accent text passes 4.5:1 on every surface for all five theme colours.
+- Mode: `theme` in `localStorage` (`light` or `dark`); no value follows `prefers-color-scheme`. `[data-theme]` on the root wins. `boot.js` applies it before the first paint, and both pages listen for the change.
+- Compare's older token names are aliases of the shared tokens, set at the top of `styles.css`:
 
-| Token | Light | Dark | Use |
-|---|---|---|---|
-| `--paper` | `#F6F7F4` | `#0E1412` | Rail, table heads |
-| `--paper-raised` | `#FFFFFF` | `#151D1A` | Page and cards |
-| `--sage` | `#E2EDE6` | `#17261F` | Letter badges, hover |
-| `--ink` | `#14201C` | `#ECEFEA` | Text |
-| `--ink-2` | `#53615B` | `#A3B0AA` | Secondary text |
-| `--rule` | `#DDE2DC` | `#26302C` | Borders and grid lines |
-| `--forest` | `#1E5B49` | `#ECEFEA` | Primary action, active tab |
-| `--leaf` / `--leaf-ink` | `#10B981` / `#0B7A55` | `#10B981` / `#3DDC9F` | Best values, pass marks |
-| `--clay` | `#B4472F` | `#E5866B` | Errors and failures |
-
-App-only tokens built from these: `--hover`, `--best-bg`, `--shadow`, `--backdrop`.
+| Alias | Shared token | Use |
+|---|---|---|
+| `--paper` | `--well-solid` | Table heads, wells |
+| `--paper-raised` | `--panel` | Opaque panels |
+| `--sage` | `--accent-soft` | Letter badges, hover |
+| `--ink` / `--ink-2` | `--text` / `--muted` | Text |
+| `--rule` | `--line` | Hairlines and grid lines |
+| `--forest`, `--leaf`, `--leaf-ink` | `--accent` | Primary action, best values, pass marks |
+| `--clay` | `--danger` | Errors and failures |
 
 ### 7.2 Identity in charts
 
@@ -456,14 +453,14 @@ Configurations are told apart by their letter, not by colour. Charts draw in ink
 ### 7.3 Typography
 
 - UI and body: Instrument Sans, 14px base. Numbers, ids, versions and response text: IBM Plex Mono. Both are served locally from `public/fonts/`.
-- KPI values: Plex Mono 26px. Section titles 15-16px, weight 600. Micro labels 11-12px.
+- KPI values: Plex Mono 26px. Section titles 15-16px. No text under 12px.
 - Tabular figures for every metric.
 
 ### 7.4 Space, shape, motion
 
 - Controls 30-32px high; every control and chip is at least 44px under `(pointer: coarse)`.
-- Dropdowns: every `<select>` gets a themed button and listbox (`js/select.js`), because the operating system draws a native select's open list outside the theme. The native select stays in the DOM as the source of truth for value and `change` events. The list opens below the button, or above it when less than 200px is free below and more is free above. Keyboard: arrows, Home, End, Page Up and Down, Enter or Space to choose, Escape to close, type to jump. A keyboard open is instant; a pointer open eases in over 150ms. Cards and tables have a 14px radius and a 1px rule border.
-- Motion: drawer and dialog enter with a strong ease-out under 300ms; buttons scale to 0.97 on press. `prefers-reduced-motion` removes all of it.
+- Dropdowns: every `<select>` gets a themed button and listbox (`js/select.js`), because the operating system draws a native select's open list outside the theme. The native select stays in the DOM as the source of truth for value and `change` events. The list opens below the button, or above it when less than 200px is free below and more is free above. Keyboard: arrows, Home, End, Page Up and Down, Enter or Space to choose, Escape to close, type to jump. A keyboard open is instant; a pointer open eases in over 150ms. Panels (tiles, tables, charts) are glass: radius 18, a top rim and a soft lift shadow. Fields and selects are wells (inset). Menus, the inspector and the dialog float above the glass.
+- Motion: one easing curve and three durations (120, 180, 320ms). The current item carries the glowing 2px stem: the nav pill and the segmented knob slide to it. The Motion setting (Full, Reduced, Off) and `prefers-reduced-motion` reduce or remove it.
 
 ### 7.5 Share cards
 
@@ -581,7 +578,7 @@ The UI shell may start after Phase 0. Phase 1 must land before chart polish, so 
 
 ## 13. Control page
 
-`/` is the control page: the owner runs the lab from it. `/compare.html` is the comparison workspace of sections 6 and 7; the control page shows it inside its Compare page.
+`/` is the control page: the owner runs the lab from it. `/compare.html` is the comparison workspace of sections 6 and 7. Both pages share the app rail, so Compare is one nav item among the others.
 
 ### 13.1 Pages
 
@@ -590,11 +587,11 @@ The UI shell may start after Phase 0. Phase 1 must land before chart polish, so 
 | Home | One meter row per page (experiments, runs, harnesses, checks, activity), and the three steps of a first test |
 | Run | Experiment, harness, models, cases and repeats; the call count; Preview (`--dry-run`) and Start; the live output |
 | Runs | Every stored run; Score again per run (`--force`, with a confirm step, for a run the guard stopped); Score all again |
-| Compare | `/compare.html` in a frame; it reloads after a run or score job |
+| Compare | `/compare.html`, its own page with the rail folded; it reads the data again when a run or score job finishes |
 | Harnesses | `node lab doctor`, parsed into one row per harness |
 | Checks | `node lab validate`, `report`, `runs` |
 | Activity | Every job since the server started, with its output |
-| Appearance | Theme colour (Forest, Ocean, Plum, Ember, Graphite) and motion (Full, Reduced, Off), saved in `localStorage` |
+| Appearance | Theme colour (Forest, Ocean, Plum, Ember, Graphite), mode (System, Light, Dark) and motion (Full, Reduced, Off), saved in `localStorage` for both pages |
 
 Start asks once: the first press shows `Start N calls?` for 5 seconds, and only a second press starts the run. A live run costs quota; a preview costs nothing.
 
@@ -609,4 +606,10 @@ Start asks once: the first press shows `Start N calls?` for 5 seconds, and only 
 
 ### 13.3 Visual system
 
-The control page follows the owner's Odicto design system (dark only): Instrument Sans; OKLCH tokens from `--h`/`--k`; a 248px rail with the run card (five pixel bars: idle, running, stopping, server stopped) and one sliding nav pill with a glowing stem; an 800px main column; glass groups (radius 18, top rim, grain) with hairline rows; wells for inputs; a custom select with a fixed menu; status marks by shape (dot, hollow ring, diamond); toasts that last 7 seconds; an offline banner after two failed polls. The comparison page keeps its own layout, and its dark colours match the Forest theme.
+Both pages follow the owner's Odicto design system (§7), in light and dark:
+
+- App rail (248px; 64px icons on Compare and below 900px): the brand, the run card (five pixel bars: idle, running, stopping, server stopped), one sliding nav pill with a glowing stem, and the light/dark switch at the foot.
+- Main column up to 1120px. From 1180px, Run puts the plan in a sticky side column; Home, Checks and Activity use two columns.
+- Glass groups (radius 18, top rim, grain in dark) with hairline rows; wells for inputs; a custom select with a fixed menu; one accent.
+- Status marks by shape (dot, hollow ring, diamond), so colour is never the only signal.
+- Toasts that last 7 seconds; an offline banner after two failed polls.

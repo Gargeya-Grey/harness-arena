@@ -37,10 +37,10 @@ export function renderReviewView() {
     ? html`<div class="rev-actions">
         <div class="field"><label class="field-label" for="rev-case">Case to review</label>
           <select id="rev-case">${cases.map((id) => html`<option value="${id}"${id === S.revCase ? raw(' selected') : ''}>${id}</option>`)}</select></div>
-        <button type="button" class="btn" data-act="review-start" data-fk="review:start">Start blind review</button>
+        <button type="button" class="btn primary" data-act="review-start" data-fk="review:start">Start blind review</button>
       </div>
       <p class="label">The review shows two answers with the configuration names hidden. Names appear after you save.</p>`
-    : html`<div class="empty">No selected configuration has an answer to review. Select configurations in the rail.</div>`;
+    : html`<div class="empty">No selected configuration has an answer to review. Select configurations in the lineup.</div>`;
   const pairText = (a) => {
     if (!a.pair_choice) return html`<span class="muted">none</span>`;
     const first = label(a.config_id);

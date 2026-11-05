@@ -72,7 +72,7 @@ export function renderReview() {
       <div class="rate-group"><label class="sec-title" for="review-notes">Notes</label><textarea id="review-notes" rows="3" ${saved ? raw('disabled') : ''}>${r.notes}</textarea></div>
     </div>
     <div class="dlg-foot">
-      ${saved ? html`<button type="button" class="btn" data-act="review-close" data-fk="review:done">Done</button>` : html`<button type="button" class="btn" data-act="review-save" data-fk="review:save"${r.saving ? raw(' disabled') : ''}>Save rating</button><button type="button" class="ctl" data-act="review-close" data-fk="review:cancel">Cancel</button>`}
+      ${saved ? html`<button type="button" class="btn primary" data-act="review-close" data-fk="review:done">Done</button>` : html`<button type="button" class="btn primary" data-act="review-save" data-fk="review:save"${r.saving ? raw(' disabled') : ''}>Save rating</button><button type="button" class="ctl" data-act="review-close" data-fk="review:cancel">Cancel</button>`}
       ${status}
     </div>`,
   );

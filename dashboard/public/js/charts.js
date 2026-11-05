@@ -496,9 +496,30 @@ export function watchChartWidth() {
 }
 
 // ---- Export -------------------------------------------------------------------------------------
+// Tokens are oklch() with calc() and color-mix(); many SVG tools cannot read those.
+// A probe element resolves the token, and a one-pixel canvas turns it into rgb().
+function plainColour(value) {
+  try {
+    const probe = document.createElement('span');
+    probe.style.color = value;
+    if (!probe.style.color) return value;
+    document.body.append(probe);
+    const computed = getComputedStyle(probe).color;
+    probe.remove();
+    const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.fillStyle = computed;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+    return a === 255 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${+(a / 255).toFixed(3)})`;
+  } catch {
+    return value;
+  }
+}
+
 function exportStyle() {
   const root = getComputedStyle(document.documentElement);
-  const resolve = (s) => s.replace(/var\((--[a-z0-9-]+)\)/g, (_, name) => root.getPropertyValue(name).trim() || '#000');
+  const resolve = (s) => s.replace(/var\((--[a-z0-9-]+)\)/g, (_, name) => plainColour(root.getPropertyValue(name).trim() || '#000'));
   const rules = [];
   for (const sheet of document.styleSheets) {
     let list;
@@ -519,7 +540,7 @@ export function chartSvgString(id) {
   if (!svg) return null;
   const clone = svg.cloneNode(true);
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-  const bg = getComputedStyle(document.documentElement).getPropertyValue('--paper-raised').trim() || '#fff';
+  const bg = plainColour(getComputedStyle(document.documentElement).getPropertyValue('--paper-raised').trim() || '#fff');
   const w = clone.getAttribute('width');
   const h = clone.getAttribute('height');
   clone.insertAdjacentHTML('afterbegin', `<style>${exportStyle()}</style><rect width="${w}" height="${h}" fill="${bg}"/>`);

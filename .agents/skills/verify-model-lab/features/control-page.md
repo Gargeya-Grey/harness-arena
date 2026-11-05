@@ -12,7 +12,8 @@
 - `harnesses` - `#doctor-btn` runs `doctor`; rows parsed from its output.
 - `checks` - `validate`, `report`, `runs` buttons with result tags.
 - `activity` - `#jobs-list`; selecting a job shows its output.
-- `appearance` - swatches (`#swatches`, radio group, arrow keys) and `#motion-seg`; saved as `lab-theme`, `lab-motion` in `localStorage`.
+- `appearance` - swatches (`#swatches`, radio group, arrow keys), `#mode-seg` (System, Light, Dark) and `#motion-seg`; saved as `lab-theme`, `theme`, `lab-motion` in `localStorage`, shared with Compare.
+- `shell` - the app rail (`shell.js`) on both pages: run card, nav, and the light/dark switch `#theme-toggle` at its foot. The Compare nav item opens `/compare.html`; an old `/#compare` link redirects there.
 - `offline` - two failed polls show `#offline`, and the run card says "Server stopped".
 
 ## How to get to it (user POV)
@@ -28,8 +29,9 @@ Preconditions: the Launch steps in SKILL.md (disposable data root, port 4391). N
 - **Stop.** With `slow-test`, Start twice, then Stop once: the tag reads `Stopping after the current call`; the job ends `stopped`, and the newest `run.json` has `status: failed`.
 - **Harnesses / Checks.** Check harnesses lists one row per harness; Validate ends with `All inputs and records are valid.`
 - **Runs.** `#score-all` opens Activity with a `score --all` job that passes. Use `agent-browser click "#score-all"`: `find role button --name` can pick another button.
-- **Appearance.** Choose Ember and Reduced, reload: both hold, and the accent is orange.
+- **Appearance.** Choose Ember, Light and Reduced, reload: all three hold, and the accent is orange. Open Compare: it is light and orange too. Select System: the page follows the computer again.
 - **Narrow.** At 600px the rail is 64px with icons only, and the page does not scroll sideways.
+- **Layout check.** Run the owner's layout checker (house style) on each view in light and dark through a same-origin proxy. Known false positives: `.sr` labels "past their box" and the Run form groups as "short lists".
 
 ## Known gaps
 

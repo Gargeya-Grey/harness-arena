@@ -1,9 +1,10 @@
 // Model Lab control page: starts `node lab` jobs through /api/jobs and shows their output.
 // No framework. Text from the server goes in with textContent or esc().
+import { mountShell, setCurrent, paintRunCard as shellRunCard, setNavDot, setOffline, setMode, readMode, icon } from './shell.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-const svg = (name, cls = 'i') => `<svg class="${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+const svg = icon;
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const ago = (iso) => {
   if (!iso) return '';
@@ -35,7 +36,6 @@ const S = {
   panels: { run: null, checks: null, activity: null, harnesses: null },
   view: 'home',
   fails: 0,
-  compareStale: true,
   sel: { exp: null, harness: '', models: new Set(), cases: new Set(), repeats: '' },
 };
 
@@ -53,44 +53,25 @@ function toast(text, tone = 'info') {
 }
 
 /* ---------- Navigation ---------- */
-const VIEWS = ['home', 'run', 'runs', 'compare', 'harnesses', 'checks', 'activity', 'appearance'];
-function moveNavPill(instant) {
-  const pill = document.querySelector('.nav-pill');
-  const active = document.querySelector('.nav-item[aria-current="true"]');
-  if (!pill || !active) return;
-  if (instant) pill.style.transition = 'none';
-  pill.style.height = `${active.offsetHeight}px`;
-  pill.style.width = `${active.offsetWidth}px`;
-  pill.style.transform = `translate(${active.offsetLeft}px, ${active.offsetTop}px)`;
-  if (instant) {
-    void pill.offsetWidth;
-    pill.style.transition = '';
-  }
-}
+// The rail links are hash links (`/#run`), so a click changes the hash and hashchange shows the view.
+const VIEWS = ['home', 'run', 'runs', 'harnesses', 'checks', 'activity', 'appearance'];
 function showView(name, { instant = false } = {}) {
+  if (name === 'compare') {
+    location.replace('/compare.html');
+    return;
+  }
   if (!VIEWS.includes(name)) name = 'home';
   S.view = name;
   for (const v of VIEWS) $(`view-${v}`).classList.toggle('active', v === name);
-  document.querySelectorAll('.nav-item').forEach((b) => b.setAttribute('aria-current', String(b.dataset.view === name)));
-  moveNavPill(instant);
+  setCurrent(name, { instant });
   if (location.hash.slice(1) !== name) history.replaceState(null, '', `#${name}`);
   window.scrollTo({ top: 0, behavior: 'auto' });
-  if (name === 'compare') {
-    const frame = $('compare-frame');
-    if (S.compareStale || !frame.src) {
-      frame.src = frame.dataset.src;
-      S.compareStale = false;
-    }
-  }
 }
 document.addEventListener('click', (e) => {
   const go = e.target.closest('[data-go]');
   if (go) showView(go.dataset.go);
-  const nav = e.target.closest('.nav-item');
-  if (nav) showView(nav.dataset.view);
 });
 window.addEventListener('hashchange', () => showView(location.hash.slice(1)));
-window.addEventListener('resize', () => moveNavPill(true));
 
 /* ---------- Custom select (real <select> stays for value and change events) ---------- */
 let openMenu = null;
@@ -282,7 +263,7 @@ function renderPanel(panel) {
     host.dataset.job = id;
     host.dataset.status = job.status;
     host.dataset.shown = '0';
-    if (!live && job.command === 'run' && !job.dry_run) host.querySelector('.job-foot').innerHTML = '<button type="button" class="btn secondary small" data-go="compare">Open Compare</button><button type="button" class="btn tertiary small" data-go="runs">See runs</button>';
+    if (!live && job.command === 'run' && !job.dry_run) host.querySelector('.job-foot').innerHTML = '<a class="btn secondary small" href="/compare.html">Open Compare</a><button type="button" class="btn tertiary small" data-go="runs">See runs</button>';
   }
   const log = host.querySelector('.log');
   const shown = Number(host.dataset.shown);
@@ -330,7 +311,7 @@ async function poll() {
     const before = new Map(S.jobs.map((j) => [j.id, j.status]));
     const list = await api('GET', '/api/jobs');
     S.fails = 0;
-    $('offline').hidden = true;
+    setOffline(false);
     S.jobs = list.jobs;
     S.running = list.running;
     const watched = new Set(Object.values(S.panels).filter(Boolean));
@@ -354,7 +335,7 @@ async function poll() {
   } catch {
     S.fails += 1;
     if (S.fails >= 2) {
-      $('offline').hidden = false;
+      setOffline(true);
       paintRunCard(true);
     }
   }
@@ -366,31 +347,14 @@ document.addEventListener('visibilitychange', () => !document.hidden && schedule
 function finished(job) {
   const word = { passed: 'finished', failed: 'failed', stopped: 'was stopped' }[job.status] || job.status;
   toast(`${job.label} ${word}.`, job.status === 'passed' ? 'ok' : job.status === 'failed' ? 'err' : 'warn');
-  if (job.command === 'run' || job.command === 'score') {
-    S.compareStale = true;
-    loadState();
-  }
+  if (job.command === 'run' || job.command === 'score') loadState();
   if (job.command === 'doctor') renderHarnesses();
   renderCheckTags();
 }
 
 /* ---------- Run card ---------- */
 function paintRunCard(offline = false) {
-  const card = $('run-card');
-  const set = (tone, title, sub) => {
-    card.dataset.tone = tone;
-    $('run-title').textContent = title;
-    $('run-sub').textContent = sub;
-  };
-  const job = S.jobs.find((j) => j.id === S.running);
-  if (offline) set('stopped', 'Server stopped', 'Run node lab dashboard');
-  else if (job?.status === 'stopping') set('starting', 'Stopping', 'After the current call');
-  else if (job) set('ready', job.dry_run ? 'Previewing' : 'Running', job.label);
-  else {
-    const last = S.jobs[0];
-    set('idle', 'Ready', last ? `Last: ${last.command} ${STATUS[last.status]?.[1].toLowerCase() || last.status}` : 'No job running');
-  }
-  document.querySelector('.nav-item[data-view="activity"] .nav-dot').className = `nav-dot${job ? ' busy' : ''}`;
+  shellRunCard({ jobs: S.jobs, running: S.running, offline });
 }
 
 /* ---------- Data ---------- */
@@ -442,10 +406,7 @@ function renderMeters() {
     ul.innerHTML = html;
     ul.dataset.html = html;
   }
-  for (const [view, , , , tone] of meters) {
-    const dot = document.querySelector(`.nav-item[data-view="${view}"] .nav-dot`);
-    if (dot && view !== 'activity') dot.className = `nav-dot${tone === 'warn' ? ' warn' : ''}`;
-  }
+  for (const [view, , , , tone] of meters) if (view !== 'activity') setNavDot(view, tone === 'warn' ? 'warn' : '');
   $('hero-title').textContent = running ? (running.dry_run ? 'Previewing a run' : 'A job is running') : 'Ready to run';
   $('hero-sub').textContent = `${plural(exps.length, 'experiment')} · ${plural(runs.length, 'stored run')}${S.catalog ? ` · ${plural(S.catalog.models.length, 'model')} in the registry` : ''}`;
 }
@@ -526,6 +487,12 @@ function countCalls() {
   const repeats = S.sel.repeats === '' ? e.repeats || 1 : Number(S.sel.repeats);
   const targets = chosenTargets().length;
   const calls = targets * cases * repeats;
+  const ok = repeatsOk() && targets > 0;
+  $('plan-n').textContent = ok ? String(calls) : '0';
+  $('plan-word').textContent = ok && calls === 1 ? 'call' : 'calls';
+  $('plan-break').innerHTML = [['Targets', targets], ['Cases', cases], ['Repeats', ok ? repeats : '–']]
+    .map(([k, v]) => `<dt>${k}</dt><dd class="num">${esc(v)}</dd>`).join('');
+  $('call-count').classList.toggle('bad', !ok);
   $('call-count').textContent = !repeatsOk()
     ? 'Repeats must be a whole number from 1 to 50.'
     : targets
@@ -707,7 +674,7 @@ function renderActivity() {
   const ul = $('jobs-list');
   $('jobs-note').textContent = S.jobs.length ? plural(S.jobs.length, 'job') : '';
   const html = S.jobs.length
-    ? S.jobs.map((j) => `<li><button type="button" class="meter" data-show-job="${esc(j.id)}"><span class="meter-val"><b>${esc(j.label)}</b><span>${esc(ago(j.started_at))}${j.dry_run ? ' · preview' : ''}</span></span>${statusTag(j)}${svg('chev')}</button></li>`).join('')
+    ? S.jobs.map((j) => `<li><button type="button" class="meter" data-show-job="${esc(j.id)}" aria-current="${j.id === S.panels.activity}"><span class="meter-val"><b>${esc(j.label)}</b><span>${esc(ago(j.started_at))}${j.dry_run ? ' · preview' : ''}</span></span>${statusTag(j)}${svg('chev')}</button></li>`).join('')
     : '<li class="row"><div class="row-text"><h3>No jobs yet</h3><p>Jobs you start on Run, Runs, Harnesses or Checks show here.</p></div></li>';
   if (ul.dataset.html !== html) {
     ul.innerHTML = html;
@@ -717,7 +684,9 @@ function renderActivity() {
 }
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-show-job]');
-  if (b) watch('activity', b.dataset.showJob);
+  if (!b) return;
+  watch('activity', b.dataset.showJob);
+  document.querySelectorAll('[data-show-job]').forEach((x) => x.setAttribute('aria-current', String(x === b)));
 });
 
 /* ---------- Appearance ---------- */
@@ -740,14 +709,20 @@ function renderAppearance() {
   const theme = readPref('lab-theme', 'forest');
   $('swatches').innerHTML = THEMES.map(([id, name, h, k]) => `<button type="button" class="swatch" role="radio" aria-checked="${id === theme}" aria-label="${name}" tabindex="${id === theme ? 0 : -1}" data-theme="${id}" style="--sh:${h};--sk:${k}"><svg viewBox="0 0 38 16" aria-hidden="true"><path class="sw-body" d="M0 8 C7 3 14 .8 22 .8 L30 .8 A7.2 7.2 0 0 1 30 15.2 L22 15.2 C14 15.2 7 13 0 8Z"/><rect class="sw-stem" x="21" y="2.6" width="1.4" height="10.8" rx=".7"/></svg></button>`).join('');
   $('theme-name').textContent = THEMES.find((t) => t[0] === theme)?.[1] || 'Forest';
-  const motion = readPref('lab-motion', 'full');
-  const seg = $('motion-seg');
-  const buttons = [...seg.querySelectorAll('button')];
-  buttons.forEach((b, i) => {
-    b.setAttribute('aria-pressed', String(b.dataset.v === motion));
-    if (b.dataset.v === motion) seg.style.setProperty('--i', i);
+  paintSeg($('motion-seg'), readPref('lab-motion', 'full'));
+  paintSeg($('mode-seg'), readMode());
+}
+function paintSeg(seg, value) {
+  [...seg.querySelectorAll('button')].forEach((b, i) => {
+    b.setAttribute('aria-pressed', String(b.dataset.v === value));
+    if (b.dataset.v === value) seg.style.setProperty('--i', i);
   });
 }
+$('mode-seg').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (b) setMode(b.dataset.v);
+});
+window.addEventListener('lab:mode', renderAppearance);
 function applyTheme(id) {
   const t = THEMES.find((x) => x[0] === id) || THEMES[0];
   document.documentElement.style.setProperty('--h', t[2]);
@@ -779,16 +754,9 @@ $('motion-seg').addEventListener('click', (e) => {
 /* ---------- Start ---------- */
 async function init() {
   document.querySelectorAll('select[data-custom]').forEach(enhanceSelect);
+  mountShell({ current: 'home' });
   renderAppearance();
   showView(location.hash.slice(1) || 'home', { instant: true });
-  document.fonts?.ready.then(() => moveNavPill(true));
-  try {
-    const health = await api('GET', '/api/health');
-    $('root-name').textContent = health.root;
-    if (health.version) $('version').textContent = `v${health.version}`;
-  } catch {
-    // The poll reports offline.
-  }
   await Promise.all([loadCatalog().catch((error) => toast(`Could not read the experiments: ${error.message}`, 'err')), loadState()]);
   await poll();
   renderCheckTags();
