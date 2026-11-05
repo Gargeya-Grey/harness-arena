@@ -36,9 +36,12 @@ function setup(t, { agentic = false } = {}) {
   }
   fs.mkdirSync(path.join(root, 'experiments'), { recursive: true });
   const data = tempDir(t, 'lab-store-data-');
-  const before = process.env.LAB_DATA;
+  const before = { LAB_DATA: process.env.LAB_DATA, LAB_TEST_DATA: process.env.LAB_TEST_DATA };
   process.env.LAB_DATA = data;
-  t.after(() => (before == null ? delete process.env.LAB_DATA : (process.env.LAB_DATA = before)));
+  process.env.LAB_TEST_DATA = data;
+  t.after(() => {
+    for (const [key, value] of Object.entries(before)) value == null ? delete process.env[key] : (process.env[key] = value);
+  });
   return { root, data };
 }
 
@@ -68,6 +71,9 @@ test('dataDir: LAB_DATA wins; lab.local.yaml at the root or at the main checkout
   assert.equal(dataDir(main, {}), path.resolve(main, '..', 'Model-Lab-Data'));
   assert.equal(dataDir(worktree, {}), path.resolve(main, '..', 'Model-Lab-Data'), 'a worktree writes to the main checkout store');
   assert.equal(dataDir(worktree, { LAB_DATA: 'C:/elsewhere' }), path.resolve('C:/elsewhere'));
+  // A LAB_DATA from the shell is ignored by the test runner unless a test set LAB_TEST_DATA to it.
+  assert.equal(dataDir(worktree, { LAB_DATA: 'C:/elsewhere', NODE_TEST_CONTEXT: 'child' }), null);
+  assert.equal(dataDir(worktree, { LAB_DATA: 'C:/elsewhere', LAB_TEST_DATA: 'C:/elsewhere', NODE_TEST_CONTEXT: 'child' }), path.resolve('C:/elsewhere'));
   assert.equal(dataDir(main, { NODE_TEST_CONTEXT: 'child' }), null);
   assert.equal(dataDir(main, { LAB_ROOT: main }), null, 'LAB_ROOT (fixtures, UI work) keeps its own results/');
   fs.writeFileSync(path.join(main, 'lab.local.yaml'), 'data_dir: ""\n');
@@ -265,6 +271,7 @@ test('the guard keeps the data folder it started with: a LAB_DATA changed during
     // Tamper with the real store, then point the lab at a clean copy.
     fs.appendFileSync(path.join(data, 'results', committed.name, 'raw.jsonl'), '{"planted":true}\n');
     process.env.LAB_DATA = clean;
+    process.env.LAB_TEST_DATA = clean;
     return 'done';
   });
   const [result] = await runCommand(root, agentExperiment(root, 'redirect', 'fake-redirect'), { log: () => {} });

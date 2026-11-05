@@ -63,8 +63,11 @@ export function dataDir(root = labRoot(), env = process.env) {
     if (inside) throw new Error(`${source}: the data folder ${dir} is inside the repository checkout ${inside}; put it outside, for example ../Model-Lab-Data`);
     return dir;
   };
-  if (env.LAB_DATA) return outside(path.resolve(env.LAB_DATA), 'LAB_DATA');
-  if (env.NODE_TEST_CONTEXT || env.LAB_ROOT) return null;
+  // Under the test runner a LAB_DATA from the shell is ignored, so tests never write fake
+  // runs into a real store: a test that wants a data folder sets LAB_TEST_DATA to it too.
+  const testing = Boolean(env.NODE_TEST_CONTEXT);
+  if (env.LAB_DATA && (!testing || env.LAB_TEST_DATA === env.LAB_DATA)) return outside(path.resolve(env.LAB_DATA), 'LAB_DATA');
+  if (testing || env.LAB_ROOT) return null;
   const main = mainCheckout(root);
   for (const dir of [root, main].filter(Boolean)) {
     const file = path.join(dir, LOCAL_CONFIG);
