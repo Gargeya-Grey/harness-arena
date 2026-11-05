@@ -125,9 +125,9 @@ data_dir: ../Model-Lab-Data   # relative to this file, or an absolute path
 - The runner, `validate`, `score`, the report and the dashboard read the data folder and the runs committed in `results/` together. A run id found in both places is read from the data folder.
 - `LAB_DATA=<folder>` overrides the file for one command. `LAB_ROOT` (fixtures, UI work) and the tests ignore `lab.local.yaml`.
 - `node lab doctor` prints where runs are written.
-- One runner at a time. `node lab run`, `--resume` and `node lab score` take a lock on the data folder (`.lab-run.lock`). A second command is refused while the first one runs, from any worktree. A lock left by a crashed process is taken over. A dry run takes no lock.
-- During an agent call the workdir guard watches all of `<data_dir>/results/`: every run, row, score, folder and link. An agent that changes, adds or deletes anything there halts the experiment, and that run is not scored. A folder the guard cannot read halts it too.
-- Limits: the guard does not watch `annotations/`, because the dashboard saves ratings at any time. It reads every stored file before and after each agent call, so that cost grows with the store.
+- One runner at a time. `node lab run`, `--resume` and `node lab score` take a lock, `.lab-run.lock`, in the data folder (or in `results/` when there is none). A second command is refused while the first one runs, from any worktree. A lock left by a crashed process is taken over, by one process only. If Windows gave the dead runner's process id to another program, the refusal names the lock file to delete. A dry run takes no lock.
+- During an agent call the workdir guard watches everything the lab reads from a store, with no skip list: every run, row, score, folder (of any name) and link in each `results/`, the read-only bit, the real path of each store folder, the lock file, and both `lab.local.yaml` files. The data folder is fixed when the run starts. An agent that changes, adds or deletes anything there halts the experiment, and that run is not scored. A folder the guard cannot read after the call halts it too; before the call, no call is made and the run can be resumed.
+- Limits: the guard does not watch `annotations/`, because the dashboard saves ratings at any time. It reports a planted run and never deletes it, so that run stays visible until you remove it. It reads every stored file before and after each agent call, so that cost grows with the store.
 
 Without `lab.local.yaml`, runs go to `results/` in the checkout, as before.
 

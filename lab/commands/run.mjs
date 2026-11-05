@@ -9,14 +9,14 @@ import { spawnSync } from 'node:child_process';
 import { appendJsonl, isoNow, readJson, readJsonl, readText, sha256, writeJson, safeSegment } from '../lib/fsutil.mjs';
 import { redactEvent, redactPaths } from '../lib/redact.mjs';
 import { parseYaml } from '../lib/yaml.mjs';
-import { loadPrompt, targetProblems, loadRegistry, loadSuite, paths, renderMessages, resolveExperiment } from '../lib/repo.mjs';
+import { loadPrompt, mainCheckout, targetProblems, loadRegistry, loadSuite, paths, renderMessages, resolveExperiment } from '../lib/repo.mjs';
 import { costUsd } from '../lib/metrics.mjs';
 import { copyTree, snapshotWorkspace, stampDiff, treeHash, treeStamp } from '../lib/workspace.mjs';
 import { getAdapter } from '../adapters/index.mjs';
 import { extractSvg } from '../evaluators/index.mjs';
 import { resolveRunDir, scoreRun } from './score.mjs';
 import { modelCheck, normalizeErrorType, runLiveness } from '../lib/checks.mjs';
-import { takeLock } from '../lib/lock.mjs';
+import { storeFolder, takeLock } from '../lib/lock.mjs';
 
 const DEFAULT_TIMEOUT_S = 300;
 const USER_CONFIG = new Set(['loaded', 'isolated']);
@@ -183,31 +183,94 @@ function writeArtifact(runDir, kind, row, text, harness) {
 // while a run may be going. They hold no hidden check, so the guard skips them.
 const DASHBOARD_DIRS = ['boards', 'annotations', 'reports'];
 
-// The data folder holds every stored run. `node lab run` holds its lock (lab/lib/lock.mjs),
-// so during an agent call nothing else writes there: the guard stamps all of
-// <data>/results, scores and this experiment's own runs included (the runner writes
-// nothing during a call). Only <data>/annotations is left out: the dashboard saves human
-// ratings at any time.
+// The stores hold every stored run. `node lab run` holds the store lock (lab/lib/lock.mjs),
+// so during an agent call nothing else writes there, and the runner itself writes
+// nothing between the two stamps. So the guard watches everything the lab reads from a
+// store, with no skip list: every entry of each results/ folder (runs, rows, scores,
+// folders of any name, links, the read-only bit), the real path of each store folder, the
+// top level of the data folder (the lock file included), and both lab.local.yaml files,
+// which name the data folder. Only <data>/annotations is left out: the dashboard saves
+// human ratings at any time.
 const DATA_KEY = 'data folder: ';
+const STORE_KEY = 'store: ';
+const NO_SKIP = new Set();
 
-function guardStamp(root) {
+/**
+ * What the guard watches, fixed once per run before any call, so an agent cannot point
+ * the guard at another folder (a changed LAB_DATA or lab.local.yaml).
+ */
+export function guardScope(root) {
+  const { data, resultsDirs } = paths(root);
+  const main = mainCheckout(root);
+  return {
+    root,
+    data,
+    results: resultsDirs,
+    configs: [...new Set([root, main].filter(Boolean).map((dir) => path.join(dir, 'lab.local.yaml')))],
+  };
+}
+
+function entryKind(file) {
+  try {
+    const stat = fs.lstatSync(file);
+    if (stat.isSymbolicLink()) return `link:${fs.readlinkSync(file)}`;
+    if (stat.isDirectory()) return `folder real:${fs.realpathSync.native(file)}`;
+    return stat.isFile() ? 'file' : 'special';
+  } catch (error) {
+    return error.code === 'ENOENT' ? 'absent' : `unreadable:${error.code}`;
+  }
+}
+
+function guardStamp(scope) {
+  const { root, data } = scope;
   const stamp = treeStamp(root, UNGUARDED_DIRS);
-  for (const key of [...stamp.keys()]) if (DASHBOARD_DIRS.some((dir) => key.startsWith(`${dir}/`))) stamp.delete(key);
-  const data = paths(root).data;
-  const base = data ? path.join(data, 'results') : null;
-  if (base && fs.existsSync(base)) {
-    for (const [key, value] of treeStamp(base, UNGUARDED_DIRS)) stamp.set(`${DATA_KEY}results/${key}`, value);
+  // results/ is stamped below in full; the dashboard folders are not watched.
+  for (const key of [...stamp.keys()]) if ([...DASHBOARD_DIRS, 'results'].some((dir) => key.startsWith(`${dir}/`))) stamp.delete(key);
+  for (const file of scope.configs) {
+    const kind = entryKind(file);
+    stamp.set(`config: ${file}`, kind === 'file' ? `file ${sha256(fs.readFileSync(file))}` : kind);
+  }
+  if (data) {
+    stamp.set(`${DATA_KEY}.`, entryKind(data));
+    if (fs.existsSync(data)) {
+      for (const entry of fs.readdirSync(data).sort()) {
+        if (entry === 'annotations') continue;
+        const file = path.join(data, entry);
+        const kind = entryKind(file);
+        stamp.set(`${DATA_KEY}${entry}`, kind === 'file' ? `file ${sha256(fs.readFileSync(file))}` : kind);
+      }
+    }
+  }
+  for (const dir of scope.results) {
+    const label = data && dir === path.join(data, 'results') ? `${DATA_KEY}results` : `${STORE_KEY}results`;
+    const kind = entryKind(dir);
+    stamp.set(`${label}/.`, kind);
+    if (!kind.startsWith('folder')) continue;
+    for (const [key, value] of treeStamp(dir, NO_SKIP)) stamp.set(`${label}/${key}`, value);
   }
   return stamp;
 }
 
 /** The stamp, or the reason it could not be taken: an unreadable lab folder halts like a change. */
-function tryGuardStamp(root) {
+function tryGuardStamp(scope) {
   try {
-    return { stamp: guardStamp(root) };
+    return { stamp: guardStamp(scope) };
   } catch (error) {
     return { error: `${error.code || 'error'} ${error.message}` };
   }
+}
+
+/**
+ * The runner's own files in a run folder: an agent may have made one read-only. That is
+ * a change the guard halts on; the runner still writes its row and closes the run.
+ */
+function own(file) {
+  try {
+    if (!(fs.statSync(file).mode & 0o200)) fs.chmodSync(file, 0o666);
+  } catch {
+    // Not there yet, or the write itself reports the problem.
+  }
+  return file;
 }
 
 /** The folders an agent must not name: the repository, and the data folder with every stored run. */
@@ -233,7 +296,7 @@ function removeFolder(dir) {
 
 function heartbeat(session, at = isoNow()) {
   session.manifest.runner.heartbeat_at = at;
-  writeJson(path.join(session.runDir, 'run.json'), session.manifest);
+  writeJson(own(path.join(session.runDir, 'run.json')), session.manifest);
 }
 
 /** Start one run (one harness), or reopen a stopped one to continue it. */
@@ -344,7 +407,14 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
   // Every open run of the experiment beats, so none looks stale while it waits its
   // turn. The heartbeat writes run.json, so it comes before the guard's first stamp.
   beat();
-  const stampBefore = guarded ? tryGuardStamp(root) : null;
+  const stampBefore = guarded ? tryGuardStamp(plan.guard) : null;
+  if (stampBefore?.error) {
+    // Nothing was called yet, so no agent is to blame: stop before spending the call.
+    if (isolatedDir) removeFolder(callCwd);
+    log(`  ${testCase.case_id} r${repeat} ${m.modelKey}: the workdir guard cannot read the lab folders before the call (${redactPaths(stampBefore.error)}); no call was made and the experiment stops. Fix that folder, then resume the run.`);
+    session.halted = 'guard_unreadable';
+    return true;
+  }
   const fixtureSha = testCase.input?.workspace != null ? treeHash(workspaceDir(plan.suite, testCase)) : null;
   const startedAt = isoNow();
   let result;
@@ -369,14 +439,20 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
   let halt = false;
   if (guarded) {
     let escape = null;
-    const stampAfter = tryGuardStamp(root);
-    const unreadable = stampBefore.error || stampAfter.error;
+    const stampAfter = tryGuardStamp(plan.guard);
+    const unreadable = stampAfter.error;
     const changed = unreadable ? null : stampDiff(stampBefore.stamp, stampAfter.stamp);
     if (unreadable) {
       escape = `left the lab folders in a state the workdir guard cannot read (${redactPaths(unreadable)}); the experiment stops and this run is not scored. Look for a link, a locked file or an unreadable folder in the repository or the data folder`;
       halt = true;
-    } else if (changed?.startsWith(DATA_KEY)) {
-      escape = `changed or added ${changed.slice(DATA_KEY.length).replace(/\/$/, '')} in the data folder, where the stored runs are, while it ran; the experiment stops and this run is not scored. That run folder is evidence: compare it with a backup before you trust it`;
+    } else if (changed?.startsWith(DATA_KEY) || changed?.startsWith(STORE_KEY)) {
+      const prefix = changed.startsWith(DATA_KEY) ? DATA_KEY : STORE_KEY;
+      const where = prefix === DATA_KEY ? 'in the data folder' : 'in the repository';
+      const what = changed.slice(prefix.length).replace(/\/\.?$/, '') || 'the folder itself';
+      escape = `changed, added or removed ${what} ${where}, where the stored runs are, while it ran; the experiment stops and this run is not scored. Those runs are evidence: compare them with a backup before you trust them`;
+      halt = true;
+    } else if (changed?.startsWith('config: ')) {
+      escape = `changed ${path.basename(changed)}, which names the data folder, while it ran; the experiment stops and this run is not scored. Check data_dir in that file before the next run`;
       halt = true;
     } else if (changed) {
       escape = `changed ${changed} in the lab repository while it ran; the experiment stops and this run is not scored. Check that file with git diff. If you edited it yourself during the call, this is a false alarm: keep your work and run again. Otherwise restore it (git checkout -- <file>) before the next run`;
@@ -459,7 +535,8 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
     }
   }
   if (isolatedDir) row.metadata.workdir_removed = removeFolder(callCwd);
-  appendJsonl(path.join(runDir, 'raw.jsonl'), row);
+  appendJsonl(own(path.join(runDir, 'raw.jsonl')), row);
+  own(path.join(runDir, 'harness-events.ndjson'));
   for (const event of result.events || []) {
     // Events keep what the call did, not how this machine is set up (lab/lib/redact.mjs).
     appendJsonl(path.join(runDir, 'harness-events.ndjson'), { case_id: row.case_id, model_key: row.model_key, repeat, event: redactEvent(event) });
@@ -502,7 +579,7 @@ async function closeRun(root, plan, session, { log, aborted, halted }) {
       ? ' Stopped: a file of the lab repository changed during an agent call. Not scored; node lab score skips it unless --force.'
       : ' Stopped: another run of this experiment halted when a file of the lab repository changed during an agent call. Not scored; node lab score skips it unless --force.';
   }
-  writeJson(path.join(runDir, 'run.json'), manifest);
+  writeJson(own(path.join(runDir, 'run.json')), manifest);
   // The changed files may include the hidden checks, so a halted run is not scored.
   const written = halted ? [] : scoreRun(root, runDir, { log });
   log(`\n${session.runId}`);
@@ -522,6 +599,8 @@ function beatAll(sessions) {
  * only the one whose turn it was. Each harness still writes its own run.
  */
 async function execute(root, plan, sessions, { log, signal }) {
+  // Fixed before the first call (see guardScope).
+  plan.guard = guardScope(root);
   let aborted = false;
   let haltedBy = null;
   outer: for (let repeat = 0; repeat < plan.repeats; repeat += 1) {
@@ -547,7 +626,10 @@ async function execute(root, plan, sessions, { log, signal }) {
   if (signal?.aborted && sessions.some((session) => session.done.size < total * session.models.length)) aborted = true;
   const results = [];
   for (const session of sessions) {
-    const halted = haltedBy ? (session === haltedBy ? 'left_workdir' : 'experiment_halted') : null;
+    // A guard that could not read the folders before a call made no call and blames no
+    // agent: every run closes as interrupted, and a resume continues it.
+    const blamed = haltedBy && haltedBy.halted !== 'guard_unreadable';
+    const halted = blamed ? (session === haltedBy ? 'left_workdir' : 'experiment_halted') : null;
     results.push(await closeRun(root, plan, session, { log, aborted: aborted || Boolean(haltedBy), halted }));
   }
   return results;
@@ -583,7 +665,7 @@ export async function runCommand(root, file, options = {}) {
     return [];
   }
   // One writer at a time on the data folder (lab/lib/lock.mjs); a second runner is refused here.
-  const release = takeLock(paths(root).data, { command: `node lab run ${plan.experiment.id}`, root, log });
+  const release = takeLock(storeFolder(root), { command: `node lab run ${plan.experiment.id}`, root, log });
   try {
     const results = [];
     const sessions = [];
@@ -610,7 +692,7 @@ export async function runCommand(root, file, options = {}) {
 export async function resumeCommand(root, ref, { log = console.log, force = false, dryRun = false } = {}) {
   if (dryRun) return resumeRun(root, ref, { log, force, dryRun });
   // The lock comes before the run is read, so no other runner writes its rows meanwhile.
-  const release = takeLock(paths(root).data, { command: `node lab run --resume ${ref}`, root, log });
+  const release = takeLock(storeFolder(root), { command: `node lab run --resume ${ref}`, root, log });
   try {
     return await resumeRun(root, ref, { log, force, dryRun });
   } finally {

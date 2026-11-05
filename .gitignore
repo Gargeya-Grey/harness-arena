@@ -37,3 +37,4 @@ lab.local.yaml
 .gemini/
 *.log
 *.err
+results/.lab-run.lock

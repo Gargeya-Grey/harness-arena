@@ -50,4 +50,4 @@ Preconditions:
 
 - `node lab doctor` prints where runs are written. With `lab.local.yaml` (`data_dir`) at the main checkout, every worktree prints the same `<data_dir>/results`.
 - Proof: run a one-case fake or fixture run with `LAB_DATA=<temp folder>`; the run folder appears there and not in `results/`; `node lab runs` and `/api/state` list it next to the committed runs.
-- Lock proof: while one `node lab run` is going, a second `node lab run` or `node lab score` from any worktree fails at once with `Another lab command is writing to the data folder`. After the first one ends, `<data_dir>/.lab-run.lock` is gone. `tests/store.test.mjs` covers refusal, takeover of a crashed lock, and release after a failed run.
+- Lock proof: while one `node lab run` is going, a second `node lab run` or `node lab score` from any worktree fails at once with `Another lab command is writing to the run store`. After the first one ends, `<data_dir>/.lab-run.lock` is gone. `tests/store.test.mjs` covers refusal, a takeover race of 6 processes, takeover of a crashed lock, release after a failed run, and every tamper case of the guard.

@@ -4,8 +4,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { listDirs, readJson, readJsonl } from '../lib/fsutil.mjs';
-import { findRunDir, loadSuite, paths, runDirs } from '../lib/repo.mjs';
-import { takeLock } from '../lib/lock.mjs';
+import { findRunDir, loadSuite, runDirs } from '../lib/repo.mjs';
+import { storeFolder, takeLock } from '../lib/lock.mjs';
 import { getEvaluator } from '../evaluators/index.mjs';
 
 export function resolveRunDir(root, ref) {
@@ -75,7 +75,7 @@ export function scoreCommand(root, refs, { all = false, force = false, log = con
   const dirs = all ? runDirs(root).map(({ dir }) => dir).filter((dir) => fs.existsSync(path.join(dir, 'run.json'))) : refs.map((ref) => resolveRunDir(root, ref));
   if (!dirs.length) throw new Error('Name a run id (or part of one), or pass --all');
   // Scores live in the data folder too, so scoring waits for no runner: one writer at a time.
-  const release = takeLock(paths(root).data, { command: 'node lab score', root, log });
+  const release = takeLock(storeFolder(root), { command: 'node lab score', root, log });
   try {
     for (const dir of dirs) {
       log(path.basename(dir));

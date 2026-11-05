@@ -1,67 +1,113 @@
-// One writer at a time on the data folder. `node lab run`, `--resume` and `node lab
-// score` take this lock, so while an agent call runs, nothing but that call can change
-// the stored runs, and the workdir guard can watch all of them with no exceptions. A
-// lock left by a process that is gone (a crash) is taken over.
+// One writer at a time on the run store. `node lab run`, `--resume` and `node lab score`
+// take this lock, so while an agent call runs, nothing but that call can change the
+// stored runs, and the workdir guard can watch all of them with no exceptions. The
+// store is the data folder, or the checkout's results/ when there is none. A lock left by
+// a process that is gone (a crash, a forced stop) is taken over, by one process only.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { processAlive } from './checks.mjs';
+import { paths } from './repo.mjs';
 
 export const LOCK_FILE = '.lab-run.lock';
 const FRESH_MS = 5000;
-const statTime = (file) => {
+const TAKEOVER_STALE_MS = 30000;
+// Locks this process holds now: a lock with this pid that is not here is a reused pid.
+const held = new Set();
+
+/** The folder whose lock a command takes: the data folder, else the checkout's results/. */
+export function storeFolder(root) {
+  const { data, results } = paths(root);
+  return data ?? results;
+}
+
+const readText = (file) => {
   try {
-    return fs.statSync(file).mtimeMs;
+    return fs.readFileSync(file, 'utf8');
   } catch {
-    return 0;
+    return null;
+  }
+};
+const parse = (text) => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+const age = (file) => {
+  try {
+    return Date.now() - fs.statSync(file).mtimeMs;
+  } catch {
+    return Infinity;
   }
 };
 
 /**
- * Take the lock of `dataDir`, or throw when another live process holds it. Returns a
- * release function (also run on process exit). A null dataDir needs no lock: each
- * checkout's own results/ is watched by that checkout's guard.
+ * Remove a stale lock, as one process only: a takeover folder is the mutex, and the
+ * lock goes only when it still holds the exact bytes that were found stale. Without
+ * this, two processes could each delete the other's new lock and both run.
  */
-export function takeLock(dataDir, { command, root, log = () => {}, alive = processAlive } = {}) {
-  if (!dataDir) return () => {};
-  fs.mkdirSync(dataDir, { recursive: true });
-  const file = path.join(dataDir, LOCK_FILE);
-  const mine = { pid: process.pid, command, checkout: root, at: new Date().toISOString() };
+function takeOver(file, staleText) {
+  const mutex = `${file}.takeover`;
+  if (age(mutex) > TAKEOVER_STALE_MS) fs.rmSync(mutex, { recursive: true, force: true });
+  try {
+    fs.mkdirSync(mutex);
+  } catch (error) {
+    if (error.code === 'EEXIST') throw new Error('Another lab command is taking over the run store lock. Run again in a moment.');
+    throw error;
+  }
+  try {
+    if (readText(file) === staleText) fs.rmSync(file, { force: true });
+  } finally {
+    fs.rmSync(mutex, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Take the lock of `folder`, or throw when another live process holds it. Returns a
+ * release function (also run on process exit). A null folder needs no lock.
+ */
+export function takeLock(folder, { command, root, log = () => {}, alive = processAlive } = {}) {
+  if (!folder) return () => {};
+  fs.mkdirSync(folder, { recursive: true });
+  const file = path.join(folder, LOCK_FILE);
+  const text = `${JSON.stringify({ pid: process.pid, command, checkout: root, at: new Date().toISOString() })}\n`;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      fs.writeFileSync(file, `${JSON.stringify(mine)}\n`, { flag: 'wx' });
+      fs.writeFileSync(file, text, { flag: 'wx' });
+      held.add(file);
       let released = false;
       const release = () => {
         if (released) return;
         released = true;
+        held.delete(file);
         process.removeListener('exit', release);
-        try {
-          if (JSON.parse(fs.readFileSync(file, 'utf8')).pid === process.pid) fs.rmSync(file, { force: true });
-        } catch {
-          // Already gone.
-        }
+        // Only the lock this call wrote: never one that something else put in its place.
+        if (readText(file) === text) fs.rmSync(file, { force: true });
       };
       process.on('exit', release);
       return release;
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
     }
-    let holder = null;
+    let stat = null;
     try {
-      holder = JSON.parse(fs.readFileSync(file, 'utf8'));
+      stat = fs.lstatSync(file);
     } catch {
-      holder = null;
+      continue; // Gone meanwhile: try again.
     }
-    if (holder?.pid === process.pid) throw new Error('This process already holds the data folder lock.');
-    // An unreadable lock may be one another runner is still writing: refuse while it is new.
-    if (!holder && Date.now() - statTime(file) < FRESH_MS) {
-      throw new Error(`The data folder lock ${LOCK_FILE} is being written by another lab command. Run again in a moment.`);
+    if (!stat.isFile()) throw new Error(`The run store lock ${file} is not a file. Delete it, then run again.`);
+    const found = readText(file);
+    const holder = parse(found);
+    if (holder?.pid === process.pid && held.has(file)) throw new Error('This process already holds the run store lock.');
+    // An unreadable lock may be one another command is still writing: refuse while it is new.
+    if (!holder && age(file) < FRESH_MS) throw new Error(`The run store lock ${file} is being written by another lab command. Run again in a moment.`);
+    if (holder && holder.pid !== process.pid && alive(holder.pid)) {
+      throw new Error(`Another lab command is writing to the run store: "${holder.command}" (process ${holder.pid}, from ${holder.checkout}, since ${holder.at}). One runner at a time keeps the workdir guard exact. Wait for it to finish, or stop it. If process ${holder.pid} is not a lab command (Windows reuses process ids after a forced stop), delete ${file} and run again.`);
     }
-    if (holder && alive(holder.pid)) {
-      throw new Error(`Another lab command is writing to the data folder: "${holder.command}" (process ${holder.pid}, from ${holder.checkout}, since ${holder.at}). One runner at a time keeps the workdir guard exact. Wait for it to finish, or stop it.`);
-    }
-    log(`  note: took over a data folder lock left by process ${holder?.pid ?? 'unknown'}, which is gone`);
-    fs.rmSync(file, { force: true });
+    log(`  note: took over a run store lock left by process ${holder?.pid ?? 'unknown'}, which is gone`);
+    takeOver(file, found);
   }
-  throw new Error(`Could not take the data folder lock ${file}.`);
+  throw new Error(`Could not take the run store lock ${file}. Run again in a moment.`);
 }

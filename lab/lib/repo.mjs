@@ -18,7 +18,7 @@ export function labRoot() {
 const LOCAL_CONFIG = 'lab.local.yaml';
 
 /** The main checkout of a git worktree (its `.git` is a file that names the main repository), or null. */
-function mainCheckout(root) {
+export function mainCheckout(root) {
   const gitFile = path.join(root, '.git');
   try {
     if (!fs.statSync(gitFile).isFile()) return null;

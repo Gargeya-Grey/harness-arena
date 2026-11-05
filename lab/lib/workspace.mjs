@@ -74,7 +74,9 @@ export function treeStamp(root, skipDirs = SKIP_DIRS) {
   for (const rel of dirs) stamp.set(`${rel}/`, 'folder');
   for (const rel of files) {
     try {
-      stamp.set(rel, sha256(fs.readFileSync(path.join(root, ...rel.split('/')))));
+      const file = path.join(root, ...rel.split('/'));
+      // The read-only bit counts: a read-only run file would stop the runner's next write.
+      stamp.set(rel, `${sha256(fs.readFileSync(file))}${fs.statSync(file).mode & 0o200 ? '' : ' read-only'}`);
     } catch {
       stamp.set(rel, 'unreadable');
     }
