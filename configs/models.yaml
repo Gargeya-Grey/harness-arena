@@ -6,7 +6,11 @@
 #   provider, model      Exact provider snapshot or id. Pin snapshots where the provider offers them.
 #   display_name         Label in the dashboard.
 #   context_window       Tokens, for reference.
-#   reasoning_effort     Part of the variant's identity: a different effort is a different key.
+#   reasoning_effort     Optional default effort. An experiment target overrides it with
+#                        effort: <level> or efforts: [<level>, ...]; each effort is its own run.
+#   pinned               Optional, default true. false for an alias the provider can point at
+#                        another model at any time (free tiers such as opencode/beam-free).
+#                        The dashboard and the report mark such a configuration.
 #   harness_models       Optional. The id a harness expects when it differs from `model`.
 #                        OpenCode ids name the provider inside OpenCode: <provider>/<model>.
 #   params               Decoding params. CLI harnesses cannot forward them, so each raw
@@ -73,10 +77,12 @@ models:
     provider: opencode
     model: opencode/beam-free
     display_name: Beam (free)
+    pinned: false # a free alias; OpenCode can change the model behind it
     params: {}
 
   pulse-alpha-free:
     provider: opencode
     model: opencode/pulse-alpha-free
+    pinned: false # a free alias; OpenCode can change the model behind it
     display_name: Pulse Alpha (free)
     params: {}

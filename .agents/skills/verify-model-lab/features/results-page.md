@@ -12,7 +12,7 @@
 - `side-panel` - a mark opens `#inspector`: Answer and Evidence tabs, next try and next setup buttons. Escape closes it; focus returns to the mark.
 - `charts` - `#charts-main` holds the charts that carry a result; `details#charts-more` holds the rest. Below 440px of chart width a chart is drawn 1.35 times narrower and shown at full width.
 - `ratings` - `#ratings-sect`, only when the test has ratings: one row per saved rating, newest first (when, case and try, setup, rating, choice, notes).
-- `runs` - `#runs`: the runs of the test, newest first, with Score again per run. A guard-stopped run needs Score anyway, then Confirm: score it.
+- `runs` - `#runs`: the runs of the test, newest first, with Score again per run. A guard-stopped run needs Score anyway, then Confirm: score it. A run that stopped without finishing shows that state and a **Resume** button (`data-act="resume"`, starts `node lab run --resume <run_id>`). A run that counts in no result says why under its status (`not counted: ...`).
 - `change-test` - `dialog#pick-test`: saved views, then tests by suite; older versions under "Earlier versions".
 - `jobbar` - `#jobbar`: a thin bar while a job runs ("Run of <experiment> · N of M answers"). The page reloads its data when a run or score job ends.
 - `old-links` - `/compare.html#…` forwards to `/results.html#…` with the hash kept; `#view=answers&ctx=…&cfg=…` still opens the test and setups.

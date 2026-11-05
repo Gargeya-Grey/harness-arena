@@ -199,6 +199,22 @@ function disarmLater() {
   }, 8000);
 }
 
+// Continue a run that stopped without finishing (node lab run --resume): only its
+// missing answers are called, so this costs quota.
+async function resumeRun(id) {
+  try {
+    await postJob({ command: 'run', resume: id });
+    setStatus('Resuming the run. Only its missing answers are called. The page updates when it ends.');
+    running = 'pending';
+    renderRunsNow();
+    if (watcher) watcher.now();
+  } catch (error) {
+    renderRunsNow();
+    if (error.status === 409) setStatus('Another job runs now. Resume when it ends.', 'error');
+    else setStatus(`The resume did not start: ${error.message}.`, 'error');
+  }
+}
+
 async function scoreRun(id, force) {
   if (force && armedRun !== id) {
     armedRun = id;
@@ -400,6 +416,9 @@ async function onClick(event) {
       break;
     case 'score':
       await scoreRun(el.dataset.run, el.dataset.force === '1');
+      break;
+    case 'resume':
+      await resumeRun(el.dataset.run);
       break;
     default:
       break;

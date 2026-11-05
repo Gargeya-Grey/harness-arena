@@ -104,6 +104,36 @@
         "notes": { "type": "string" }
       }
     },
+    "runner": {
+      "type": "object",
+      "description": "The process that wrote the run. A run that says running with a dead process or an old heartbeat is stale and can be resumed.",
+      "required": ["pid", "heartbeat_at"],
+      "additionalProperties": false,
+      "properties": {
+        "pid": { "type": "integer", "minimum": 1 },
+        "heartbeat_at": { "type": "string", "format": "date-time" },
+        "interrupted": {
+          "type": "boolean",
+          "description": "The user stopped the run before its last row; it can be resumed."
+        },
+        "resumes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["at", "rows_before"],
+            "additionalProperties": false,
+            "properties": {
+              "at": { "type": "string", "format": "date-time" },
+              "rows_before": { "type": "integer", "minimum": 0 },
+              "dropped_torn_line": {
+                "type": "boolean",
+                "description": "raw.jsonl ended in a half-written line from the crash; it was never a record and was dropped."
+              }
+            }
+          }
+        }
+      }
+    },
     "notes": { "type": "string" }
   },
   "$defs": {

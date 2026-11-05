@@ -4,9 +4,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { listDirs, listFiles, readJson, readJsonl, resolveInside, safeSegment, isoNow } from './fsutil.mjs';
-import { paths, loadRegistry, loadCases } from './repo.mjs';
+import { paths, loadRegistry, loadCases, runDirs } from './repo.mjs';
 import { SchemaSet } from './schema.mjs';
-import { bootstrapMean, mean, percentile, sum, variance, wilson } from './metrics.mjs';
+import { clusteredInterval, mean, percentile, sum, variance } from './metrics.mjs';
+import { errorClass, modelCheck, runLiveness } from './checks.mjs';
+import { ledgerPath, loadLedger, runCounts, scoreFileNames, trustRun } from './ledger.mjs';
 
 const TEXT_INLINE_LIMIT = 2 * 1024 * 1024;
 
@@ -95,6 +97,8 @@ function buildConfig(manifest, modelKey, raw, registry) {
     context_window: entry.context_window ?? registered.context_window ?? null,
     params: { ...(entry.params || {}), ...(raw?.request?.params || {}) },
     pricing: entry.pricing || null,
+    // A free alias such as opencode/beam-free can point at a new model at any time.
+    pinned: registered.pinned !== false,
     access_method: harness.access_method || 'unknown',
   };
 }
@@ -154,11 +158,37 @@ function observationStatus(raw, quality) {
   return 'ok';
 }
 
-function aggregate(rows, config) {
+/**
+ * The rows that count for quality: every scored row, plus every error the
+ * configuration caused, at 0. A lost row (quota, sign-in, CLI missing) does not
+ * count; it shows as lost_n. Without a quality evaluator nothing counts. A run that
+ * is still running, or was never scored (halted by the guard), counts nothing: its
+ * answers have no score yet, so its errors alone would pull the mean down.
+ */
+function countedRows(rows, hasQuality) {
+  if (!hasQuality) return [];
+  return rows.flatMap((row) => {
+    if (!row.run_scored) return [];
+    if (row.error) return row.error_class === 'failed' ? [{ case_id: row.case_id, value: 0, passed: false }] : [];
+    return row.quality == null ? [] : [{ case_id: row.case_id, value: row.quality, passed: Boolean(row.passed) }];
+  });
+}
+
+function byCaseValues(counted, pick) {
+  const groups = new Map();
+  for (const row of counted) {
+    if (!groups.has(row.case_id)) groups.set(row.case_id, []);
+    groups.get(row.case_id).push(pick(row));
+  }
+  return [...groups.values()];
+}
+
+function aggregate(rows, config, { hasQuality = true } = {}) {
   const ok = rows.filter((row) => !row.error);
   const scored = rows.filter((row) => row.quality != null);
-  const passed = scored.filter((row) => row.passed);
-  const qualities = scored.map((row) => row.quality);
+  const counted = countedRows(rows, hasQuality);
+  const passed = counted.filter((row) => row.passed);
+  const qualities = counted.map((row) => row.value);
   const latencies = ok.map((row) => row.latency_ms).filter((v) => typeof v === 'number');
   const modelLatencies = ok.map((row) => row.model_request_duration_ms).filter((v) => typeof v === 'number');
   const costs = rows.map((row) => row.cost_usd).filter((v) => typeof v === 'number');
@@ -193,13 +223,21 @@ function aggregate(rows, config) {
     n: rows.length,
     ok_n: ok.length,
     scored_n: scored.length,
+    counted_n: counted.length,
+    cases_n: new Set(counted.map((row) => row.case_id)).size,
     unscored_n: ok.filter((row) => row.quality == null).length,
     passed_n: passed.length,
     errors_n: rows.length - ok.length,
+    failed_n: rows.filter((row) => row.error_class === 'failed').length,
+    lost_n: rows.filter((row) => row.error_class === 'lost').length,
+    // Quality counts the configuration's own errors as 0; answered_quality leaves them out.
     mean_quality: mean(qualities),
-    quality_ci: bootstrapMean(qualities, config.id),
-    pass_rate: scored.length ? passed.length / scored.length : null,
-    pass_rate_ci: wilson(passed.length, scored.length),
+    answered_quality: mean(scored.map((row) => row.quality)),
+    quality_ci: clusteredInterval(byCaseValues(counted, (row) => row.value), config.id),
+    pass_rate: counted.length ? passed.length / counted.length : null,
+    pass_rate_ci: clusteredInterval(byCaseValues(counted, (row) => (row.passed ? 1 : 0)), `${config.id}|pass`),
+    model_mismatch_n: rows.filter((row) => row.model_check === 'mismatch').length,
+    model_unknown_n: rows.filter((row) => row.model_check === 'unknown').length,
     total_cost_usd: totalCost,
     mean_cost_usd: costs.length ? totalCost / costs.length : null,
     cost_per_passed_case: passed.length && totalCost != null ? totalCost / passed.length : null,
@@ -225,6 +263,14 @@ function aggregate(rows, config) {
     repeats: rows.length ? Math.max(...rows.map((row) => row.repeat)) + 1 : 0,
     format_pass_rate: formatScores.length ? mean(formatScores.map((score) => score.value)) : null,
   };
+}
+
+/** A run that stopped before its last row and can continue: stale, or stopped by the user, never halted by the guard. */
+export function resumable(manifest, trust = null) {
+  if (manifest?.harness?.settings?.halted) return false;
+  if (trust && (trust.state === 'halted' || trust.state === 'untrusted')) return false;
+  if (manifest?.status === 'running') return runLiveness(manifest) === 'stale';
+  return manifest?.status === 'failed' && Boolean(manifest.runner?.interrupted);
 }
 
 function latestAnnotations(list) {
@@ -270,8 +316,13 @@ export function buildState(root, { validate = true } = {}) {
   const suitesSeen = new Set();
   const cases = {};
 
-  for (const name of listDirs(p.results)) {
-    const runDir = path.join(p.results, name);
+  // The evidence ledger (lab/lib/ledger.mjs): a run that does not match it is listed,
+  // flagged, and its scores do not count.
+  const ledger = loadLedger(ledgerPath(root));
+  for (const item of ledger?.problems || []) note(ledgerPath(root), `line ${item.line}: ${item.message}`);
+  if (ledger?.unreadable) note(ledgerPath(root), `cannot read the evidence ledger (${ledger.unreadable}); no run is trusted until it can be read`);
+
+  for (const { dir: runDir } of runDirs(root)) {
     const manifestPath = path.join(runDir, 'run.json');
     if (!fs.existsSync(manifestPath)) continue;
     let manifest;
@@ -283,6 +334,14 @@ export function buildState(root, { validate = true } = {}) {
     }
     check('run.schema.json', manifest, manifestPath);
     if (!manifest?.run_id || !manifest.suite || !manifest.prompt) continue;
+    let trust;
+    try {
+      trust = trustRun(ledger, manifest.run_id, runDir);
+    } catch (error) {
+      trust = { state: 'untrusted', reason: `its files cannot be read (${error.code || error.message})` };
+    }
+    if (trust.state === 'untrusted') note(manifestPath, `does not match the evidence ledger: ${trust.reason}; it is left out of every aggregate`);
+    else if (trust.scores === 'mismatch' && listFiles(path.join(runDir, 'scores'), '.jsonl').length) note(manifestPath, `its scores do not match the evidence ledger (${trust.scores_reason}); they do not count until node lab score ${manifest.run_id} recomputes them`);
 
     const rawPath = path.join(runDir, 'raw.jsonl');
     const { rows: rawRows, problems: rawProblems } = readJsonl(rawPath);
@@ -295,7 +354,9 @@ export function buildState(root, { validate = true } = {}) {
 
     const scoresByKey = new Map();
     const scoresDir = path.join(runDir, 'scores');
-    for (const file of listFiles(scoresDir, '.jsonl')) {
+    // Only the files of the run's own evaluators are read; anything else in scores/ is not a score.
+    const ownScores = scoreFileNames(manifest);
+    for (const file of listFiles(scoresDir, '.jsonl').filter((name) => ownScores.has(`scores/${name}`))) {
       const scorePath = path.join(scoresDir, file);
       const { rows, problems: scoreProblems } = readJsonl(scorePath);
       scoreProblems.forEach((item) => note(scorePath, `line ${item.line}: ${item.message}`));
@@ -336,6 +397,12 @@ export function buildState(root, { validate = true } = {}) {
 
     const runConfigIds = new Set();
     let errors = 0;
+    // A halted run is never scored, whatever score file sits in its folder.
+    // So is a run that does not match the evidence ledger, or that the ledger says was halted.
+    // A run.json that still says running (an adopted stale run) never counts.
+    const counts = runCounts(trust) && manifest.status !== 'running';
+    // A run that counts has every declared evaluator's scores recorded (runCounts).
+    const runScored = counts && !manifest.harness?.settings?.halted && ownScores.size > 0;
     for (const raw of rawRows) {
       const config = buildConfig(manifest, raw.model_key, raw, registry);
       if (!configs[config.id]) {
@@ -375,6 +442,13 @@ export function buildState(root, { validate = true } = {}) {
         usage: raw.usage || null,
         cost_usd: raw.cost_usd ?? null,
         error: raw.error || null,
+        error_class: errorClass(raw.error),
+        run_scored: runScored,
+        // From the evidence ledger: false leaves the row out of every aggregate.
+        // All or nothing (lab/lib/ledger.mjs): a run that is open, halted, changed or
+        // mis-scored is listed and counts in no aggregate.
+        trusted: counts,
+        model_check: raw.metadata?.model_check ?? modelCheck(raw.metadata?.harness_model ?? config.model, raw.metadata?.model_reported),
         metadata: raw.metadata || null,
         scores,
         quality,
@@ -392,6 +466,11 @@ export function buildState(root, { validate = true } = {}) {
       created_at: manifest.created_at,
       finished_at: manifest.finished_at ?? null,
       status: manifest.status,
+      // live, stale (the runner is gone: resume it) or unknown, for a run that says running.
+      liveness: runLiveness(manifest),
+      resumable: resumable(manifest, trust),
+      // From the evidence ledger: legacy (no ledger yet), trusted, open, halted or untrusted.
+      trust,
       context_key: key,
       suite: manifest.suite,
       prompt: manifest.prompt,
@@ -408,10 +487,12 @@ export function buildState(root, { validate = true } = {}) {
   }
 
   for (const ctx of contexts.values()) {
-    const ctxRows = observations.filter((item) => item.context_key === ctx.key);
+    // A run that does not match the evidence ledger counts in no aggregate: no n, cost, errors or scores.
+    const ctxRows = observations.filter((item) => item.context_key === ctx.key && item.trusted !== false);
+    const hasQuality = ctx.evaluators.some((item) => item.dimension === 'quality');
     ctx.aggregates = {};
     for (const id of ctx.config_ids) {
-      ctx.aggregates[id] = aggregate(ctxRows.filter((row) => row.config_id === id), configs[id]);
+      ctx.aggregates[id] = aggregate(ctxRows.filter((row) => row.config_id === id), configs[id], { hasQuality });
     }
     ctx.comparison = comparisonMode(ctx.config_ids.map((id) => configs[id]));
     ctx.latest_run_at = ctx.runs

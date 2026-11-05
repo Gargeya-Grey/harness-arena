@@ -9,6 +9,7 @@
 - `runs-ledger` lists runs newest first with status, rows and errors.
 - `report-markdown` prints one comparison table per context; `--write` writes `reports/comparison.md`.
 - `score-again` recomputes scores from `raw.jsonl` without model calls.
+- `new-case` scaffolds a case (`node lab new-case <suite> <slug> [--agent]`); `validate` reports each `<<FILL IN>>` marker left.
 
 ## How to get to it (user POV)
 
@@ -24,6 +25,8 @@ Preconditions:
 - **Fault.** Run `printf '{not json\n' >> $ROOT/results/$(ls $ROOT/results | head -1)/raw.jsonl` and validate again. Exit code `1`; one problem names that file and line.
 - **Ledger.** Run `LAB_ROOT=$ROOT node lab runs`. Nine run ids, each with `n/n rows`.
 - **Report.** Run `LAB_ROOT=$ROOT node lab report`. Three `##` context headings and a table whose first column holds labels such as `Claude Haiku 4.5 · claude-code 2.1.306`.
+- **Report columns.** The table has `n (cases)`, `Failed` and `Lost`. A free alias (`pinned: false`) shows `(alias, not pinned)` after its label.
+- **New case.** Run `LAB_ROOT=$ROOT node lab new-case smoke my-case`. It prints the files it wrote and the new suite version. `LAB_ROOT=$ROOT node lab validate` now exits `1` with a problem that names `datasets/smoke/cases.jsonl` and `<<FILL IN>>`.
 - **Score again.** Run `LAB_ROOT=$ROOT node lab score --all`. Then `git diff --no-index` between a score file and its copy from before shows no change in `passed` values.
 
 ## Gotchas

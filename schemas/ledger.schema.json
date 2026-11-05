@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://model-testing.local/schemas/ledger.schema.json",
+  "title": "Ledger entry",
+  "description": "One entry of the evidence ledger, lab.ledger.jsonl at the main checkout (not committed). One JSON object per line; the file only grows. See lab/lib/ledger.mjs.",
+  "type": "object",
+  "required": [
+    "at",
+    "kind",
+    "run_id"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "kind": {
+      "enum": [
+        "open",
+        "resume",
+        "row",
+        "halt",
+        "close",
+        "adopt",
+        "scores"
+      ]
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "row: the sha256 of the row's line in raw.jsonl, newline included."
+    },
+    "reason": {
+      "type": "string",
+      "description": "halt: why the run stopped (left_workdir, write_failed)."
+    },
+    "status": {
+      "type": "string",
+      "description": "close: the status written to run.json."
+    },
+    "halted": {
+      "type": "string",
+      "description": "close: how the run was halted, if it was."
+    },
+    "files": {
+      "type": "object",
+      "description": "close, adopt: sha256 of every file of the run folder but scores/. resume: the run's files but run.json, raw.jsonl and harness-events.ndjson. row: the files that call wrote or changed. scores: sha256 of each scores/ file the score command wrote (adopt: every scores/ file of the run's evaluators).",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "lines": {
+      "type": "array",
+      "description": "close, adopt, resume: the sha256 of each line of raw.jsonl kept, in order.",
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "core": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "open, resume: sha256 of run.json without status, finished_at, runner, notes and the halted, version_end and workdir_git_fence settings."
+    },
+    "by": {
+      "enum": [
+        "ledger-created",
+        "owner"
+      ],
+      "description": "adopt: who vouched for the run."
+    },
+    "events": {
+      "type": "object",
+      "description": "row, resume: the size and sha256 of the first bytes of harness-events.ndjson that the ledger vouches for (after that row's events).",
+      "required": [
+        "size",
+        "sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

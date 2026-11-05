@@ -20,7 +20,7 @@ const COLUMNS = [
   { key: 'passed', label: 'Passed', show: () => true, cell: passedCell },
   { key: 'time', label: 'Typical time', show: (list) => list.some((s) => s.facts.time !== null), cell: (s) => (s.facts.time === null ? none() : html`<span class="v">${durText(s.facts.time)}</span>`) },
   { key: 'price', label: 'API price', show: (list) => list.some((s) => s.facts.price !== null), cell: (s) => (s.facts.price === null ? none() : html`<span class="v">${usdText(s.facts.price)}</span>`) },
-  { key: 'errors', label: 'Errors', show: (list) => list.some((s) => s.facts.errors > 0), cell: (s) => (s.facts.errors ? html`<span class="v bad">${s.facts.errors} of ${s.facts.tries}</span>${s.errorReason ? html`<span class="sub">${s.errorReason}</span>` : ''}` : html`<span class="nil">none</span>`) },
+  { key: 'errors', label: 'Errors', show: (list) => list.some((s) => s.facts.errors > 0), cell: (s) => (s.facts.errors ? html`<span class="v bad">${s.facts.errors} of ${s.facts.tries}</span>${s.errorReason ? html`<span class="sub">${s.errorReason}</span>` : ''}${s.facts.lost ? html`<span class="sub">${s.facts.lost} lost to limits or sign-in, not counted</span>` : ''}` : html`<span class="nil">none</span>`) },
   { key: 'rating', label: 'Your rating', show: (list) => list.some((s) => s.facts.ratings > 0), cell: (s) => (s.facts.ratings ? html`<span class="v">${s.facts.rating.toFixed(1)}</span><span class="sub">of 5, ${plural(s.facts.ratings, 'rating')}</span>` : html`<span class="nil">none yet</span>`) },
   // Details: one click away.
   { key: 'slow', label: 'Slow end', details: true, show: (list) => list.some((s) => s.facts.slow !== null && s.facts.timed > 1), cell: (s) => (s.facts.slow === null ? none() : html`<span class="v">${durText(s.facts.slow)}</span>`) },
@@ -39,7 +39,15 @@ const COLUMNS = [
   } },
 ];
 
-const DETAIL_NOTE = 'Slow end: 1 try in 20 was slower. Pass range: where the true pass share likely lies (95%).';
+// Is the answer from the model the row names? A mismatch means the harness used another model.
+function modelWarning(s) {
+  const notes = [];
+  if (s.facts.mismatched) notes.push(`${s.facts.mismatched} answered by another model`);
+  if (s.cfg.pinned === false) notes.push('alias, not a pinned snapshot');
+  return notes.length ? html`<span class="who-sub warn">${notes.join(' · ')}</span>` : '';
+}
+
+const DETAIL_NOTE ='Slow end: 1 try in 20 was slower. Pass range: where the true pass share likely lies (95%).';
 
 export function renderSetups() {
   const host = document.getElementById('setups');
@@ -53,7 +61,7 @@ export function renderSetups() {
   const multi = list.length > 1;
   const head = cols.map((col) => html`<th scope="col" class="c-${col.key}">${col.label}</th>`);
   const rows = list.map((s) => html`<tr>
-    <th scope="row" class="c-setup"><span class="who">${multi ? html`<span class="lt" aria-hidden="true">${letterOf(s.id)}</span>` : ''}<span class="who-text"><span class="who-name">${s.cfg.display_name}</span><span class="who-sub">${harnessLine(s.cfg)}</span></span></span></th>
+    <th scope="row" class="c-setup"><span class="who">${multi ? html`<span class="lt" aria-hidden="true">${letterOf(s.id)}</span>` : ''}<span class="who-text"><span class="who-name">${s.cfg.display_name}</span><span class="who-sub">${harnessLine(s.cfg)}</span>${modelWarning(s)}</span></span></th>
     ${cols.map((col) => {
       const on = best(col, s);
       return html`<td class="c-${col.key}${on ? ' is-best' : ''}" data-label="${col.label}">${col.cell(s, on)}${on ? html`<span class="sr"> (best)</span>` : ''}</td>`;

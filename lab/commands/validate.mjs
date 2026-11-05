@@ -5,15 +5,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { listDirs, listFiles, readJson, readJsonl } from '../lib/fsutil.mjs';
 import { SchemaSet } from '../lib/schema.mjs';
-import { loadPrompt, loadRegistry, loadSuite, loadYamlFile, paths, resolveExperiment } from '../lib/repo.mjs';
+import { targetProblems as checkTargets, loadPrompt, loadRegistry, loadSuite, loadYamlFile, paths, resolveExperiment, runDirs } from '../lib/repo.mjs';
 import { harnessesFile, loadAdapters, readDeclared } from '../adapters/index.mjs';
 import { getEvaluator } from '../evaluators/index.mjs';
 import { listTree } from '../lib/workspace.mjs';
+import { runLiveness } from '../lib/checks.mjs';
+import { LEDGER_SCHEMA, ledgerPath, loadLedger, scoreFileNames, trustRun } from '../lib/ledger.mjs';
+import { FILL_IN, unfilled } from './new-case.mjs';
 
 export function validateRepo(root) {
   const p = paths(root);
   const schemas = new SchemaSet(p.schemas);
   const problems = [];
+  // Warnings do not fail validate: a stale run is evidence as it stands, and resuming it is the owner's choice.
+  const warnings = [];
   const counts = { suites: 0, cases: 0, prompts: 0, experiments: 0, runs: 0, rows: 0, scores: 0, annotations: 0, boards: 0 };
   const rel = (file) => path.relative(root, file).replace(/\\/g, '/');
   const report = (file, message) => problems.push(`${rel(file)}: ${message}`);
@@ -36,6 +41,7 @@ export function validateRepo(root) {
       if (entry.pricing != null && (typeof entry.pricing.input_per_1m !== 'number' || typeof entry.pricing.output_per_1m !== 'number')) {
         report(p.registry, `${key}: pricing needs both input_per_1m and output_per_1m, or leave pricing out`);
       }
+      if (entry.pinned != null && typeof entry.pinned !== 'boolean') report(p.registry, `${key}: pinned must be true or false`);
       for (const harness of Object.keys(entry.harness_models || {})) {
         if (!adapters[harness]) report(p.registry, `${key}: harness_models names unknown harness "${harness}"`);
       }
@@ -88,6 +94,8 @@ export function validateRepo(root) {
           if (workspace == null) report(file, `line ${index + 1}: expected.check needs input.workspace`);
         }
       });
+      const scaffold = ['checks', 'workspaces'].flatMap((dir) => listTree(path.join(suite.dir, dir)).map((rel) => path.join(suite.dir, dir, ...rel.split('/'))));
+      for (const hit of unfilled([file, ...scaffold])) report(hit.file, `line ${hit.line}: still holds ${FILL_IN}; write the real value`);
     } catch (error) {
       report(path.join(p.datasets, name), error.message);
     }
@@ -113,7 +121,7 @@ export function validateRepo(root) {
       const experiment = loadYamlFile(abs);
       const { targets, problems: targetProblems } = resolveExperiment(experiment, registry);
       targetProblems.forEach((message) => report(abs, message));
-      for (const target of targets) if (target.harness && !adapters[target.harness]) report(abs, `unknown harness "${target.harness}"; known: ${Object.keys(adapters).join(', ')}`);
+      for (const message of checkTargets(targets.filter((target) => target.harness), registry, adapters)) report(abs, message);
       if (experiment.user_config != null && !['loaded', 'isolated'].includes(experiment.user_config)) report(abs, `user_config must be "loaded" or "isolated"`);
       if (experiment.access != null && !['answer', 'edit'].includes(experiment.access)) report(abs, `access must be "answer" or "edit"`);
       const suite = suites.get(experiment.suite);
@@ -147,8 +155,18 @@ export function validateRepo(root) {
     }
   }
 
-  for (const name of listDirs(p.results)) {
-    const runDir = path.join(p.results, name);
+  // The evidence ledger: every entry to its schema, every run checked against it.
+  const ledger = loadLedger(ledgerPath(root));
+  if (ledger?.unreadable) report(ledgerPath(root), `cannot read the evidence ledger (${ledger.unreadable}); no run is trusted until it can be read`);
+  for (const item of ledger?.problems || []) report(ledgerPath(root), `line ${item.line}: ${item.message}`);
+  // A torn line (a crash during an append, or an edit) loses its entry, which can only make
+  // a run less trusted; the runs it named are reported below if they no longer match.
+  for (const item of ledger?.torn || []) warnings.push(`${path.relative(root, ledgerPath(root)).replace(/\\/g, '/') || ledgerPath(root)}: line ${item.line}: ${item.message}; the entry on it is lost`);
+  for (const { line, entry } of ledger?.entries || []) {
+    schemas.validate(LEDGER_SCHEMA, entry).forEach((error) => report(ledgerPath(root), `line ${line}: ${error}`));
+  }
+
+  for (const { name, dir: runDir } of runDirs(root)) {
     const manifestFile = path.join(runDir, 'run.json');
     if (!fs.existsSync(manifestFile)) continue;
     counts.runs += 1;
@@ -160,6 +178,17 @@ export function validateRepo(root) {
       continue;
     }
     check('run.schema.json', manifest, manifestFile);
+    try {
+      const trust = trustRun(ledger, manifest.run_id, runDir);
+      if (trust.state === 'untrusted') report(manifestFile, `does not match the evidence ledger: ${trust.reason}`);
+      else if (trust.scores === 'mismatch' && listFiles(path.join(runDir, 'scores'), '.jsonl').length) report(manifestFile, `its scores do not match the evidence ledger (${trust.scores_reason}); run node lab score ${manifest.run_id}`);
+      for (const rel of trust.stray_scores || []) report(path.join(runDir, ...rel.split('/')), 'not written by an evaluator of this run, so it is never read; delete it');
+    } catch (error) {
+      report(manifestFile, `cannot be checked against the evidence ledger: ${error.message}`);
+    }
+    const liveness = runLiveness(manifest);
+    if (liveness === 'stale') warnings.push(`${rel(manifestFile)}: stopped without finishing; continue it with node lab run --resume ${name}`);
+    if (liveness === 'unknown') warnings.push(`${rel(manifestFile)}: says running but has no heartbeat; if no runner is working on it, continue it with node lab run --resume ${name} --force`);
     if (manifest.run_id !== name) report(manifestFile, `run_id ${manifest.run_id} does not match its folder ${name}`);
     const rawFile = path.join(runDir, 'raw.jsonl');
     const { rows, problems: rawProblems } = readJsonl(rawFile);
@@ -181,7 +210,7 @@ export function validateRepo(root) {
       const expected = (manifest.models || []).length * cases * (manifest.repeats || 1);
       if (expected && rows.length !== expected) report(rawFile, `completed run has ${rows.length} rows; expected ${expected} (models x cases x repeats)`);
     }
-    for (const file of listFiles(path.join(runDir, 'scores'), '.jsonl')) {
+    for (const file of listFiles(path.join(runDir, 'scores'), '.jsonl').filter((name) => scoreFileNames(manifest).has(`scores/${name}`))) {
       const scoreFile = path.join(runDir, 'scores', file);
       const { rows: scores, problems: scoreProblems } = readJsonl(scoreFile);
       scoreProblems.forEach((item) => report(scoreFile, `line ${item.line}: ${item.message}`));
@@ -212,12 +241,13 @@ export function validateRepo(root) {
     }
   }
 
-  return { problems, counts };
+  return { problems, warnings, counts };
 }
 
 export function validateCommand(root, { log = console.log } = {}) {
-  const { problems, counts } = validateRepo(root);
+  const { problems, warnings, counts } = validateRepo(root);
   log(Object.entries(counts).map(([key, value]) => `${value} ${key}`).join(' · '));
+  for (const line of warnings) log(`warning: ${line}`);
   if (problems.length) {
     log(`\n${problems.length} problem(s):`);
     problems.forEach((line) => log(`  ${line}`));

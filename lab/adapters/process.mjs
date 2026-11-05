@@ -2,11 +2,22 @@
 // percent signs reach the harness byte for byte on every platform. On Windows
 // an npm `.cmd` shim is resolved to the script it wraps and run with node.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const cache = new Map();
+const LAUNCHER = fileURLToPath(new URL('./launcher.mjs', import.meta.url));
+
+// The process watch (lab/lib/procwatch.mjs) puts every harness process in a Job Object
+// during a guarded call. A watcher returns a promise; the prompt is sent only once every
+// watcher has the process, and a process a watcher cannot hold is ended.
+const spawnWatchers = new Set();
+export function watchSpawns(watcher) {
+  spawnWatchers.add(watcher);
+  return () => spawnWatchers.delete(watcher);
+}
 
 export function resolveCommand(name) {
   if (cache.has(name)) return cache.get(name);
@@ -58,19 +69,34 @@ export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, on
   if (!resolved) {
     return Promise.resolve({ code: null, stdout: '', stderr: '', ms: 0, error: { type: 'not_installed', message: `"${name}" was not found on PATH` } });
   }
+  // During a guarded call the harness starts through the launcher, which waits until the
+  // process watch holds it (lab/adapters/launcher.mjs).
+  const gated = spawnWatchers.size > 0;
+  // spawn sets the real working folder but not PWD, and some CLIs (OpenCode on
+  // Windows) start their tools from PWD. Point it at cwd so the agent starts there.
+  const fullEnv = { ...process.env, ...env, ...(cwd ? { PWD: path.resolve(cwd), INIT_CWD: path.resolve(cwd) } : {}) };
+  // The launcher gets a fixed environment, so no variable (NODE_OPTIONS in any spelling)
+  // can load code into it before the job holds it. The harness gets fullEnv in the spec.
+  const launcherEnv = process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot ?? process.env.SYSTEMROOT ?? 'C:\\Windows' } : {};
+  const spec = { command: resolved.command, args: [...resolved.prefix, ...args] };
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
     let pending = '';
     let settled = false;
-    const child = spawn(resolved.command, [...resolved.prefix, ...args], {
+    // Gated: a private IPC channel to the launcher carries the spec and its report.
+    const child = spawn(gated ? process.execPath : spec.command, gated ? [LAUNCHER] : spec.args, {
       cwd,
-      // spawn sets the real working folder but not PWD, and some CLIs (OpenCode on
-      // Windows) start their tools from PWD. Point it at cwd so the agent starts there.
-      env: { ...process.env, ...env, ...(cwd ? { PWD: path.resolve(cwd), INIT_CWD: path.resolve(cwd) } : {}) },
-      stdio: ['pipe', 'pipe', 'pipe'],
+      env: gated ? launcherEnv : fullEnv,
+      stdio: gated ? ['pipe', 'pipe', 'pipe', 'ipc'] : ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
+    let launchError = null;
+    if (gated) {
+      child.on('message', (message) => {
+        if (message && typeof message.spawn_error === 'string') launchError = message.spawn_error;
+      });
+    }
     const finish = (result) => {
       if (settled) return;
       settled = true;
@@ -78,7 +104,9 @@ export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, on
       resolve({ stdout, stderr, ms: Date.now() - started, ...result });
     };
     const timer = setTimeout(() => {
-      child.kill();
+      // Through the launcher the harness is a child of the launcher: end the whole tree.
+      if (gated && process.platform === 'win32' && child.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+      else child.kill();
       finish({ code: null, error: { type: 'timeout', message: `${name} did not exit within ${Math.round(timeoutMs / 1000)} s` } });
     }, timeoutMs);
     child.stdout.setEncoding('utf8');
@@ -97,10 +125,24 @@ export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, on
     child.on('error', (error) => finish({ code: null, error: { type: 'spawn_error', message: error.message } }));
     child.on('close', (code) => {
       if (onLine && pending.trim()) onLine(pending);
-      finish({ code, error: null });
+      finish({ code, error: launchError ? { type: 'spawn_error', message: launchError } : null });
     });
     child.stdin.on('error', () => {});
-    child.stdin.end(input ?? '');
+    if (!gated) {
+      child.stdin.end(input ?? '');
+      return;
+    }
+    const holds = !child.pid ? [Promise.reject(new Error('the launcher did not start'))] : [...spawnWatchers].map((watcher) => Promise.resolve().then(() => watcher(child.pid)));
+    Promise.all(holds).then(
+      () => {
+        child.send({ ...spec, env: fullEnv }, () => {});
+        child.stdin.end(input ?? '');
+      },
+      (error) => {
+        child.kill('SIGKILL');
+        finish({ code: null, error: { type: 'process_watch', message: error.message } });
+      },
+    );
   });
 }
 

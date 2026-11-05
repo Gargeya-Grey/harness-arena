@@ -111,6 +111,7 @@ test('snapshot keeps only changes, and rebuild gives back the final workspace', 
   const fixture = path.join(dir, 'fixture');
   const work = path.join(dir, 'work');
   const runDir = path.join(dir, 'run');
+  fs.mkdirSync(runDir);
   fs.mkdirSync(path.join(fixture, 'src'), { recursive: true });
   fs.writeFileSync(path.join(fixture, 'src', 'a.mjs'), 'a1\n');
   fs.writeFileSync(path.join(fixture, 'keep.txt'), 'same\n');
@@ -230,8 +231,12 @@ test('an agent that edits the lab stops the whole experiment, and its run is not
     ['id: two', 'suite: agentic', 'prompt: agent-task', 'repeats: 2', 'cases: [agentic-slugify-bug]', 'workdir: isolated', 'access: edit', 'targets:', '  - model: claude-haiku', '    harness: fake-escaper', '  - model: claude-haiku', '    harness: fake-next', 'evaluators:', '  - id: workspace-tests', '    version: "1"', '    dimension: quality', ''].join('\n'),
   );
   const results = await runCommand(root, file, { log: () => {} });
-  assert.equal(results.length, 1, 'the next harness never started');
-  assert.equal(laterCalls, 0);
+  // Both runs open before the first call (harnesses interleave); the second never gets a call.
+  assert.equal(results.length, 2);
+  assert.equal(laterCalls, 0, 'the next harness never made a call');
+  assert.equal(readJsonl(path.join(results[1].runDir, 'raw.jsonl')).rows.length, 0);
+  assert.equal(readJson(path.join(results[1].runDir, 'run.json')).harness.settings.halted, 'experiment_halted');
+  assert.equal(results[1].status, 'failed');
   const rows = readJsonl(path.join(results[0].runDir, 'raw.jsonl')).rows;
   assert.equal(rows.length, 1, 'the second repeat never ran');
   assert.equal(rows[0].error.type, 'left_workdir');
@@ -285,6 +290,7 @@ test('file rules: includes, exists false and same_as_starter each fail when they
   fs.writeFileSync(path.join(work, 'keep.txt'), 'changed\n');
   fs.writeFileSync(path.join(work, 'secret.txt'), 'x\n');
   const runDir = path.join(dir, 'run');
+  fs.mkdirSync(runDir);
   const artifact = snapshotWorkspace({ fixtureDir: fixture, workDir: work, runDir, base: 'w', artifactId: 'x', createdAt: '2026-11-04T00:00:00Z' });
   const checkDir = path.join(dir, 'checks', 'rules');
   fs.mkdirSync(checkDir, { recursive: true });
@@ -366,6 +372,7 @@ test('a stored run cannot make the rebuild touch files outside the workspace', (
   const victim = path.join(dir, 'victim.txt');
   fs.writeFileSync(victim, 'keep me\n');
   const runDir = path.join(dir, 'run');
+  fs.mkdirSync(runDir);
   fs.mkdirSync(path.join(runDir, 'w'), { recursive: true });
   for (const bad of [{ deleted: ['../victim.txt'] }, { deleted: ['../../victim.txt'] }, { changed: ['../victim.txt'] }]) {
     fs.writeFileSync(path.join(runDir, 'w', 'workspace.json'), JSON.stringify({ changed: [], deleted: [], ...bad }));
@@ -391,6 +398,7 @@ test('snapshot limits are recorded as skipped, and a folder turned into a file r
   fs.writeFileSync(path.join(work, 'big.bin'), Buffer.alloc(64));
   WORKSPACE_LIMITS.fileBytes = 32;
   const runDir = path.join(dir, 'run');
+  fs.mkdirSync(runDir);
   const artifact = snapshotWorkspace({ fixtureDir: fixture, workDir: work, runDir, base: 'w', artifactId: 'x', createdAt: '2026-11-04T00:00:00Z' });
   const manifest = readJson(path.join(runDir, artifact.path));
   assert.deepEqual(manifest.skipped, [{ path: 'big.bin', bytes: 64, reason: 'file too large' }]);
