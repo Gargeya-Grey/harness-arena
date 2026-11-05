@@ -177,7 +177,11 @@ export function validateRepo(root) {
       }
     });
     if (manifest.status === 'completed') {
-      const cases = manifest.experiment?.cases?.length || suites.get(manifest.suite?.id)?.cases.length || 0;
+      // The suite's cases count only at the version the run recorded: a suite that grew
+      // later does not make an older run look short. Unknown count: no check.
+      const suite = suites.get(manifest.suite?.id);
+      const sameSuite = suite && String(suite.version) === String(manifest.suite?.version);
+      const cases = manifest.experiment?.cases?.length || (sameSuite ? suite.cases.length : 0);
       const expected = (manifest.models || []).length * cases * (manifest.repeats || 1);
       if (expected && rows.length !== expected) report(rawFile, `completed run has ${rows.length} rows; expected ${expected} (models x cases x repeats)`);
     }
