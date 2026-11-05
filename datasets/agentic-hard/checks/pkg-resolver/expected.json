@@ -1,0 +1,31 @@
+{
+  "probes": {
+    "keeps core versions compared as numbers": [["1.2.0","1.9.0","1.10.0","2.0.0","10.0.0"],0,0,true,false,false,-1],
+    "prerelease versions follow the semver precedence rules": [["1.0.0-alpha","1.0.0-alpha.1","1.0.0-alpha.beta","1.0.0-beta","1.0.0-beta.2","1.0.0-beta.11","1.0.0-rc.1","1.0.0"],-1,-1,1],
+    "caret ranges, including the 0.x rules": [true,false,false,true,false,true,false,true,false,true,true,false,true,false],
+    "tilde ranges, with and without a patch": [true,false,true,false,true,false,true,false],
+    "x-ranges and the star": [true,false,true,false,true,true,true,true,true,true,false,true],
+    "dash ranges": [true,true,false,false,true,false,true,false,true],
+    "keeps comparators and alternatives": [true,false,true,false,true,true,false,true,false,true,true],
+    "a prerelease only satisfies a set that names a prerelease of the same version": [false,false,true,false,false,false,true,false,true,false,true],
+    "maxSatisfying picks the highest release by number": ["1.10.0","1.0.5",null,"1.10.0","0.2.10","1.0.0"],
+    "keeps a nonsense range an error": ["threw","threw",false],
+    "the highest version wins whatever the order of the registry": [{"a":"1.10.0"},{"a":"1.10.0"},{"a":"2.0.0"}],
+    "a prerelease is not chosen unless the range asks for it": [{"ok":{"a":"1.0.0"}},{"ok":{"a":"2.0.0-beta.1"}},{"threw":"ConflictError","pkg":"p","requirements":["root wants ^2.0.0"]},{"ok":{"p":"2.0.0-beta.2"}}],
+    "two requirements on one package are both honoured": [{"a":"1.0.0","b":"1.2.9","c":"1.0.0"},{"a":"1.0.0","b":"1.2.9","c":"1.0.0"}],
+    "an older version is tried when the newest one cannot work": [{"a":"1.0.0","b":"1.0.0","c":"1.0.0"},{"a":"1.0.0","b":"1.0.0","c":"1.0.0"}],
+    "backtracking works several levels deep": {"app":"1.0.0","core":"2.1.4","lib":"1.1.0","util":"1.0.0"},
+    "a conflict names the package and who asked for what": {"threw":"ConflictError","pkg":"b","requirements":["c@1.0.0 wants ^2.0.0","root wants ^1.0.0"]},
+    "keeps an unsatisfiable range a conflict, and a missing package not found": [{"threw":"ConflictError","pkg":"a","requirements":["root wants ^3.0.0"]},{"threw":"NotFoundError","pkg":"zzz"}],
+    "a cycle reports the whole loop": [{"threw":"CycleError","path":["a","b","c","a"]},{"threw":"CycleError","path":["a","b","a"]},{"threw":"CycleError","path":["s","s"]},{"threw":"CycleError","path":["b","c","a","b"]}],
+    "a cycle error is a resolution error with a readable message": [true,true,true],
+    "keeps shared dependencies out of the cycle check": {"ok":{"base":"1.0.0","leaf":"1.0.0","left":"1.0.0","right":"1.0.0","top":"1.0.0"}},
+    "keeps lockfile and tree output": {"result":{"app":"2.0.0","beta":"2.1.0","zed":"1.4.0"},"order":["app","beta","zed"],"back":{"app":"2.0.0","beta":"2.1.0","zed":"1.4.0"},"tree":["app@2.0.0","  beta@2.1.0","    zed@1.4.0","  zed@1.4.0 (*)"]},
+    "keeps a long chain of packages resolving": [150,"1.1.0","1.1.0"]
+  },
+  "files": {
+    "test/semver.test.mjs": {"same_as_starter":true},
+    "test/range.test.mjs": {"same_as_starter":true},
+    "test/resolver.test.mjs": {"same_as_starter":true}
+  }
+}
