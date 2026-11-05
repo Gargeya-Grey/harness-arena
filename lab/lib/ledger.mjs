@@ -339,6 +339,9 @@ export function trustRun(ledger, runId, runDir) {
   if (run.closed) {
     const changed = firstDiff(run.files, files);
     if (changed) return { state: 'untrusted', scores: 'mismatch', reason: `${changed} since the run closed` };
+    // A run with evaluators and no scores entry was never scored (or its first score
+    // write failed): it counts nowhere until node lab score records its scores.
+    if (names.size && !run.scores) return { state: 'trusted', scores: 'mismatch', scores_reason: 'the run has no recorded scores yet', ...(stray.length ? { stray_scores: stray } : {}) };
     return { state: 'trusted', ...scoreState };
   }
   if (run.core && (!manifest || manifestCore(manifest) !== run.core)) return { state: 'untrusted', scores: 'mismatch', reason: 'run.json changed since the run started' };
@@ -384,8 +387,8 @@ export function adoptRuns(file, dirs, { only = null, extra = {} } = {}) {
     if (!runId) continue; // No readable run.json: not a run.
     if (runId !== name || (only && !only.has(runId))) continue;
     appendEntry(file, closeEntry('adopt', runId, dir, extra));
-    const scores = scoresEntry(runId, dir, manifest);
-    if (Object.keys(scores.files).length) appendEntry(file, scores);
+    // Always a scores entry: an adopt vouches for the scores as they are, none included.
+    appendEntry(file, scoresEntry(runId, dir, manifest));
     adopted.push(runId);
   }
   return adopted;

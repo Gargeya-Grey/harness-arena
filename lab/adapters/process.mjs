@@ -5,8 +5,10 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const cache = new Map();
+const LAUNCHER = fileURLToPath(new URL('./launcher.mjs', import.meta.url));
 
 // The process watch (lab/lib/procwatch.mjs) puts every harness process in a Job Object
 // during a guarded call. A watcher returns a promise; the prompt is sent only once every
@@ -67,12 +69,16 @@ export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, on
   if (!resolved) {
     return Promise.resolve({ code: null, stdout: '', stderr: '', ms: 0, error: { type: 'not_installed', message: `"${name}" was not found on PATH` } });
   }
+  // During a guarded call the harness starts through the launcher, which waits until the
+  // process watch holds it (lab/adapters/launcher.mjs).
+  const gated = spawnWatchers.size > 0;
+  const spec = { command: resolved.command, args: [...resolved.prefix, ...args] };
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
     let pending = '';
     let settled = false;
-    const child = spawn(resolved.command, [...resolved.prefix, ...args], {
+    const child = spawn(gated ? process.execPath : spec.command, gated ? [LAUNCHER] : spec.args, {
       cwd,
       // spawn sets the real working folder but not PWD, and some CLIs (OpenCode on
       // Windows) start their tools from PWD. Point it at cwd so the agent starts there.
@@ -109,13 +115,16 @@ export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, on
       finish({ code, error: null });
     });
     child.stdin.on('error', () => {});
-    const holds = !child.pid ? [] : [...spawnWatchers].map((watcher) => Promise.resolve().then(() => watcher(child.pid)));
-    if (!holds.length) {
+    if (!gated) {
       child.stdin.end(input ?? '');
       return;
     }
+    const holds = !child.pid ? [Promise.reject(new Error('the launcher did not start'))] : [...spawnWatchers].map((watcher) => Promise.resolve().then(() => watcher(child.pid)));
     Promise.all(holds).then(
-      () => child.stdin.end(input ?? ''),
+      () => {
+        child.stdin.write(`${JSON.stringify(spec)}\n`);
+        child.stdin.end(input ?? '');
+      },
       (error) => {
         child.kill('SIGKILL');
         finish({ code: null, error: { type: 'process_watch', message: error.message } });

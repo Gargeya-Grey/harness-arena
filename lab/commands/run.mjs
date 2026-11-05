@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { appendJsonl, isoNow, readJson, readJsonl, readText, sha256, writeJson, safeSegment } from '../lib/fsutil.mjs';
+import { isoNow, readJson, readJsonl, readText, sha256, safeSegment } from '../lib/fsutil.mjs';
 import { redactEvent, redactPaths } from '../lib/redact.mjs';
 import { parseYaml } from '../lib/yaml.mjs';
 import { loadPrompt, mainCheckout, targetProblems, loadRegistry, loadSuite, paths, renderMessages, resolveExperiment, runDirs } from '../lib/repo.mjs';
@@ -69,7 +69,7 @@ export function workspaceDir(suite, testCase) {
 // for a repo root (git status, AGENTS.md, CLAUDE.md); without this fence a temp
 // folder inside a home folder that is a git repo leaks that repo into the prompt.
 export function fenceWorkdir(dir) {
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true }); // not a run folder: the call folder
   const result = spawnSync('git', ['init', '-q'], { cwd: dir, stdio: 'ignore', windowsHide: true, timeout: 30000 });
   return result.status === 0;
 }
@@ -303,7 +303,7 @@ function callFolder() {
 
 function removeFolder(dir) {
   try {
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); // not a run folder: the call folder
     return !fs.existsSync(dir);
   } catch {
     return false;
@@ -352,7 +352,7 @@ async function openRun(root, plan, harnessName, modelKeys, { log, resume = null,
 
   session.runId = `${runStamp()}__${plan.suite.id}__${plan.experiment.id}__${crypto.randomBytes(3).toString('hex')}`;
   session.runDir = path.join(paths(root).results, session.runId);
-  fs.mkdirSync(session.runDir, { recursive: true });
+  fs.mkdirSync(session.runDir, { recursive: true }); // not a run file: makes the new run folder, which runPath checks on every write
   session.manifest = {
     run_id: session.runId,
     created_at: isoNow(),
@@ -885,12 +885,15 @@ async function resumeRun(root, ref, { log, force, dryRun }) {
   // The events kept: those the ledger recorded with the last kept row (a closed run: all).
   // Events of a call made again are cut, so they are never vouched for twice.
   const eventsFile = path.join(runDir, 'harness-events.ndjson');
-  const eventsKeep = ledgerRun?.closed ? eventsState(runDir) : ledgerRun?.events || { size: 0, sha256: eventsState(runDir, 0).sha256 };
+  // A run open since before row entries bound events (rows, but no events record): its
+  // events are kept as they are, never cut.
+  const unbound = !ledgerRun?.events && (ledgerRun?.lines?.length ?? 0) > 0;
+  const eventsKeep = ledgerRun?.closed || unbound ? eventsState(runDir) : ledgerRun?.events || { size: 0, sha256: eventsState(runDir, 0).sha256 };
   record(plan, { kind: 'resume', run_id: manifest.run_id, lines: kept, files: recorded, events: eventsKeep, core: manifestCore(manifest) });
   for (const prefix of new Set(redo)) {
     // Never through a link: a link on the way would remove another run's files.
     const dir = runPath(runDir, `${prefix}x`);
-    fs.rmSync(path.dirname(dir), { recursive: true, force: true });
+    fs.rmSync(path.dirname(dir), { recursive: true, force: true }); // not a run file: a call folder that runPath checked on the line above
   }
   if (fs.existsSync(eventsFile) && fs.statSync(eventsFile).size > eventsKeep.size) fs.truncateSync(own(eventsFile), eventsKeep.size);
   if (droppedRow || tornLine) {

@@ -174,7 +174,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const parsePids = (answer) => (answer.startsWith('pids ') ? answer.slice(5).split(',').filter(Boolean) : null);
 
 /** The Windows watch: one Job Object for the call. */
-async function jobWatch({ settleMs = 300 } = {}) {
+export async function jobWatch({ settleMs = 300 } = {}) {
   const helper = lineHelper('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(JOB_SCRIPT, 'utf16le').toString('base64')]);
   const ready = await helper.ready.catch((error) => error.message);
   if (ready !== 'ready') {
@@ -182,15 +182,24 @@ async function jobWatch({ settleMs = 300 } = {}) {
     throw new Error(String(ready));
   }
   let failure = null;
+  // Assignments still in flight when the call ends: finish() waits for them, so a late
+  // failure is never missed.
+  const pending = new Set();
   return {
-    async assign(pid) {
-      const answer = await helper.ask(`assign ${pid}`).catch((error) => `fail ${error.message}`);
-      if (answer === 'ok') return;
-      failure = failure || (answer.startsWith('escaped ') ? `the harness started a process before the job held it (${answer.slice(8)})` : `a harness process could not be put in the job (${answer.slice(5)})`);
-      throw new Error(failure);
+    assign(pid) {
+      const work = (async () => {
+        const answer = await helper.ask(`assign ${pid}`).catch((error) => `fail ${error.message}`);
+        if (answer === 'ok') return;
+        failure = failure || (answer.startsWith('escaped ') ? `the harness started a process before the job held it (${answer.slice(8)})` : `a harness process could not be put in the job (${answer.slice(5)})`);
+        throw new Error(failure);
+      })();
+      pending.add(work);
+      work.catch(() => {}).finally(() => pending.delete(work));
+      return work;
     },
     async finish() {
       try {
+        await Promise.allSettled([...pending]);
         if (failure) return { ended: [], survivors: [], error: failure };
         const left = parsePids(await helper.ask('list'));
         if (!left) throw new Error('the process watch could not list the job');
@@ -210,22 +219,29 @@ async function jobWatch({ settleMs = 300 } = {}) {
   };
 }
 
-/** Elsewhere: list processes with ps, keep the new ones that descend from the runner. */
-async function treeWatch({ intervalMs = 250, settleMs = 300, rootPid = process.pid } = {}) {
-  const list = () =>
-    new Promise((resolve, reject) => {
-      const child = spawn('ps', ['-A', '-o', 'pid=,ppid=,lstart=,comm='], { stdio: ['ignore', 'pipe', 'ignore'] });
-      let out = '';
-      child.stdout.setEncoding('utf8');
-      child.stdout.on('data', (chunk) => {
-        out += chunk;
-      });
-      child.on('error', (error) => reject(new Error(`the process watch could not list processes (${error.message})`)));
-      child.on('close', (code) => {
-        if (code !== 0) return reject(new Error(`ps exited with ${code}`));
-        resolve(out.split('\n').map((line) => line.trim().split(/\s+/)).filter((parts) => parts.length >= 7).map((parts) => ({ pid: Number(parts[0]), ppid: Number(parts[1]), key: `${parts[0]}|${parts.slice(2, 7).join(' ')}`, name: parts.slice(7).join(' ') })));
-      });
+/** One process list from ps; `spawned` learns the pid of that ps. */
+function psList(spawned) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('ps', ['-A', '-o', 'pid=,ppid=,lstart=,comm='], { stdio: ['ignore', 'pipe', 'ignore'] });
+    if (child.pid) spawned(child.pid);
+    let out = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      out += chunk;
     });
+    child.on('error', (error) => reject(new Error(`the process watch could not list processes (${error.message})`)));
+    child.on('close', (code) => {
+      if (code !== 0) return reject(new Error(`ps exited with ${code}`));
+      resolve(out.split('\n').map((line) => line.trim().split(/\s+/)).filter((parts) => parts.length >= 7).map((parts) => ({ pid: Number(parts[0]), ppid: Number(parts[1]), key: `${parts[0]}|${parts.slice(2, 7).join(' ')}`, name: parts.slice(7).join(' ') })));
+    });
+  });
+}
+
+/** Elsewhere: list processes with ps, keep the new ones that descend from the runner. */
+export async function treeWatch({ intervalMs = 250, settleMs = 300, rootPid = process.pid, lister = psList } = {}) {
+  // The watch's own ps processes are children of the runner too: never part of the tree.
+  const own = new Set();
+  const list = () => lister((pid) => own.add(pid)).then((rows) => rows.filter((row) => !own.has(row.pid)));
   const baseline = new Set((await list()).map((row) => row.key));
   const tree = new Map();
   const pids = new Set([rootPid]);

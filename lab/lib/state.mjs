@@ -399,7 +399,10 @@ export function buildState(root, { validate = true } = {}) {
     let errors = 0;
     // A halted run is never scored, whatever score file sits in its folder.
     // So is a run that does not match the evidence ledger, or that the ledger says was halted.
-    const runScored = manifest.status !== 'running' && !manifest.harness?.settings?.halted && runCounts(trust) && listFiles(scoresDir, '.jsonl').length > 0;
+    // Scored means a file of the run's own evaluators is there; any other file is not read.
+    const runScored = manifest.status !== 'running' && !manifest.harness?.settings?.halted && runCounts(trust) && listFiles(scoresDir, '.jsonl').some((name) => ownScores.has(`scores/${name}`));
+    // A run.json that still says running (an adopted stale run) never counts.
+    const counts = runCounts(trust) && manifest.status !== 'running';
     for (const raw of rawRows) {
       const config = buildConfig(manifest, raw.model_key, raw, registry);
       if (!configs[config.id]) {
@@ -444,7 +447,7 @@ export function buildState(root, { validate = true } = {}) {
         // From the evidence ledger: false leaves the row out of every aggregate.
         // All or nothing (lab/lib/ledger.mjs): a run that is open, halted, changed or
         // mis-scored is listed and counts in no aggregate.
-        trusted: runCounts(trust),
+        trusted: counts,
         model_check: raw.metadata?.model_check ?? modelCheck(raw.metadata?.harness_model ?? config.model, raw.metadata?.model_reported),
         metadata: raw.metadata || null,
         scores,

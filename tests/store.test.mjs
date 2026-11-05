@@ -23,7 +23,7 @@ import { buildState } from '../lab/lib/state.mjs';
 import { buildArgs } from '../dashboard/jobs.mjs';
 import { runProcess } from '../lab/adapters/process.mjs';
 import { setProcessWatch } from '../lab/lib/procwatch.mjs';
-import { writeRunFile } from '../lab/lib/runwrite.mjs';
+import { appendRunFile, writeRunFile } from '../lab/lib/runwrite.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES = path.join(REPO, 'tests', 'fixtures', 'repo');
@@ -968,6 +968,101 @@ test('ledger: a resume after a crash before a row entry keeps the run open while
   assert.equal(resumed.status, 'completed');
   assert.deepEqual(seen, ['open', 'open', 'open']);
   assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
+});
+
+/** Rewrite the ledger: keep, or change, each entry of one run. */
+function editLedger(root, runId, edit) {
+  const file = ledgerPath(root);
+  const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).flatMap((line) => {
+    const entry = JSON.parse(line);
+    if (entry.run_id !== runId) return [line];
+    const next = edit(entry);
+    return next ? [JSON.stringify(next)] : [];
+  });
+  fs.writeFileSync(file, lines.map((line) => `${line}\n`).join(''));
+}
+
+test('ledger: a run open since before rows bound events keeps its events on a resume', async (t) => {
+  const { root } = setup(t);
+  const calls = [];
+  eventsHarness(t, 'fake-unbound', calls);
+  const [result] = await runCommand(root, smokeExperiment(root, 'unbound', 'fake-unbound', ['smoke-001', 'smoke-002', 'smoke-003']), { log: () => {} });
+  fs.rmSync(path.join(result.runDir, 'scores'), { recursive: true, force: true });
+  crashed(result.runDir);
+  crashInLedger(root, result.runId, 2);
+  // Entries as a runner from before the events record wrote them.
+  editLedger(root, result.runId, ({ events, ...entry }) => entry);
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'open');
+  const [resumed] = await runCommand(root, null, { resume: result.runId, log: () => {} });
+  assert.equal(resumed.status, 'completed');
+  const events = fs.readFileSync(path.join(result.runDir, 'harness-events.ndjson'), 'utf8');
+  assert.match(events, /answered 1"/);
+  assert.match(events, /answered 2"/);
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
+});
+
+test('ledger: an adopted run whose run.json still says running counts in no aggregate', async (t) => {
+  const { root } = setup(t);
+  fake(t, 'fake-stale-adopt', () => '4');
+  const [result] = await runCommand(root, smokeExperiment(root, 'staleadopt', 'fake-stale-adopt'), { log: () => {} });
+  crashed(result.runDir);
+  adoptCommand(root, [result.runId], { log: () => {} });
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
+  const rows = buildState(root).observations.filter((item) => item.run_id === result.runId);
+  assert.ok(rows.length > 0);
+  assert.ok(rows.every((item) => item.trusted === false));
+});
+
+test('ledger: a closed run with evaluators and no recorded scores counts nowhere until scored', async (t) => {
+  const { root } = setup(t);
+  fake(t, 'fake-unscored', () => '4');
+  const [result] = await runCommand(root, smokeExperiment(root, 'unscored', 'fake-unscored'), { log: () => {} });
+  // As a scorer that died before it wrote anything.
+  fs.rmSync(path.join(result.runDir, 'scores'), { recursive: true, force: true });
+  editLedger(root, result.runId, (entry) => (entry.kind === 'scores' ? null : entry));
+  const trust = trustOf(root, result.runId, result.runDir);
+  assert.equal(trust.state, 'trusted');
+  assert.equal(trust.scores, 'mismatch');
+  assert.match(trust.scores_reason, /no recorded scores/);
+  assert.ok(buildState(root).observations.filter((item) => item.run_id === result.runId).every((item) => item.trusted === false));
+  scoreRun(root, result.runDir, { log: () => {} });
+  assert.equal(trustOf(root, result.runId, result.runDir).scores, 'match');
+});
+
+test('ledger: an adopt records scores even when there are none; a stray score file never makes a run scored', async (t) => {
+  const { root } = setup(t);
+  fake(t, 'fake-adopt-none', () => '4');
+  const [result] = await runCommand(root, smokeExperiment(root, 'adoptnone', 'fake-adopt-none'), { log: () => {} });
+  fs.rmSync(path.join(result.runDir, 'scores'), { recursive: true, force: true });
+  editLedger(root, result.runId, () => null);
+  adoptCommand(root, [result.runId], { log: () => {} });
+  assert.deepEqual(trustOf(root, result.runId, result.runDir), { state: 'trusted', scores: 'match' });
+  // A file no evaluator of the run writes.
+  fs.mkdirSync(path.join(result.runDir, 'scores'));
+  fs.writeFileSync(path.join(result.runDir, 'scores', 'stray@1.jsonl'), '{"value":1}\n');
+  assert.deepEqual(trustOf(root, result.runId, result.runDir).stray_scores, ['scores/stray@1.jsonl']);
+  const rows = buildState(root).observations.filter((item) => item.run_id === result.runId);
+  assert.ok(rows.length > 0);
+  assert.ok(rows.every((item) => item.trusted === true && item.run_scored === false));
+});
+
+test('a read-only file with a second link is refused, and the other file stays as it was', (t) => {
+  const dir = tempDir(t, 'lab-store-ro-');
+  const runDir = path.join(dir, 'run');
+  fs.mkdirSync(runDir);
+  const victim = path.join(dir, 'victim.txt');
+  fs.writeFileSync(victim, 'keep');
+  fs.linkSync(victim, path.join(runDir, 'run.json'));
+  fs.linkSync(victim, path.join(runDir, 'raw.jsonl'));
+  fs.chmodSync(victim, 0o444);
+  try {
+    assert.throws(() => writeRunFile(runDir, 'run.json', 'x'), /read-only hard link/);
+    assert.throws(() => appendRunFile(runDir, 'raw.jsonl', 'x'), /read-only hard link/);
+    assert.equal(fs.readFileSync(victim, 'utf8'), 'keep');
+    assert.equal(fs.statSync(victim).mode & 0o200, 0, 'the other file is still read-only');
+  } finally {
+    fs.chmodSync(victim, 0o666);
+  }
 });
 
 test('ledger: creating it is all or nothing', (t) => {

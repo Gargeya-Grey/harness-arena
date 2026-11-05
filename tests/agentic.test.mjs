@@ -111,6 +111,7 @@ test('snapshot keeps only changes, and rebuild gives back the final workspace', 
   const fixture = path.join(dir, 'fixture');
   const work = path.join(dir, 'work');
   const runDir = path.join(dir, 'run');
+  fs.mkdirSync(runDir);
   fs.mkdirSync(path.join(fixture, 'src'), { recursive: true });
   fs.writeFileSync(path.join(fixture, 'src', 'a.mjs'), 'a1\n');
   fs.writeFileSync(path.join(fixture, 'keep.txt'), 'same\n');
@@ -289,6 +290,7 @@ test('file rules: includes, exists false and same_as_starter each fail when they
   fs.writeFileSync(path.join(work, 'keep.txt'), 'changed\n');
   fs.writeFileSync(path.join(work, 'secret.txt'), 'x\n');
   const runDir = path.join(dir, 'run');
+  fs.mkdirSync(runDir);
   const artifact = snapshotWorkspace({ fixtureDir: fixture, workDir: work, runDir, base: 'w', artifactId: 'x', createdAt: '2026-11-04T00:00:00Z' });
   const checkDir = path.join(dir, 'checks', 'rules');
   fs.mkdirSync(checkDir, { recursive: true });
@@ -370,6 +372,7 @@ test('a stored run cannot make the rebuild touch files outside the workspace', (
   const victim = path.join(dir, 'victim.txt');
   fs.writeFileSync(victim, 'keep me\n');
   const runDir = path.join(dir, 'run');
+  fs.mkdirSync(runDir);
   fs.mkdirSync(path.join(runDir, 'w'), { recursive: true });
   for (const bad of [{ deleted: ['../victim.txt'] }, { deleted: ['../../victim.txt'] }, { changed: ['../victim.txt'] }]) {
     fs.writeFileSync(path.join(runDir, 'w', 'workspace.json'), JSON.stringify({ changed: [], deleted: [], ...bad }));
@@ -395,6 +398,7 @@ test('snapshot limits are recorded as skipped, and a folder turned into a file r
   fs.writeFileSync(path.join(work, 'big.bin'), Buffer.alloc(64));
   WORKSPACE_LIMITS.fileBytes = 32;
   const runDir = path.join(dir, 'run');
+  fs.mkdirSync(runDir);
   const artifact = snapshotWorkspace({ fixtureDir: fixture, workDir: work, runDir, base: 'w', artifactId: 'x', createdAt: '2026-11-04T00:00:00Z' });
   const manifest = readJson(path.join(runDir, artifact.path));
   assert.deepEqual(manifest.skipped, [{ path: 'big.bin', bytes: 64, reason: 'file too large' }]);

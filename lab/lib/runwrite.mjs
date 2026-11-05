@@ -37,6 +37,8 @@ export function own(file) {
     return file; // Not there yet.
   }
   if (!stat.isFile()) throw new Error(`${path.basename(file)} in the run folder is not a plain file`);
+  // A read-only file with a second link: making it writable would change the other file too.
+  if (stat.nlink > 1 && !(stat.mode & 0o200)) throw new Error(`${path.basename(file)} in the run folder is a read-only hard link; it is not written`);
   if (!(stat.mode & 0o200)) fs.chmodSync(file, 0o666);
   if (stat.nlink > 1) {
     const copy = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`;
@@ -62,8 +64,12 @@ export function writeRunFile(runDir, rel, text) {
     if (error.code !== 'ENOENT') throw error;
   }
   if (stat && stat.isDirectory() && !stat.isSymbolicLink()) throw new Error(`${rel} in the run folder is a folder`);
-  // Windows refuses a rename onto a read-only file.
-  if (stat?.isFile() && !(stat.mode & 0o200)) fs.chmodSync(file, 0o666);
+  // Windows refuses a rename onto a read-only file. A read-only file with a second link is
+  // refused: making it writable would change the other file too.
+  if (stat?.isFile() && !(stat.mode & 0o200)) {
+    if (stat.nlink > 1) throw new Error(`${rel} in the run folder is a read-only hard link; it is not written`);
+    fs.chmodSync(file, 0o666);
+  }
   const temp = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomBytes(6).toString('hex')}.tmp`);
   fs.writeFileSync(temp, text, { flag: 'wx' });
   try {

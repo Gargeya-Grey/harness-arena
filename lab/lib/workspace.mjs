@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { sha256 } from './fsutil.mjs';
 import { redactPaths } from './redact.mjs';
+import { writeRunFile } from './runwrite.mjs';
 
 const SKIP_DIRS = new Set(['.git', 'node_modules']);
 export const WORKSPACE_LIMITS = { files: 200, fileBytes: 1024 * 1024, totalBytes: 5 * 1024 * 1024 };
@@ -46,8 +47,8 @@ export function copyTree(from, to) {
   if (others.length) throw new Error(`${from} holds ${others.join(', ')}, which is not a regular file or folder; a starter project may hold only those`);
   for (const rel of files) {
     const target = path.join(to, ...rel.split('/'));
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(path.join(from, ...rel.split('/')), target);
+    fs.mkdirSync(path.dirname(target), { recursive: true }); // not a run folder: a call folder or a scratch rebuild
+    fs.copyFileSync(path.join(from, ...rel.split('/')), target); // not a run folder: a call folder or a scratch rebuild
   }
 }
 
@@ -142,9 +143,7 @@ export function snapshotWorkspace({ fixtureDir, fixtureSha, workDir, runDir, bas
       continue;
     }
     if (isText(now)) now = Buffer.from(redactPaths(now.toString('utf8')), 'utf8');
-    const target = path.join(runDir, base, 'files', ...rel.split('/'));
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, now);
+    writeRunFile(runDir, `${base}/files/${rel}`, now);
     total += now.length;
     changed.push(rel);
   }
@@ -153,8 +152,7 @@ export function snapshotWorkspace({ fixtureDir, fixtureSha, workDir, runDir, bas
   const manifest = { fixture_sha256: fixtureSha ?? treeHash(fixtureDir), changed, deleted, skipped };
   const manifestRel = `${base}/workspace.json`;
   const text = `${JSON.stringify(manifest)}\n`;
-  fs.mkdirSync(path.join(runDir, base), { recursive: true });
-  fs.writeFileSync(path.join(runDir, manifestRel), text, 'utf8');
+  writeRunFile(runDir, manifestRel, text);
   return { artifact_id: artifactId, role: 'raw', mime: 'application/json', path: manifestRel, sha256: sha256(text), derived: false, created_at: createdAt };
 }
 
@@ -170,13 +168,13 @@ export function rebuildWorkspace({ fixtureDir, runDir, manifestPath, dest }) {
   const lists = [manifest.changed, manifest.deleted].map((list) => (Array.isArray(list) ? list : []));
   for (const rel of lists.flat()) if (!isInsidePath(rel)) throw new Error(`workspace manifest has a path outside the workspace: ${String(rel).slice(0, 120)}`);
   copyTree(fixtureDir, dest);
-  for (const rel of lists[1]) fs.rmSync(path.join(dest, ...rel.split('/')), { force: true, recursive: true });
+  for (const rel of lists[1]) fs.rmSync(path.join(dest, ...rel.split('/')), { force: true, recursive: true }); // not a run folder: the scratch rebuild
   for (const rel of lists[0]) {
     const target = path.join(dest, ...rel.split('/'));
     // An agent may have turned a starter folder into a file, or the reverse.
-    if (fs.existsSync(target) && fs.statSync(target).isDirectory()) fs.rmSync(target, { recursive: true, force: true });
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(path.join(runDir, ...base, 'files', ...rel.split('/')), target);
+    if (fs.existsSync(target) && fs.statSync(target).isDirectory()) fs.rmSync(target, { recursive: true, force: true }); // not a run folder: the scratch rebuild
+    fs.mkdirSync(path.dirname(target), { recursive: true }); // not a run folder: the scratch rebuild
+    fs.copyFileSync(path.join(runDir, ...base, 'files', ...rel.split('/')), target); // not a run folder: the scratch rebuild
   }
   return manifest;
 }

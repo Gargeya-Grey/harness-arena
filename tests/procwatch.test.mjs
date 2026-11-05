@@ -3,7 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runProcess } from '../lab/adapters/process.mjs';
-import { startProcessWatch } from '../lab/lib/procwatch.mjs';
+import { spawnSync } from 'node:child_process';
+import { jobWatch, startProcessWatch, treeWatch } from '../lab/lib/procwatch.mjs';
 
 const windowsOnly = { skip: process.platform !== 'win32' && 'Job Objects are Windows only' };
 
@@ -61,4 +62,44 @@ test('outside a guarded call no job holds a spawned process', windowsOnly, async
   await new Promise((resolve) => setTimeout(resolve, 300));
   assert.equal(alive(pid), true);
   process.kill(pid);
+});
+
+test('a job assignment that fails after the call ended is still reported by finish', windowsOnly, async () => {
+  const gone = Number(spawnSync(process.execPath, ['-e', 'console.log(process.pid)'], { encoding: 'utf8' }).stdout.trim());
+  const watch = await jobWatch();
+  // Not awaited: finish() must wait for it.
+  watch.assign(gone).catch(() => {});
+  const report = await watch.finish();
+  assert.match(report.error || '', /could not be put in the job/, JSON.stringify(report));
+});
+
+test('during a guarded call the harness gets its stdin and its exit code through the launcher', windowsOnly, async () => {
+  const watch = await startProcessWatch();
+  const echo = "let s = ''; process.stdin.on('data', (d) => { s += d; }); process.stdin.on('end', () => { process.stdout.write(s); process.exit(3); });";
+  const result = await runProcess('node', ['-e', echo], { input: 'hello\nworld', timeoutMs: 30000 });
+  const report = await watch.finish();
+  assert.equal(report.error, null);
+  assert.equal(result.error, null);
+  assert.equal(result.stdout, 'hello\nworld');
+  assert.equal(result.code, 3);
+});
+
+test('the ps watch never counts its own ps processes, and still finds a process left running', async () => {
+  // Fake pids far above any real one: a kill of them only fails.
+  const rootPid = 2147480000;
+  let n = 0;
+  let left = false;
+  const lister = async (spawned) => {
+    n += 1;
+    const ps = 2147481000 + n * 4;
+    spawned(ps);
+    const rows = [{ pid: ps, ppid: rootPid, key: `${ps}|t`, name: 'ps' }];
+    if (left) rows.push({ pid: 2147482000, ppid: rootPid, key: '2147482000|t', name: 'left' });
+    return rows;
+  };
+  const watch = await treeWatch({ intervalMs: 60000, settleMs: 1, rootPid, lister });
+  left = true;
+  const report = await watch.finish();
+  assert.equal(report.error, null);
+  assert.deepEqual(report.survivors, ['left:2147482000']);
 });
