@@ -11,6 +11,18 @@ export default defineCli({
   bin: BIN,
   supportsEffort: false,
   edit: { args: ['--approval-mode', 'yolo'], note: 'Every tool, no approval prompts.' },
+  // GEMINI_CLI_HOME replaces the home folder under which Gemini CLI looks for ".gemini"
+  // (read in the CLI bundle: homedir() returns it, then ".gemini" is added). The temp home
+  // holds oauth_creds.json only; settings.json (which also holds the sign-in type), GEMINI.md,
+  // extensions and MCP servers stay out. GOOGLE_GENAI_USE_GCA=true selects the Google
+  // sign-in by env instead. The CLI refreshes the access token on use and saves it to the file.
+  isolation: {
+    home: {
+      files: ['.gemini/oauth_creds.json'],
+      env: (home) => ({ GEMINI_CLI_HOME: home, GOOGLE_GENAI_USE_GCA: 'true' }),
+    },
+    note: 'Runs with GEMINI_CLI_HOME in a temp home that holds only the Google sign-in file. Skips settings.json, GEMINI.md, extensions and MCP servers.',
+  },
 
   args({ model, prompt }) {
     return ['-p', prompt, '-m', model, '-o', 'json', '--skip-trust'];

@@ -75,16 +75,16 @@ To add any other model that OpenCode reaches (`opencode models` lists them), add
 | Harness | CLI | Model id | Effort | Isolation (`user_config: isolated`) |
 |---|---|---|---|---|
 | `claude-code` | `claude` | `claude-haiku-5-5` | yes (`--effort`) | partial: skips user settings, MCP servers, skills; built-in plugins still load |
-| `codex` | `codex` | `gpt-6-luna` | yes (`model_reasoning_effort`) | none |
+| `codex` | `codex` | `gpt-6-luna` | yes (`model_reasoning_effort`) | temp home: empty `CODEX_HOME`, copy of `auth.json` only |
 | `command-code` | `cmdc` | `deepseek/deepseek-v4.1-flash` | yes (`--effort`) | partial: skips skills |
-| `gemini-cli` | `gemini` | `gemini-3.8-flash` | no | none |
-| `opencode` | `opencode` (2.x) | `<provider>/<model>`, e.g. `opencode/beam-free`, `openai/gpt-6-luna` | yes (`#variant`) | none |
+| `gemini-cli` | `gemini` | `gemini-3.8-flash` | no | temp home: `GEMINI_CLI_HOME`, copy of `oauth_creds.json` only |
+| `opencode` | `opencode` (2.x) | `<provider>/<model>`, e.g. `opencode/beam-free`, `openai/gpt-6-luna` | yes (`#variant`) | temp home: new config, data and cache folders, copy of the provider sign-in rows only |
 
 Every harness uses your own sign-in. OpenCode reaches any provider you connect inside OpenCode (`opencode auth login`), so OpenRouter or any other provider needs no change here: name it in the model id. Each OpenCode call runs on a private server (`--standalone`), and the runner deletes the session it made unless the experiment sets `persist_sessions: true`. Each row records whether that worked in `metadata.harness_extra.session_deleted`.
 
 **Connect another CLI** with no code: add it to `configs/harnesses.yaml`. That file documents every field. `node lab doctor` lists it and `node lab validate` checks it.
 
-**User setup.** A CLI harness loads your own global setup: instructions, skills, MCP servers. That changes tokens, time and behaviour, differently for each harness. Set `user_config: isolated` in an experiment to keep it out where the harness has flags for it. The run records the exact flags in `harness.settings.user_config_flags`. A harness without such flags records `user_config: loaded`. A measured example: Claude Code went from 34,525 to 29,316 prompt tokens on a one-word answer.
+**User setup.** A CLI harness loads your own global setup: instructions, skills, MCP servers. That changes tokens, time and behaviour, differently for each harness. Set `user_config: isolated` in an experiment to keep it out. There are two mechanisms. Claude Code and Command Code have flags. Codex, Gemini CLI and OpenCode have none, so each isolated call gets a **temp home**: a new folder under the OS temp folder that holds a copy of the sign-in and nothing else (no config, instructions, skills, MCP servers or sessions). The CLI is pointed at it with env vars (`HOME`, `USERPROFILE`, plus `CODEX_HOME`, `GEMINI_CLI_HOME` or `XDG_*`). The folder is deleted after the call, also when the call fails. A missing sign-in is an `auth` error; the call never falls back to your real home. A token that the CLI refreshes in the copy goes back to your real sign-in, only when it changed, is still valid, and the original did not change meanwhile, because some providers rotate refresh tokens. The run records the flags or env vars in `harness.settings.user_config_flags` (for example `CODEX_HOME=<temp home>/.codex`, never a real path), and each row records `harness_extra.temp_home` (`removed`, `written_back`). OpenCode 2.x keeps its sign-in in the `credential` table of its database, so only those rows are copied; this needs Node 22.13 or newer. A harness with neither flags nor a temp home records `user_config: loaded`. `node lab doctor` lists the mechanism for each harness and whether its sign-in is found. A measured example: Claude Code went from 34,525 to 29,316 prompt tokens on a one-word answer.
 
 A CLI harness does not forward `temperature` or `max_tokens`. Each raw row lists those params in `metadata.params_not_applied`.
 
