@@ -10,10 +10,19 @@ import { spawn } from 'node:child_process';
 let head = Buffer.alloc(0);
 let child = null;
 
+// The runner ends the launcher on a timeout; outside Windows it ends the harness too.
+process.on('SIGTERM', () => {
+  child?.kill('SIGKILL');
+  process.exit(143);
+});
+
 function start(spec, rest) {
-  child = spawn(spec.command, spec.args, { stdio: ['pipe', 'inherit', 'inherit'], windowsHide: true });
+  // The launcher runs without NODE_OPTIONS (lab/adapters/process.mjs); the harness gets it back.
+  const env = spec.node_options == null ? process.env : { ...process.env, NODE_OPTIONS: spec.node_options };
+  child = spawn(spec.command, spec.args, { stdio: ['pipe', 'inherit', 'inherit'], windowsHide: true, env });
   child.on('error', (error) => {
-    process.stderr.write(`launcher: ${error.message}\n`);
+    // LAUNCH_FAILED and LAUNCH_FAILED_CODE in lab/adapters/process.mjs.
+    process.stderr.write(`lab-launcher spawn_error: ${error.message}\n`);
     process.exit(127);
   });
   child.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));

@@ -163,8 +163,14 @@ export function restoreLedger(file, before, entry, { realDir = null, asideName }
       if (now) fs.writeFileSync(aside, now, { flag: 'wx' });
       else aside = null;
     }
-    // Windows refuses a rename onto a read-only file.
-    if (!(stat.mode & 0o200)) fs.chmodSync(file, 0o666);
+    // Windows refuses a rename onto a read-only file. A read-only ledger, or one with a
+    // second link, is renamed out of the way and never chmodded: a chmod through a hard
+    // link would change the other file too.
+    if (!(stat.mode & 0o200) || stat.nlink > 1) {
+      const out = path.join(dir, aside ? `.${asideName}.link` : asideName);
+      fs.renameSync(file, out);
+      aside = aside ?? out;
+    }
   }
   const text = Buffer.concat([prefix, Buffer.from(`${prefix.length && prefix[prefix.length - 1] !== 0x0a ? '\n' : ''}${entryText(entry)}`, 'utf8')]);
   const temp = path.join(dir, `.${LEDGER_FILE}.${crypto.randomBytes(6).toString('hex')}.tmp`);
@@ -339,9 +345,9 @@ export function trustRun(ledger, runId, runDir) {
   if (run.closed) {
     const changed = firstDiff(run.files, files);
     if (changed) return { state: 'untrusted', scores: 'mismatch', reason: `${changed} since the run closed` };
-    // A run with evaluators and no scores entry was never scored (or its first score
-    // write failed): it counts nowhere until node lab score records its scores.
-    if (names.size && !run.scores) return { state: 'trusted', scores: 'mismatch', scores_reason: 'the run has no recorded scores yet', ...(stray.length ? { stray_scores: stray } : {}) };
+    // Fully scored or not counted: every declared evaluator needs a recorded score file.
+    const missing = [...names].filter((rel) => !run.scores || !(rel in run.scores));
+    if (missing.length) return { state: 'trusted', scores: 'mismatch', scores_reason: `the run has no recorded scores for ${missing.join(', ')}`, ...(stray.length ? { stray_scores: stray } : {}) };
     return { state: 'trusted', ...scoreState };
   }
   if (run.core && (!manifest || manifestCore(manifest) !== run.core)) return { state: 'untrusted', scores: 'mismatch', reason: 'run.json changed since the run started' };
@@ -365,8 +371,8 @@ export function trustRun(ledger, runId, runDir) {
   return { state: 'open', ...scoreState, ...(lines.length === run.lines.length + 1 ? { unrecorded_last: true } : {}) };
 }
 
-/** All or nothing: the run counts in aggregates (rows and scores) only when it is closed and every file and score matches, or no ledger is in use. */
-export const runCounts = (trust) => (trust.state === 'trusted' || trust.state === 'legacy') && trust.scores === 'match';
+/** All or nothing: the run counts in aggregates (rows and scores) only when it is closed, every file matches and every declared evaluator's scores are recorded and match. Without a ledger no run counts. */
+export const runCounts = (trust) => trust.state === 'trusted' && trust.scores === 'match';
 
 /** Record a closed run (close) or a vouched-for run (adopt). */
 export function closeEntry(kind, runId, runDir, extra = {}) {

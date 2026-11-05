@@ -399,10 +399,10 @@ export function buildState(root, { validate = true } = {}) {
     let errors = 0;
     // A halted run is never scored, whatever score file sits in its folder.
     // So is a run that does not match the evidence ledger, or that the ledger says was halted.
-    // Scored means a file of the run's own evaluators is there; any other file is not read.
-    const runScored = manifest.status !== 'running' && !manifest.harness?.settings?.halted && runCounts(trust) && listFiles(scoresDir, '.jsonl').some((name) => ownScores.has(`scores/${name}`));
     // A run.json that still says running (an adopted stale run) never counts.
     const counts = runCounts(trust) && manifest.status !== 'running';
+    // A run that counts has every declared evaluator's scores recorded (runCounts).
+    const runScored = counts && !manifest.harness?.settings?.halted && ownScores.size > 0;
     for (const raw of rawRows) {
       const config = buildConfig(manifest, raw.model_key, raw, registry);
       if (!configs[config.id]) {

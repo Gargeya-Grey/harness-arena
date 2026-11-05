@@ -39,6 +39,7 @@ lab.local.yaml
 *.err
 results/.lab-run.lock
 lab.ledger.jsonl
+!tests/fixtures/repo/lab.ledger.jsonl
 .lab-run.lock
 lab.ledger.halted-*.jsonl
 .lab.ledger.jsonl.*.tmp

@@ -12,7 +12,7 @@ import { ADAPTERS } from '../lab/adapters/index.mjs';
 import { runCommand } from '../lab/commands/run.mjs';
 import { resolveRunDir, scoreCommand } from '../lab/commands/score.mjs';
 import { LOCK_FILE, takeLock } from '../lab/lib/lock.mjs';
-import { appendEntry, closeEntry, ensureLedger, ledgerPath, readLedger, trustRun } from '../lab/lib/ledger.mjs';
+import { appendEntry, closeEntry, ensureLedger, ledgerPath, readLedger, restoreLedger, trustRun } from '../lab/lib/ledger.mjs';
 import { adoptCommand } from '../lab/commands/adopt.mjs';
 import { scoreRun } from '../lab/commands/score.mjs';
 import { crashInLedger } from './crash.mjs';
@@ -37,6 +37,8 @@ function tempDir(t, prefix) {
 function setup(t, { agentic = false } = {}) {
   const root = tempDir(t, 'lab-store-root-');
   fs.cpSync(FIXTURES, root, { recursive: true });
+  // These tests start from a store with no ledger: the first command creates it.
+  fs.rmSync(path.join(root, 'lab.ledger.jsonl'), { force: true });
   if (agentic) {
     fs.cpSync(path.join(REPO, 'datasets', 'agentic'), path.join(root, 'datasets', 'agentic'), { recursive: true });
     fs.cpSync(path.join(REPO, 'prompts', 'agent-task'), path.join(root, 'prompts', 'agent-task'), { recursive: true });
@@ -1029,21 +1031,68 @@ test('ledger: a closed run with evaluators and no recorded scores counts nowhere
   assert.equal(trustOf(root, result.runId, result.runDir).scores, 'match');
 });
 
-test('ledger: an adopt records scores even when there are none; a stray score file never makes a run scored', async (t) => {
+test('ledger: an adopted run with no scores counts nowhere until scored; a stray score file changes nothing', async (t) => {
   const { root } = setup(t);
   fake(t, 'fake-adopt-none', () => '4');
   const [result] = await runCommand(root, smokeExperiment(root, 'adoptnone', 'fake-adopt-none'), { log: () => {} });
   fs.rmSync(path.join(result.runDir, 'scores'), { recursive: true, force: true });
   editLedger(root, result.runId, () => null);
   adoptCommand(root, [result.runId], { log: () => {} });
-  assert.deepEqual(trustOf(root, result.runId, result.runDir), { state: 'trusted', scores: 'match' });
-  // A file no evaluator of the run writes.
+  const rowsOf = () => buildState(root).observations.filter((item) => item.run_id === result.runId);
+  assert.equal(trustOf(root, result.runId, result.runDir).scores, 'mismatch');
+  assert.ok(rowsOf().length > 0);
+  assert.ok(rowsOf().every((item) => item.trusted === false && item.run_scored === false), 'cost, latency and errors do not count either');
+  // A file no evaluator of the run writes does not make it scored.
   fs.mkdirSync(path.join(result.runDir, 'scores'));
   fs.writeFileSync(path.join(result.runDir, 'scores', 'stray@1.jsonl'), '{"value":1}\n');
   assert.deepEqual(trustOf(root, result.runId, result.runDir).stray_scores, ['scores/stray@1.jsonl']);
-  const rows = buildState(root).observations.filter((item) => item.run_id === result.runId);
-  assert.ok(rows.length > 0);
-  assert.ok(rows.every((item) => item.trusted === true && item.run_scored === false));
+  assert.ok(rowsOf().every((item) => item.trusted === false));
+  scoreRun(root, result.runDir, { log: () => {} });
+  assert.equal(trustOf(root, result.runId, result.runDir).scores, 'match');
+  assert.ok(rowsOf().every((item) => item.trusted === true && item.run_scored === true));
+});
+
+test('ledger: a run scored by only some of its evaluators counts nowhere', async (t) => {
+  const { root } = setup(t);
+  fake(t, 'fake-part', () => '4');
+  const [result] = await runCommand(root, smokeExperiment(root, 'part', 'fake-part'), { log: () => {} });
+  // A run made with a second evaluator this checkout no longer has, adopted as it is.
+  const manifestFile = path.join(result.runDir, 'run.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+  fs.writeFileSync(manifestFile, JSON.stringify({ ...manifest, evaluators: [...manifest.evaluators, { id: 'retired', version: '1', dimension: 'quality' }] }));
+  adoptCommand(root, [result.runId], { log: () => {} });
+  const trust = trustOf(root, result.runId, result.runDir);
+  assert.equal(trust.scores, 'mismatch');
+  assert.match(trust.scores_reason, /retired@1\.jsonl/);
+  assert.ok(buildState(root).observations.filter((item) => item.run_id === result.runId).every((item) => item.trusted === false));
+});
+
+test('ledger: without a ledger no run counts', (t) => {
+  const { root } = setup(t);
+  const state = buildState(root);
+  assert.ok(state.runs.length > 0);
+  assert.ok(state.runs.every((run) => run.trust.state === 'legacy'));
+  assert.ok(state.observations.length > 0);
+  assert.ok(state.observations.every((item) => item.trusted === false));
+});
+
+test('ledger: a halt restore never chmods a ledger that is a hard link to a read-only file', (t) => {
+  const dir = tempDir(t, 'lab-store-restore-');
+  const victim = path.join(dir, 'victim.json');
+  fs.writeFileSync(victim, 'keep');
+  const file = path.join(dir, 'lab.ledger.jsonl');
+  fs.linkSync(victim, file);
+  fs.chmodSync(victim, 0o444);
+  try {
+    const aside = restoreLedger(file, Buffer.from('{"kind":"open"}\n'), { kind: 'halt', run_id: 'r', reason: 'left_workdir' }, { asideName: 'lab.ledger.halted-r.jsonl' });
+    assert.ok(aside);
+    assert.equal(fs.readFileSync(victim, 'utf8'), 'keep');
+    assert.equal(fs.statSync(victim).mode & 0o200, 0, 'the other file is still read-only');
+    assert.equal(fs.statSync(file).nlink, 1);
+    assert.match(fs.readFileSync(file, 'utf8'), /"kind":"halt"/);
+  } finally {
+    for (const name of fs.readdirSync(dir)) fs.chmodSync(path.join(dir, name), 0o666);
+  }
 });
 
 test('a read-only file with a second link is refused, and the other file stays as it was', (t) => {

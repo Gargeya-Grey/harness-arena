@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ADAPTERS } from '../lab/adapters/index.mjs';
 import { resumeCommand, runCommand } from '../lab/commands/run.mjs';
+import { scoreRun } from '../lab/commands/score.mjs';
 import { validateRepo } from '../lab/commands/validate.mjs';
 import { errorClass, modelCheck, normalizeErrorType, runLiveness } from '../lab/lib/checks.mjs';
 import { readJson, readJsonl, writeJson } from '../lab/lib/fsutil.mjs';
@@ -323,14 +324,18 @@ test('errors of a halted or unscored run do not count as 0', async (t) => {
   assert.equal(halted.counted_n, 0);
   assert.equal(halted.failed_n, 0);
   assert.equal(halted.mean_quality, null);
-  // An unscored run that counts: its error shows, and gives no 0.00.
+  // A run with evaluators and no recorded scores counts nowhere, its error included.
   const [plain] = await runCommand(root, experiment(root, 'unscored', ['repeats: 1', 'cases: [smoke-001, smoke-002]', 'harness: fake-halt', 'models: [claude-haiku]']), { log: () => {} });
   fs.rmSync(path.join(plain.runDir, 'scores'), { recursive: true, force: true });
   appendEntry(ledgerPath(root), { kind: 'scores', run_id: plain.runId, files: {} });
   const agg = Object.values(buildState(root).contexts.find((item) => item.runs.includes(plain.runId)).aggregates)[0];
   assert.equal(agg.counted_n, 0);
   assert.equal(agg.mean_quality, null, 'no 0.00 from errors alone');
-  assert.equal(agg.failed_n, 1, 'the error still shows');
+  assert.equal(agg.failed_n, 0);
+  // Scored, the run counts, and its error shows with no 0.00 of its own.
+  scoreRun(root, plain.runDir, { log: () => {} });
+  const scored = Object.values(buildState(root).contexts.find((item) => item.runs.includes(plain.runId)).aggregates)[0];
+  assert.equal(scored.failed_n, 1, 'the error shows once the run is scored');
 });
 
 test('resume --dry-run calls nothing; a torn last line is dropped and recorded', async (t) => {

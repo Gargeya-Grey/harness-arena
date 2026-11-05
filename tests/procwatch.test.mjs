@@ -2,7 +2,11 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runProcess } from '../lab/adapters/process.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { LAUNCH_FAILED, LAUNCH_FAILED_CODE, runProcess } from '../lab/adapters/process.mjs';
 import { spawnSync } from 'node:child_process';
 import { jobWatch, startProcessWatch, treeWatch } from '../lab/lib/procwatch.mjs';
 
@@ -82,6 +86,38 @@ test('during a guarded call the harness gets its stdin and its exit code through
   assert.equal(result.error, null);
   assert.equal(result.stdout, 'hello\nworld');
   assert.equal(result.code, 3);
+});
+
+test('a timeout during a guarded call ends the harness, not only the launcher', windowsOnly, async () => {
+  const watch = await startProcessWatch();
+  const result = await runProcess('node', ['-e', 'console.log(process.pid); setTimeout(() => {}, 60000);'], { timeoutMs: 2000 });
+  const pid = Number(result.stdout.trim());
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const before = alive(pid);
+  await watch.finish();
+  assert.equal(result.error?.type, 'timeout');
+  assert.ok(pid > 0, result.stdout);
+  assert.equal(before, false, 'the harness ended with the timeout, before the watch finished');
+});
+
+test('during a guarded call NODE_OPTIONS reaches the harness but not the launcher', windowsOnly, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-preload-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const log = path.join(dir, 'loads.txt');
+  const preload = path.join(dir, 'preload.cjs');
+  fs.writeFileSync(preload, `require('fs').appendFileSync(${JSON.stringify(log)}, (process.argv[1] ? require('path').basename(process.argv[1]) : 'harness') + '\\n');`);
+  const watch = await startProcessWatch();
+  const result = await runProcess('node', ['-e', 'process.exit(0)'], { timeoutMs: 30000, env: { NODE_OPTIONS: `--require "${preload.replaceAll('\\', '/')}"` } });
+  await watch.finish();
+  assert.equal(result.error, null, result.stderr);
+  assert.deepEqual(fs.readFileSync(log, 'utf8').split('\n').filter(Boolean), ['harness']);
+});
+
+test('the launcher reports a harness it cannot start as a spawn error', async () => {
+  const launcher = fileURLToPath(new URL('../lab/adapters/launcher.mjs', import.meta.url));
+  const result = spawnSync(process.execPath, [launcher], { input: `${JSON.stringify({ command: path.join(os.tmpdir(), 'lab-no-such-harness.exe'), args: [] })}\n`, encoding: 'utf8' });
+  assert.equal(result.status, LAUNCH_FAILED_CODE);
+  assert.ok(result.stderr.startsWith(LAUNCH_FAILED), result.stderr);
 });
 
 test('the ps watch never counts its own ps processes, and still finds a process left running', async () => {

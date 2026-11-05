@@ -2,13 +2,16 @@
 // percent signs reach the harness byte for byte on every platform. On Windows
 // an npm `.cmd` shim is resolved to the script it wraps and run with node.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const cache = new Map();
 const LAUNCHER = fileURLToPath(new URL('./launcher.mjs', import.meta.url));
+// What lab/adapters/launcher.mjs prints, with this exit code, when it cannot start the harness.
+export const LAUNCH_FAILED = 'lab-launcher spawn_error:';
+export const LAUNCH_FAILED_CODE = 127;
 
 // The process watch (lab/lib/procwatch.mjs) puts every harness process in a Job Object
 // during a guarded call. A watcher returns a promise; the prompt is sent only once every
@@ -72,7 +75,13 @@ export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, on
   // During a guarded call the harness starts through the launcher, which waits until the
   // process watch holds it (lab/adapters/launcher.mjs).
   const gated = spawnWatchers.size > 0;
-  const spec = { command: resolved.command, args: [...resolved.prefix, ...args] };
+  const fullEnv = { ...process.env, ...env, ...(cwd ? { PWD: path.resolve(cwd), INIT_CWD: path.resolve(cwd) } : {}) };
+  // NODE_OPTIONS could preload code into the launcher before the job holds it: the
+  // launcher runs without it and gives it back to the harness.
+  const optionKey = Object.keys(fullEnv).find((key) => key.toUpperCase() === 'NODE_OPTIONS');
+  const launcherEnv = { ...fullEnv };
+  if (optionKey) delete launcherEnv[optionKey];
+  const spec = { command: resolved.command, args: [...resolved.prefix, ...args], ...(optionKey ? { node_options: fullEnv[optionKey] } : {}) };
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
@@ -82,7 +91,7 @@ export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, on
       cwd,
       // spawn sets the real working folder but not PWD, and some CLIs (OpenCode on
       // Windows) start their tools from PWD. Point it at cwd so the agent starts there.
-      env: { ...process.env, ...env, ...(cwd ? { PWD: path.resolve(cwd), INIT_CWD: path.resolve(cwd) } : {}) },
+      env: gated ? launcherEnv : fullEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -93,7 +102,9 @@ export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, on
       resolve({ stdout, stderr, ms: Date.now() - started, ...result });
     };
     const timer = setTimeout(() => {
-      child.kill();
+      // Through the launcher the harness is a child of the launcher: end the whole tree.
+      if (gated && process.platform === 'win32' && child.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+      else child.kill();
       finish({ code: null, error: { type: 'timeout', message: `${name} did not exit within ${Math.round(timeoutMs / 1000)} s` } });
     }, timeoutMs);
     child.stdout.setEncoding('utf8');
@@ -112,7 +123,8 @@ export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, on
     child.on('error', (error) => finish({ code: null, error: { type: 'spawn_error', message: error.message } }));
     child.on('close', (code) => {
       if (onLine && pending.trim()) onLine(pending);
-      finish({ code, error: null });
+      const failed = gated && code === LAUNCH_FAILED_CODE ? stderr.split('\n').find((line) => line.startsWith(LAUNCH_FAILED)) : null;
+      finish({ code, error: failed ? { type: 'spawn_error', message: failed.slice(LAUNCH_FAILED.length).trim() } : null });
     });
     child.stdin.on('error', () => {});
     if (!gated) {
