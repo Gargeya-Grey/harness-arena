@@ -8,7 +8,7 @@ import { paths, loadRegistry, loadCases, runDirs } from './repo.mjs';
 import { SchemaSet } from './schema.mjs';
 import { clusteredInterval, mean, percentile, sum, variance } from './metrics.mjs';
 import { errorClass, modelCheck, runLiveness } from './checks.mjs';
-import { evidenceOk, ledgerPath, readLedger, scoresCount, trustRun } from './ledger.mjs';
+import { evidenceOk, ledgerPath, loadLedger, scoreFileNames, scoresCount, trustRun } from './ledger.mjs';
 
 const TEXT_INLINE_LIMIT = 2 * 1024 * 1024;
 
@@ -318,13 +318,9 @@ export function buildState(root, { validate = true } = {}) {
 
   // The evidence ledger (lab/lib/ledger.mjs): a run that does not match it is listed,
   // flagged, and its scores do not count.
-  let ledger = null;
-  try {
-    ledger = readLedger(ledgerPath(root));
-    for (const item of ledger?.problems || []) note(ledgerPath(root), `line ${item.line}: ${item.message}`);
-  } catch (error) {
-    note(ledgerPath(root), `cannot read the evidence ledger: ${error.message}`);
-  }
+  const ledger = loadLedger(ledgerPath(root));
+  for (const item of ledger?.problems || []) note(ledgerPath(root), `line ${item.line}: ${item.message}`);
+  if (ledger?.unreadable) note(ledgerPath(root), `cannot read the evidence ledger (${ledger.unreadable}); no run is trusted until it can be read`);
 
   for (const { dir: runDir } of runDirs(root)) {
     const manifestPath = path.join(runDir, 'run.json');
@@ -358,7 +354,9 @@ export function buildState(root, { validate = true } = {}) {
 
     const scoresByKey = new Map();
     const scoresDir = path.join(runDir, 'scores');
-    for (const file of listFiles(scoresDir, '.jsonl')) {
+    // Only the files of the run's own evaluators are read; anything else in scores/ is not a score.
+    const ownScores = scoreFileNames(manifest);
+    for (const file of listFiles(scoresDir, '.jsonl').filter((name) => ownScores.has(`scores/${name}`))) {
       const scorePath = path.join(scoresDir, file);
       const { rows, problems: scoreProblems } = readJsonl(scorePath);
       scoreProblems.forEach((item) => note(scorePath, `line ${item.line}: ${item.message}`));

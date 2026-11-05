@@ -1,6 +1,7 @@
 // The evidence ledger: a record, outside the run store, of what each run wrote. The
-// workdir guard can only notice a change while it watches; a ledger makes a forged or
-// edited run show later, whenever it is read, however the change was made.
+// workdir guard can only notice a change while it watches; the ledger makes a run edited
+// between commands show later, whenever it is read. It detects; it does not prevent: a
+// process that outlives its agent call can still write to it (see README, the ledger).
 //
 // The ledger is lab.ledger.jsonl at the main checkout (every worktree shares it), not in
 // the data folder: a forgery must then change two places, and the guard watches both
@@ -11,19 +12,21 @@
 //   halt    the guard stopped the run (written before the run closes)
 //   close   the run closed: the sha256 of every file but scores/, and of every row line
 //   adopt   a run vouched for as it is: when the ledger is created, or by `node lab adopt`
-//   scores  the scores/ files written for a run (sha256 each)
+//   scores  the scores/ files its evaluators wrote for a run (sha256 each)
 // A closed run is trusted when its files match its last close or adopt entry. A run still
 // open (or crashed) is trusted as far as it goes: its run.json core, every recorded file
 // and every recorded row must match. A run with a halt entry is halted, whatever run.json
 // says. Scores are derived data: when they do not match their last scores entry they do
-// not count, and a re-score repairs them. No ledger file at all: every run reads as before.
+// not count, and a re-score repairs them. Only the files of the run's own evaluators are
+// scores; any other file in scores/ is never read. No ledger file at all: every run reads
+// as before. A ledger that exists but cannot be read trusts no run.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { sha256 } from './fsutil.mjs';
 import { listDirs } from './fsutil.mjs';
-import { mainCheckout, runDirs } from './repo.mjs';
+import { checkouts, mainCheckout, runDirs } from './repo.mjs';
 import { listTree } from './workspace.mjs';
 
 export const LEDGER_FILE = 'lab.ledger.jsonl';
@@ -62,6 +65,18 @@ function checkFile(file, realDir) {
   }
   if (stat && (!stat.isFile() || stat.nlink > 1)) throw new Error(`the ledger ${file} is not a plain file with one link`);
   return stat;
+}
+
+/** The scores/ files a run's own evaluators write; nothing else in scores/ is read. */
+export const scoreFileNames = (manifest) => new Set((manifest?.evaluators || []).map((spec) => `scores/${spec.id}@${spec.version}.jsonl`));
+const pick = (object, keys) => Object.fromEntries(Object.entries(object || {}).filter(([key]) => keys.has(key)));
+
+function readManifest(runDir) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(runDir, 'run.json'), 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 const entryText = (entry) => `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`;
@@ -108,17 +123,32 @@ export function ledgerBytes(file) {
 export function restoreLedger(file, before, entry, { realDir = null, asideName } = {}) {
   const dir = path.dirname(file);
   if (realDir && fs.realpathSync.native(dir) !== realDir) throw new Error(`the ledger folder ${dir} is not the folder the run started with`);
-  let now = null;
+  let stat = null;
   try {
-    now = fs.readFileSync(file);
+    stat = fs.lstatSync(file);
   } catch {
-    now = null;
+    stat = null;
   }
   const prefix = before ?? Buffer.alloc(0);
   let aside = null;
-  if (now && !now.equals(prefix)) {
+  if (stat && !stat.isFile()) {
+    // A folder or a link in place of the ledger: moved aside as it is.
     aside = path.join(dir, asideName);
-    fs.writeFileSync(aside, now, { flag: 'wx' });
+    fs.renameSync(file, aside);
+  } else if (stat) {
+    let now = null;
+    try {
+      now = fs.readFileSync(file);
+    } catch {
+      now = null;
+    }
+    if (!now || !now.equals(prefix)) {
+      aside = path.join(dir, asideName);
+      if (now) fs.writeFileSync(aside, now, { flag: 'wx' });
+      else aside = null;
+    }
+    // Windows refuses a rename onto a read-only file.
+    if (!(stat.mode & 0o200)) fs.chmodSync(file, 0o666);
   }
   const text = Buffer.concat([prefix, Buffer.from(`${prefix.length && prefix[prefix.length - 1] !== 0x0a ? '\n' : ''}${entryText(entry)}`, 'utf8')]);
   const temp = path.join(dir, `.${LEDGER_FILE}.${crypto.randomBytes(6).toString('hex')}.tmp`);
@@ -129,7 +159,9 @@ export function restoreLedger(file, before, entry, { realDir = null, asideName }
 
 /**
  * Every run in the ledger: Map run_id -> { files, lines, closed, halted, scores, core }.
- * Null when there is no ledger. Lines that do not parse are returned as problems.
+ * Null when there is no ledger. Lines that do not parse (a torn write, or an edit) are
+ * returned in `torn`: their entries are lost, which can only make a run less trusted.
+ * Entries that parse but do not fit are returned as problems.
  */
 export function readLedger(file) {
   let text;
@@ -141,6 +173,7 @@ export function readLedger(file) {
   }
   const runs = new Map();
   const problems = [];
+  const torn = [];
   const entries = [];
   text.split('\n').forEach((line, index) => {
     if (!line.trim()) return;
@@ -148,7 +181,7 @@ export function readLedger(file) {
     try {
       entry = JSON.parse(line);
     } catch (error) {
-      problems.push({ line: index + 1, message: `invalid JSON: ${error.message}` });
+      torn.push({ line: index + 1, message: `invalid JSON: ${error.message}` });
       return;
     }
     entries.push({ line: index + 1, entry });
@@ -188,7 +221,19 @@ export function readLedger(file) {
         problems.push({ line: index + 1, message: `unknown entry kind ${JSON.stringify(entry.kind)}` });
     }
   });
-  return { runs, problems, entries };
+  return { runs, problems, torn, entries };
+}
+
+/**
+ * The ledger for the readers (state, validate, score, resume, adopt). No file: null, and
+ * every run reads as before. A file that cannot be read: a ledger that trusts no run.
+ */
+export function loadLedger(file) {
+  try {
+    return readLedger(file);
+  } catch (error) {
+    return { unreadable: error.code || error.message, runs: new Map(), problems: [], torn: [], entries: [] };
+  }
 }
 
 // Hashing every stored file on every dashboard request is slow on a big store. A file
@@ -259,23 +304,24 @@ const firstDiff = (want, have, { extraOk = false } = {}) => {
  */
 export function trustRun(ledger, runId, runDir) {
   if (!ledger) return { state: 'legacy', scores: 'match' };
+  if (ledger.unreadable) return { state: 'untrusted', scores: 'mismatch', reason: `the evidence ledger cannot be read (${ledger.unreadable})` };
   if (path.basename(runDir) !== runId) return { state: 'untrusted', scores: 'mismatch', reason: `its folder ${path.basename(runDir)} is not named after its run_id` };
   const run = ledger.runs.get(runId);
   if (!run) return { state: 'untrusted', scores: 'mismatch', reason: 'it is not in the ledger: it was not written by the lab runner, or was copied in (node lab adopt vouches for it)' };
-  const { files, scores } = runFiles(runDir);
-  const scoreDiff = firstDiff(run.scores || {}, scores);
-  const scoreState = scoreDiff ? { scores: 'mismatch', scores_reason: `${scoreDiff} since the scores were recorded` } : { scores: 'match' };
+  const manifest = readManifest(runDir);
+  const { files, scores: allScores } = runFiles(runDir);
+  const names = scoreFileNames(manifest);
+  const scoreDiff = firstDiff(pick(run.scores, names), pick(allScores, names));
+  const stray = Object.keys(allScores).filter((rel) => !names.has(rel));
+  const scoreState = {
+    ...(scoreDiff ? { scores: 'mismatch', scores_reason: `${scoreDiff} since the scores were recorded` } : { scores: 'match' }),
+    ...(stray.length ? { stray_scores: stray } : {}),
+  };
   if (run.halted) return { state: 'halted', reason: run.halted, ...scoreState };
   if (run.closed) {
     const changed = firstDiff(run.files, files);
     if (changed) return { state: 'untrusted', scores: 'mismatch', reason: `${changed} since the run closed` };
     return { state: 'trusted', ...scoreState };
-  }
-  let manifest = null;
-  try {
-    manifest = JSON.parse(fs.readFileSync(path.join(runDir, 'run.json'), 'utf8'));
-  } catch {
-    manifest = null;
   }
   if (run.core && (!manifest || manifestCore(manifest) !== run.core)) return { state: 'untrusted', scores: 'mismatch', reason: 'run.json changed since the run started' };
   // Files of a call that crashed before its row are extra, not recorded: a resume calls it again.
@@ -303,33 +349,29 @@ export function closeEntry(kind, runId, runDir, extra = {}) {
   return { kind, run_id: runId, files: runFiles(runDir).files, lines: rowLines(runDir).lines, ...extra };
 }
 
-export function scoresEntry(runId, runDir) {
-  return { kind: 'scores', run_id: runId, files: runFiles(runDir).scores };
+export function scoresEntry(runId, runDir, manifest = readManifest(runDir)) {
+  return { kind: 'scores', run_id: runId, files: pick(runFiles(runDir).scores, scoreFileNames(manifest)) };
 }
 
 /** Adopt runs as they are now: their files, rows and scores. Returns the run ids adopted. */
 export function adoptRuns(file, dirs, { only = null, extra = {} } = {}) {
   const adopted = [];
   for (const { name, dir } of dirs) {
-    let runId;
-    try {
-      runId = JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8')).run_id;
-    } catch {
-      continue; // No readable run.json: not a run.
-    }
+    const manifest = readManifest(dir);
+    const runId = manifest?.run_id;
+    if (!runId) continue; // No readable run.json: not a run.
     if (runId !== name || (only && !only.has(runId))) continue;
     appendEntry(file, closeEntry('adopt', runId, dir, extra));
-    const scores = scoresEntry(runId, dir);
+    const scores = scoresEntry(runId, dir, manifest);
     if (Object.keys(scores.files).length) appendEntry(file, scores);
     adopted.push(runId);
   }
   return adopted;
 }
 
-/** Every run the ledger covers: the stores of this checkout, and the main checkout's results/. */
+/** Every run the ledger covers: the stores of this checkout, and results/ of every checkout. */
 export function ledgerRunDirs(root) {
-  const main = mainCheckout(root);
-  const extra = main ? listDirs(path.join(main, 'results')).map((name) => ({ name, dir: path.join(main, 'results', name) })) : [];
+  const extra = checkouts(root).flatMap((checkout) => listDirs(path.join(checkout, 'results')).map((name) => ({ name, dir: path.join(checkout, 'results', name) })));
   return [...runDirs(root), ...extra];
 }
 
@@ -344,10 +386,20 @@ export function ensureLedger(root, { log = () => {} } = {}) {
   const dirs = ledgerRunDirs(root);
   if (fs.existsSync(file)) return null;
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, '', { flag: 'wx' });
   const seen = new Set();
   const unique = dirs.filter(({ name }) => !seen.has(name) && seen.add(name));
-  const count = adoptRuns(file, unique, { extra: { by: 'ledger-created' } }).length;
+  // Written whole to a new file, then renamed: a command killed half way leaves no ledger
+  // that knows only some of the runs.
+  const temp = path.join(path.dirname(file), `.${LEDGER_FILE}.${crypto.randomBytes(6).toString('hex')}.tmp`);
+  fs.writeFileSync(temp, '', { flag: 'wx' });
+  let count;
+  try {
+    count = adoptRuns(temp, unique, { extra: { by: 'ledger-created' } }).length;
+    fs.renameSync(temp, file);
+  } catch (error) {
+    fs.rmSync(temp, { force: true });
+    throw error;
+  }
   log(`  note: created the evidence ledger ${LEDGER_FILE}; ${count} stored run(s) recorded as they are now`);
   return count;
 }

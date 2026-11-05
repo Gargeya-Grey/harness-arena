@@ -1,7 +1,8 @@
 // One writer at a time on the run store. `node lab run`, `--resume` and `node lab score`
 // take this lock, so while an agent call runs, nothing but that call can change the
-// stored runs, and the workdir guard can watch all of them with no exceptions. The
-// store is the data folder, or the checkout's results/ when there is none. A lock left by
+// stored runs, and the workdir guard can watch all of them with no exceptions. A command
+// locks every store folder (lab/lib/lock.mjs storeFolders): the data folder, the
+// checkout's results/, and the folder of the evidence ledger. A lock left by
 // a process that is gone (a crash, a forced stop) is taken over, by one process only.
 
 import fs from 'node:fs';

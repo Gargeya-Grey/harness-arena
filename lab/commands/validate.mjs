@@ -10,7 +10,7 @@ import { harnessesFile, loadAdapters, readDeclared } from '../adapters/index.mjs
 import { getEvaluator } from '../evaluators/index.mjs';
 import { listTree } from '../lib/workspace.mjs';
 import { runLiveness } from '../lib/checks.mjs';
-import { LEDGER_SCHEMA, ledgerPath, readLedger, trustRun } from '../lib/ledger.mjs';
+import { LEDGER_SCHEMA, ledgerPath, loadLedger, scoreFileNames, trustRun } from '../lib/ledger.mjs';
 import { FILL_IN, unfilled } from './new-case.mjs';
 
 export function validateRepo(root) {
@@ -156,13 +156,12 @@ export function validateRepo(root) {
   }
 
   // The evidence ledger: every entry to its schema, every run checked against it.
-  let ledger = null;
-  try {
-    ledger = readLedger(ledgerPath(root));
-  } catch (error) {
-    report(ledgerPath(root), `cannot read the evidence ledger: ${error.message}`);
-  }
+  const ledger = loadLedger(ledgerPath(root));
+  if (ledger?.unreadable) report(ledgerPath(root), `cannot read the evidence ledger (${ledger.unreadable}); no run is trusted until it can be read`);
   for (const item of ledger?.problems || []) report(ledgerPath(root), `line ${item.line}: ${item.message}`);
+  // A torn line (a crash during an append, or an edit) loses its entry, which can only make
+  // a run less trusted; the runs it named are reported below if they no longer match.
+  for (const item of ledger?.torn || []) warnings.push(`${path.relative(root, ledgerPath(root)).replace(/\\/g, '/') || ledgerPath(root)}: line ${item.line}: ${item.message}; the entry on it is lost`);
   for (const { line, entry } of ledger?.entries || []) {
     schemas.validate(LEDGER_SCHEMA, entry).forEach((error) => report(ledgerPath(root), `line ${line}: ${error}`));
   }
@@ -183,6 +182,7 @@ export function validateRepo(root) {
       const trust = trustRun(ledger, manifest.run_id, runDir);
       if (trust.state === 'untrusted') report(manifestFile, `does not match the evidence ledger: ${trust.reason}`);
       else if (trust.scores === 'mismatch' && listFiles(path.join(runDir, 'scores'), '.jsonl').length) report(manifestFile, `its scores do not match the evidence ledger (${trust.scores_reason}); run node lab score ${manifest.run_id}`);
+      for (const rel of trust.stray_scores || []) report(path.join(runDir, ...rel.split('/')), 'not written by an evaluator of this run, so it is never read; delete it');
     } catch (error) {
       report(manifestFile, `cannot be checked against the evidence ledger: ${error.message}`);
     }
@@ -210,7 +210,7 @@ export function validateRepo(root) {
       const expected = (manifest.models || []).length * cases * (manifest.repeats || 1);
       if (expected && rows.length !== expected) report(rawFile, `completed run has ${rows.length} rows; expected ${expected} (models x cases x repeats)`);
     }
-    for (const file of listFiles(path.join(runDir, 'scores'), '.jsonl')) {
+    for (const file of listFiles(path.join(runDir, 'scores'), '.jsonl').filter((name) => scoreFileNames(manifest).has(`scores/${name}`))) {
       const scoreFile = path.join(runDir, 'scores', file);
       const { rows: scores, problems: scoreProblems } = readJsonl(scoreFile);
       scoreProblems.forEach((item) => report(scoreFile, `line ${item.line}: ${item.message}`));

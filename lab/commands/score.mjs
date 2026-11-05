@@ -6,7 +6,7 @@ import path from 'node:path';
 import { listDirs, readJson, readJsonl } from '../lib/fsutil.mjs';
 import { findRunDir, loadSuite, runDirs } from '../lib/repo.mjs';
 import { storeFolders, takeLocks } from '../lib/lock.mjs';
-import { appendEntry, ensureLedger, ledgerPath, readLedger, scoresEntry, trustRun } from '../lib/ledger.mjs';
+import { appendEntry, ensureLedger, ledgerPath, loadLedger, scoresEntry, trustRun } from '../lib/ledger.mjs';
 import { getEvaluator } from '../evaluators/index.mjs';
 
 export function resolveRunDir(root, ref) {
@@ -23,7 +23,7 @@ export function scoreRun(root, runDir, { log = () => {}, force = false } = {}) {
   const manifest = readJson(path.join(runDir, 'run.json'));
   // The evidence ledger comes first: a run that does not match it is never scored, and a
   // run it halted counts as halted whatever run.json says.
-  const ledger = readLedger(ledgerPath(root));
+  const ledger = loadLedger(ledgerPath(root));
   const trust = trustRun(ledger, manifest.run_id, runDir);
   // Scores are derived: a mismatch of scores/ alone is repaired by scoring again.
   if (trust.state === 'untrusted') {
@@ -80,7 +80,7 @@ export function scoreRun(root, runDir, { log = () => {}, force = false } = {}) {
     written.push({ file, count: scores.length, passed: scores.filter((score) => score.passed).length });
   }
   // The scores now in the folder are the ones the ledger vouches for.
-  if (ledger) appendEntry(ledgerPath(root), scoresEntry(manifest.run_id, runDir));
+  if (ledger) appendEntry(ledgerPath(root), scoresEntry(manifest.run_id, runDir, manifest));
   return written;
 }
 

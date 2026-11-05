@@ -16,8 +16,8 @@ import { getAdapter } from '../adapters/index.mjs';
 import { extractSvg } from '../evaluators/index.mjs';
 import { resolveRunDir, scoreRun } from './score.mjs';
 import { modelCheck, normalizeErrorType, runLiveness } from '../lib/checks.mjs';
-import { storeFolders, takeLocks } from '../lib/lock.mjs';
-import { appendEntry, callFiles, closeEntry, ensureLedger, ledgerBytes, ledgerPath, lineSha, manifestCore, readLedger, restoreLedger, rowLine, rowLines, trustRun } from '../lib/ledger.mjs';
+import { LOCK_FILE, storeFolders, takeLocks } from '../lib/lock.mjs';
+import { appendEntry, callFiles, closeEntry, ensureLedger, ledgerBytes, ledgerPath, lineSha, loadLedger, manifestCore, restoreLedger, rowLine, rowLines, trustRun } from '../lib/ledger.mjs';
 
 const DEFAULT_TIMEOUT_S = 300;
 const USER_CONFIG = new Set(['loaded', 'isolated']);
@@ -247,8 +247,12 @@ function guardStamp(scope) {
     const kind = entryKind(file);
     stamp.set(`config: ${file}`, kind === 'file' ? `file ${sha256(fs.readFileSync(file))}` : kind);
   }
-  const ledgerKind = entryKind(scope.ledger);
-  stamp.set(`ledger: ${scope.ledger}`, ledgerKind === 'file' ? `file ${sha256(fs.readFileSync(scope.ledger))}` : ledgerKind);
+  // The ledger (its read-only bit too: a ledger made read-only could not be restored) and,
+  // beside it, the ledger folder's lock.
+  for (const [label, file] of [['ledger', scope.ledger], ['ledger lock', path.join(path.dirname(scope.ledger), LOCK_FILE)]]) {
+    const kind = entryKind(file);
+    stamp.set(`${label}: ${file}`, kind === 'file' ? `file ${sha256(fs.readFileSync(file))} ${fs.statSync(file).mode & 0o200 ? 'writable' : 'read-only'}` : kind);
+  }
   if (data) {
     stamp.set(`${DATA_KEY}.`, entryKind(data));
     if (fs.existsSync(data)) {
@@ -599,17 +603,12 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
     if (row.error) session.failures += 1;
     heartbeat(session);
   } catch (error) {
-    // A write that fails after the call (a folder put in place of a run file) stops the
-    // experiment, and the run still closes, so it never stays "running".
+    // A write that fails after the call stops the experiment, and the run still closes, so
+    // it never stays "running". After a halted call the run stays halted. A failure the
+    // guard did not explain (a busy file, a full disk) blames no agent: the run closes as
+    // interrupted, and a resume drops the half-written row and calls it again.
     log(`  ${testCase.case_id} r${repeat} ${m.modelKey}: could not store the row (${redactPaths(error.message)}); the experiment stops`);
-    if (!halt) {
-      try {
-        record(plan, { kind: 'halt', run_id: session.runId, reason: 'write_failed' });
-      } catch {
-        // The run then has no close entry and reads as not trusted.
-      }
-    }
-    session.halted = 'left_workdir';
+    session.halted = halt ? 'left_workdir' : 'write_failed';
     return true;
   }
   if (modelChecked === 'mismatch') log(`  warning: ${adapter.name} reports model "${result.model_reported}", not "${m.harnessModel}"; the row is marked model_check mismatch`);
@@ -707,7 +706,7 @@ async function execute(root, plan, sessions, { log, signal }) {
   for (const session of sessions) {
     // A guard that could not read the folders before a call made no call and blames no
     // agent: every run closes as interrupted, and a resume continues it.
-    const blamed = haltedBy && haltedBy.halted !== 'guard_unreadable';
+    const blamed = haltedBy && !['guard_unreadable', 'write_failed'].includes(haltedBy.halted);
     const halted = blamed ? (session === haltedBy ? 'left_workdir' : 'experiment_halted') : null;
     results.push(await closeRun(root, plan, session, { log, aborted: aborted || Boolean(haltedBy), halted }));
   }
@@ -826,7 +825,7 @@ async function resumeRun(root, ref, { log, force, dryRun }) {
   // The ledger decides what a resume may keep: a run it halted or cannot match is refused,
   // and the one unrecorded last row a crash may leave is dropped and called again.
   if (!dryRun) ensureLedger(root, { log });
-  const trust = trustRun(readLedger(ledgerPath(root)), manifest.run_id, runDir);
+  const trust = trustRun(loadLedger(ledgerPath(root)), manifest.run_id, runDir);
   if (trust.state === 'halted') throw new Error(`${manifest.run_id} was halted by the workdir guard (evidence ledger: ${trust.reason}); it cannot be resumed. Start a new run.`);
   if (trust.state === 'untrusted') throw new Error(`Cannot resume ${manifest.run_id}: it does not match the evidence ledger (${trust.reason}). Start a new run.`);
   const rawFile = path.join(runDir, 'raw.jsonl');
@@ -858,8 +857,22 @@ async function resumeRun(root, ref, { log, force, dryRun }) {
   // The resume entry comes before any write: it reopens the run with the rows it keeps
   // and its files now, so a crash during the resume leaves a run that is open, not changed.
   const kept = rowLines(runDir).lines.slice(0, rows.length);
-  const recorded = callFiles(runDir);
+  // The files of every call still to make (left by a call that crashed or stopped before
+  // its row) belong to no kept row: they are not recorded, and are removed after the
+  // resume entry, so a call made again never shows as a change to a recorded file.
+  const done = new Set(rows.map((row) => rowKey(row.case_id, row.model_key, row.repeat)));
+  const redo = [];
+  for (const testCase of plan.cases) {
+    for (const { model_key: modelKey } of manifest.models) {
+      for (let repeat = 0; repeat < plan.repeats; repeat += 1) {
+        if (done.has(rowKey(testCase.case_id, modelKey, repeat))) continue;
+        for (const segment of [(value) => value, safeSegment]) redo.push(`artifacts/${segment(testCase.case_id)}/${segment(modelKey)}__${segment(manifest.harness.name)}/r${repeat}/`);
+      }
+    }
+  }
+  const recorded = Object.fromEntries(Object.entries(callFiles(runDir)).filter(([rel]) => !redo.some((prefix) => rel.startsWith(prefix))));
   record(plan, { kind: 'resume', run_id: manifest.run_id, lines: kept, files: recorded, core: manifestCore(manifest) });
+  for (const prefix of new Set(redo)) fs.rmSync(path.join(runDir, ...prefix.split('/').filter(Boolean)), { recursive: true, force: true });
   if (droppedRow || tornLine) {
     fs.truncateSync(rawFile, Buffer.byteLength(text.slice(0, (text.endsWith('\n') ? text.slice(0, -1) : text).lastIndexOf('\n') + 1), 'utf8'));
     if (droppedRow) log(`  note: dropped the last row of ${manifest.run_id}: the ledger has no entry for it (a crash between the two writes); it is called again`);

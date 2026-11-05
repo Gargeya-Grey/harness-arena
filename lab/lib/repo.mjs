@@ -38,7 +38,7 @@ export function mainCheckout(root) {
  * Tests (node --test) never pick up a local file; they set LAB_DATA when they need one.
  */
 /** The main checkout and every worktree of the repository that root belongs to. */
-function checkouts(root) {
+export function checkouts(root) {
   const main = mainCheckout(root) ?? root;
   const out = new Set([path.resolve(root), path.resolve(main)]);
   const dir = path.join(main, '.git', 'worktrees');

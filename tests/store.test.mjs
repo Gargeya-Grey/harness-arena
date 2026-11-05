@@ -12,7 +12,7 @@ import { ADAPTERS } from '../lab/adapters/index.mjs';
 import { runCommand } from '../lab/commands/run.mjs';
 import { resolveRunDir, scoreCommand } from '../lab/commands/score.mjs';
 import { LOCK_FILE, takeLock } from '../lab/lib/lock.mjs';
-import { appendEntry, ledgerPath, readLedger, trustRun } from '../lab/lib/ledger.mjs';
+import { appendEntry, closeEntry, ensureLedger, ledgerPath, readLedger, trustRun } from '../lab/lib/ledger.mjs';
 import { adoptCommand } from '../lab/commands/adopt.mjs';
 import { scoreRun } from '../lab/commands/score.mjs';
 import { crashInLedger } from './crash.mjs';
@@ -664,7 +664,11 @@ test('ledger: node lab adopt vouches for a run the ledger does not know; a torn 
   fs.appendFileSync(ledgerPath(root), '{"torn":');
   assert.deepEqual(adoptCommand(root, [name], { log: () => {} }), [name]);
   assert.equal(trustOf(root, name, other).state, 'trusted');
-  assert.equal(readLedger(ledgerPath(root)).problems.length, 1, 'only the torn line is lost');
+  assert.equal(readLedger(ledgerPath(root)).torn.length, 1, 'only the torn line is lost');
+  // A torn line is a warning, not a problem: it can only make a run less trusted.
+  const report = validateRepo(root);
+  assert.ok(report.warnings.some((line) => /line \d+: invalid JSON.*the entry on it is lost/.test(line)), report.warnings.join('\n'));
+  assert.ok(!report.problems.some((line) => /invalid JSON/.test(line)), report.problems.join('\n'));
 });
 
 test('the ledger has a lock of its own: a command holding it refuses a run', async (t) => {
@@ -672,6 +676,164 @@ test('the ledger has a lock of its own: a command holding it refuses a run', asy
   fake(t, 'fake-ledger-lock', () => '4');
   writeLock(path.dirname(ledgerPath(root)), otherRunner(t));
   await assert.rejects(runCommand(root, smokeExperiment(root, 'ledgerlock', 'fake-ledger-lock'), { log: () => {} }), /Another lab command/);
+});
+
+test('ledger: a score file no evaluator of the run wrote is never read, and a re-score does not launder it', async (t) => {
+  const { root } = setup(t);
+  fake(t, 'fake-stray', () => 'wrong');
+  const [result] = await runCommand(root, smokeExperiment(root, 'stray', 'fake-stray'), { log: () => {} });
+  const aggregate = () => Object.values(buildState(root).contexts.find((ctx) => ctx.runs.includes(result.runId)).aggregates)[0];
+  const before = aggregate();
+  const rows = fs.readFileSync(path.join(result.runDir, 'raw.jsonl'), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  const planted = path.join(result.runDir, 'scores', 'aaa@1.jsonl');
+  fs.writeFileSync(planted, rows.map((row) => JSON.stringify({ run_id: result.runId, case_id: row.case_id, model_key: row.model_key, repeat: row.repeat, evaluator_id: 'aaa', evaluator_version: '1', dimension: 'quality', value: 1, passed: true })).join('\n') + '\n');
+  assert.deepEqual(aggregate(), before);
+  scoreRun(root, result.runDir, { log: () => {} });
+  assert.deepEqual(aggregate(), before);
+  assert.equal(trustOf(root, result.runId, result.runDir).scores, 'match');
+  assert.ok(validateRepo(root).problems.some((line) => line.includes('aaa@1.jsonl') && /never read/.test(line)));
+  assert.ok(!Object.keys(readLedger(ledgerPath(root)).runs.get(result.runId).scores).includes('scores/aaa@1.jsonl'));
+});
+
+for (const [label, sabotage] of [
+  ['read-only', (file) => fs.chmodSync(file, 0o444)],
+  ['a folder', (file) => {
+    fs.rmSync(file);
+    fs.mkdirSync(file);
+  }],
+]) {
+  test(`ledger: a halt restores a ledger the agent made ${label}, and drops the entries it wrote`, async (t) => {
+    const { root, data } = setup(t, { agentic: true });
+    const [committed] = runDirs(root);
+    const id = '20261105T000011Z__smoke__planted__abcdef';
+    const planted = path.join(data, 'results', id);
+    t.after(() => {
+      try {
+        fs.chmodSync(ledgerPath(root), 0o666);
+      } catch {
+        // Gone or a folder.
+      }
+    });
+    fake(t, `fake-sabotage-${label.replace(/\W/g, '')}`, () => {
+      fs.cpSync(committed.dir, planted, { recursive: true });
+      const manifest = JSON.parse(fs.readFileSync(path.join(planted, 'run.json'), 'utf8'));
+      fs.writeFileSync(path.join(planted, 'run.json'), JSON.stringify({ ...manifest, run_id: id }));
+      appendEntry(ledgerPath(root), closeEntry('adopt', id, planted, { by: 'owner' }));
+      sabotage(ledgerPath(root));
+      return 'done';
+    });
+    const [result] = await runCommand(root, agentExperiment(root, `sabotage${label.replace(/\W/g, '')}`, `fake-sabotage-${label.replace(/\W/g, '')}`), { log: () => {} });
+    assert.equal(result.halted, true);
+    assert.equal(fs.lstatSync(ledgerPath(root)).isFile(), true);
+    assert.equal(readLedger(ledgerPath(root)).runs.has(id), false);
+    assert.equal(trustOf(root, id, planted).state, 'untrusted');
+    assert.equal(trustOf(root, result.runId, result.runDir).state, 'halted');
+  });
+}
+
+test('ledger: a ledger that cannot be read trusts no run', async (t) => {
+  const { root } = setup(t);
+  fake(t, 'fake-unreadable', () => '4');
+  const [result] = await runCommand(root, smokeExperiment(root, 'unreadable', 'fake-unreadable'), { log: () => {} });
+  fs.rmSync(ledgerPath(root));
+  fs.mkdirSync(ledgerPath(root));
+  assert.equal(stateRun(root, result.runId).trust.state, 'untrusted');
+  assert.ok(validateRepo(root).problems.some((line) => /cannot read the evidence ledger/.test(line)));
+  assert.deepEqual(scoreRun(root, result.runDir, { log: () => {} }), []);
+});
+
+test('ledger: adopt --all never adopts a halted run; naming it does', async (t) => {
+  const { root } = setup(t);
+  fake(t, 'fake-adopt-halt', () => '4');
+  const [result] = await runCommand(root, smokeExperiment(root, 'adopthalt', 'fake-adopt-halt'), { log: () => {} });
+  appendEntry(ledgerPath(root), { kind: 'halt', run_id: result.runId, reason: 'left_workdir' });
+  assert.ok(!adoptCommand(root, [], { all: true, log: () => {} }).includes(result.runId));
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'halted');
+  const notes = [];
+  assert.deepEqual(adoptCommand(root, [result.runId], { log: (line) => notes.push(line) }), [result.runId]);
+  assert.ok(notes.some((line) => /was halted by the workdir guard/.test(line)));
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
+});
+
+test('a row that cannot be stored after a call the guard passed closes the run as interrupted, and a resume calls it again', async (t) => {
+  const { root } = setup(t);
+  fake(t, 'fake-busy', () => '4');
+  const append = fs.appendFileSync;
+  let failed = false;
+  t.mock.method(fs, 'appendFileSync', function appendFile(file, text, ...rest) {
+    if (!failed && String(file).endsWith('raw.jsonl') && String(text).includes('smoke-002')) {
+      failed = true;
+      throw Object.assign(new Error('resource busy'), { code: 'EBUSY' });
+    }
+    return append.call(this, file, text, ...rest);
+  });
+  const [result] = await runCommand(root, smokeExperiment(root, 'busy', 'fake-busy', ['smoke-001', 'smoke-002', 'smoke-003']), { log: () => {} });
+  t.mock.restoreAll();
+  const manifest = JSON.parse(fs.readFileSync(path.join(result.runDir, 'run.json'), 'utf8'));
+  assert.equal(manifest.harness.settings.halted, undefined);
+  assert.equal(manifest.runner.interrupted, true);
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
+  const [resumed] = await runCommand(root, null, { resume: result.runId, log: () => {} });
+  assert.equal(resumed.status, 'completed');
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
+});
+
+test('ledger: a resume after a crash before a row entry keeps the run open while that call is made again', async (t) => {
+  const { root } = setup(t, { agentic: true });
+  let calls = 0;
+  let resuming = false;
+  let result;
+  const seen = [];
+  fake(t, 'fake-window', (ctx) => {
+    calls += 1;
+    fs.writeFileSync(path.join(ctx.cwd, 'y.txt'), `y${calls}`);
+    if (!resuming) fs.writeFileSync(path.join(ctx.cwd, 'z.txt'), 'z');
+    if (resuming) seen.push(trustOf(root, result.runId, result.runDir).state);
+    return 'done';
+  });
+  [result] = await runCommand(root, agentExperiment(root, 'window', 'fake-window', 3), { log: () => {} });
+  // As a runner that died after row 1 reached raw.jsonl and before its ledger entry.
+  const raw = path.join(result.runDir, 'raw.jsonl');
+  fs.writeFileSync(raw, `${fs.readFileSync(raw, 'utf8').split('\n')[0]}\n`);
+  fs.rmSync(path.join(result.runDir, 'scores'), { recursive: true, force: true });
+  crashed(result.runDir);
+  crashInLedger(root, result.runId, 0);
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'open');
+  resuming = true;
+  const [resumed] = await runCommand(root, null, { resume: result.runId, log: () => {} });
+  assert.equal(resumed.status, 'completed');
+  assert.deepEqual(seen, ['open', 'open', 'open']);
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
+});
+
+test('ledger: creating it is all or nothing', (t) => {
+  const { root } = setup(t);
+  const append = fs.appendFileSync;
+  let count = 0;
+  t.mock.method(fs, 'appendFileSync', function appendFile(file, text, ...rest) {
+    if (String(file).endsWith('.tmp') && (count += 1) === 3) throw new Error('killed');
+    return append.call(this, file, text, ...rest);
+  });
+  assert.throws(() => ensureLedger(root), /killed/);
+  t.mock.restoreAll();
+  assert.equal(fs.existsSync(ledgerPath(root)), false);
+  assert.deepEqual(fs.readdirSync(path.dirname(ledgerPath(root))).filter((name) => name.endsWith('.tmp')), []);
+  assert.ok(ensureLedger(root) > 3);
+  for (const { name } of runDirs(root)) assert.ok(readLedger(ledgerPath(root)).runs.has(name), name);
+});
+
+test('ledger: creating it adopts the committed runs of every worktree', (t) => {
+  const { root } = setup(t);
+  const [committed] = runDirs(root);
+  const worktree = tempDir(t, 'lab-store-worktree-');
+  const id = '20261105T000012Z__smoke__worktree__abcdef';
+  fs.cpSync(committed.dir, path.join(worktree, 'results', id), { recursive: true });
+  const manifest = JSON.parse(fs.readFileSync(path.join(worktree, 'results', id, 'run.json'), 'utf8'));
+  fs.writeFileSync(path.join(worktree, 'results', id, 'run.json'), JSON.stringify({ ...manifest, run_id: id }));
+  fs.mkdirSync(path.join(root, '.git', 'worktrees', 'wt'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.git', 'worktrees', 'wt', 'gitdir'), `${path.join(worktree, '.git')}\n`);
+  ensureLedger(root);
+  assert.equal(readLedger(ledgerPath(root)).runs.has(id), true);
 });
 
 test('a dashboard job keeps the data folder: its child process gets LAB_DATA', async (t) => {
