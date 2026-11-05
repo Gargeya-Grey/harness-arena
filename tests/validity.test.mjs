@@ -249,20 +249,20 @@ test('new-case scaffolds an agent task that validate refuses until every marker 
   const root = tempRoot(t, { agentic: true });
   const versionOf = () => /version:\s*"([^"]+)"/.exec(fs.readFileSync(path.join(root, 'datasets', 'agentic', 'suite.yaml'), 'utf8'))[1];
   const old = versionOf();
-  const written = newCase(root, 'agentic', 'ttl-cache', { log: () => {} });
+  const written = newCase(root, 'agentic', 'scaffold-only-test', { log: () => {} });
   assert.deepEqual(written, [
     'datasets/agentic/cases.jsonl',
-    'datasets/agentic/workspaces/ttl-cache/package.json',
-    'datasets/agentic/workspaces/ttl-cache/src/ttl-cache.mjs',
-    'datasets/agentic/checks/ttl-cache/probe.mjs',
-    'datasets/agentic/checks/ttl-cache/expected.json',
+    'datasets/agentic/workspaces/scaffold-only-test/package.json',
+    'datasets/agentic/workspaces/scaffold-only-test/src/scaffold-only-test.mjs',
+    'datasets/agentic/checks/scaffold-only-test/probe.mjs',
+    'datasets/agentic/checks/scaffold-only-test/expected.json',
   ]);
   const [major, minor, patch] = old.split('.').map(Number);
   assert.equal(versionOf(), `${major}.${minor}.${patch + 1}`);
   const line = readJsonl(path.join(root, 'datasets', 'agentic', 'cases.jsonl')).rows.at(-1);
-  assert.deepEqual(line, { case_id: 'agentic-ttl-cache', input: { task: FILL_IN, workspace: 'ttl-cache' }, expected: { check: 'ttl-cache' }, tags: [] });
+  assert.deepEqual(line, { case_id: 'agentic-scaffold-only-test', input: { task: FILL_IN, workspace: 'scaffold-only-test' }, expected: { check: 'scaffold-only-test' }, tags: [] });
   const problems = problemsOf(root).filter((item) => item.includes(FILL_IN));
   assert.equal(problems.length, 5, problems.join('\n'));
-  assert.throws(() => newCase(root, 'agentic', 'ttl-cache', { log: () => {} }), /already exists/);
+  assert.throws(() => newCase(root, 'agentic', 'scaffold-only-test', { log: () => {} }), /already exists/);
   assert.throws(() => newCase(root, 'agentic', 'Bad Slug', { log: () => {} }), /lowercase/);
 });
