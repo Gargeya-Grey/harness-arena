@@ -99,21 +99,46 @@ export function loadCases(root, suiteId) {
  * key run through one harness. `models` plus a top-level `harness` is
  * shorthand for one target per model.
  */
+const EFFORT = /^[a-z][a-z0-9-]{0,31}$/;
+
+/**
+ * The targets of an experiment, one per model x harness x effort. `effort` is undefined
+ * when the target sets none (the registry's reasoning_effort applies), a word such as
+ * "high", or "default" for the harness default.
+ */
 export function resolveExperiment(experiment, registry) {
   const problems = [];
   const targets = [];
   const declared = Array.isArray(experiment.targets)
     ? experiment.targets
     : (experiment.models || []).map((model) => ({ model, harness: experiment.harness }));
+  const seen = new Set();
   for (const [index, target] of declared.entries()) {
-    const entry = typeof target === 'string' ? { model: target, harness: experiment.harness } : target;
+    const entry = typeof target === 'string' ? { model: target, harness: experiment.harness } : { harness: experiment.harness, ...target };
     if (!entry?.model) {
       problems.push(`targets[${index}]: missing "model"`);
       continue;
     }
     if (!registry[entry.model]) problems.push(`targets[${index}]: model "${entry.model}" is not in configs/models.yaml`);
     if (!entry.harness) problems.push(`targets[${index}]: no harness for "${entry.model}"; add "harness:" to the target or the experiment`);
-    targets.push({ model: entry.model, harness: entry.harness, label: entry.label || null });
+    // Effort: the target's `effort` or `efforts` list, else the experiment's `effort`, else
+    // the registry entry's reasoning_effort. "default" means the harness default.
+    if (entry.effort != null && entry.efforts != null) problems.push(`targets[${index}]: give "effort" or "efforts", not both`);
+    const efforts = entry.efforts != null ? entry.efforts : [entry.effort ?? experiment.effort ?? undefined];
+    if (!Array.isArray(efforts) || !efforts.length) {
+      problems.push(`targets[${index}]: "efforts" must be a non-empty list`);
+      continue;
+    }
+    for (const effort of efforts) {
+      if (effort !== undefined && !(typeof effort === 'string' && EFFORT.test(effort))) {
+        problems.push(`targets[${index}]: effort ${JSON.stringify(effort)} must be a word such as low, medium, high or default`);
+        continue;
+      }
+      const key = `${entry.model}|${entry.harness}|${effort ?? registry[entry.model]?.reasoning_effort ?? 'default'}`;
+      if (seen.has(key)) problems.push(`targets[${index}]: ${entry.model} on ${entry.harness} at effort ${effort ?? 'registry'} is listed twice`);
+      seen.add(key);
+      targets.push({ model: entry.model, harness: entry.harness, label: entry.label || null, effort });
+    }
   }
   if (!targets.length) problems.push('Experiment declares no targets or models');
   if (!experiment.id) problems.push('Experiment has no "id"');

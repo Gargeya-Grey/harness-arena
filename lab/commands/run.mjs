@@ -109,13 +109,20 @@ export function planFromExperiment(root, experiment, { harness: onlyHarness, mod
   }
   const repeats = Number(repeatOverride ?? experiment.repeats ?? suite.meta.defaults?.repeats ?? 1);
   if (!Number.isInteger(repeats) || repeats < 1) throw new Error(`repeats must be a positive integer, got ${repeats}`);
+  // One run per harness and effort: a run's models share one effort setting, so two
+  // efforts of one model are two runs, two configurations, one comparison.
   const groups = new Map();
   for (const target of targets) {
     if (onlyHarness && target.harness !== onlyHarness) continue;
     if (onlyModels && !onlyModels.includes(target.model)) continue;
-    getAdapter(target.harness, root);
-    if (!groups.has(target.harness)) groups.set(target.harness, []);
-    if (!groups.get(target.harness).includes(target.model)) groups.get(target.harness).push(target.model);
+    const adapter = getAdapter(target.harness, root);
+    if (target.effort !== undefined && target.effort !== 'default' && !adapter.supports_effort) {
+      throw new Error(`${path.basename(file)}: ${target.harness} has no effort control, so effort "${target.effort}" for ${target.model} cannot apply. Remove it or use another harness.`);
+    }
+    const key = target.effort === undefined ? target.harness : `${target.harness}@${target.effort}`;
+    if (!groups.has(key)) groups.set(key, { harness: target.harness, effort: target.effort, models: [] });
+    const group = groups.get(key);
+    if (!group.models.includes(target.model)) group.models.push(target.model);
   }
   if (!groups.size) throw new Error(onlyHarness || onlyModels ? `No target matches ${[onlyHarness && `harness "${onlyHarness}"`, onlyModels && `models ${onlyModels.join(', ')}`].filter(Boolean).join(' and ')}` : 'No targets to run');
   // A run records the cases it executed. The full suite is recorded as "all" by omitting the list.
@@ -141,10 +148,11 @@ export function planFromExperiment(root, experiment, { harness: onlyHarness, mod
   };
 }
 
-function modelPlan(plan, adapter, modelKey) {
+/** `effort`: the target's effort (undefined: the registry's; "default": the harness default). */
+function modelPlan(plan, adapter, modelKey, effortOverride = undefined) {
   const entry = plan.registry[modelKey];
   const params = entry.params || {};
-  const requestedEffort = entry.reasoning_effort ?? null;
+  const requestedEffort = effortOverride === undefined ? (entry.reasoning_effort ?? null) : effortOverride === 'default' ? null : effortOverride;
   const effort = adapter.supports_effort ? requestedEffort : null;
   const applied = adapter.applied({ params, effort });
   const notApplied = Object.keys(params).filter((key) => !(key in applied));
@@ -205,7 +213,7 @@ function heartbeat(session, at = isoNow()) {
 }
 
 /** Start one run (one harness), or reopen a stopped one to continue it. */
-async function openRun(root, plan, harnessName, modelKeys, { log, resume = null }) {
+async function openRun(root, plan, harnessName, modelKeys, { log, resume = null, effort = undefined }) {
   const adapter = getAdapter(harnessName, root);
   const detected = await adapter.detect();
   if (!detected.version) {
@@ -213,7 +221,7 @@ async function openRun(root, plan, harnessName, modelKeys, { log, resume = null 
   }
   const isolated = plan.userConfig === 'isolated';
   const isolationArgs = isolated ? adapter.isolation?.args || [] : [];
-  const models = modelKeys.map((key) => modelPlan(plan, adapter, key));
+  const models = modelKeys.map((key) => modelPlan(plan, adapter, key, effort));
   const session = { adapter, isolationArgs, models, attempts: 0, failures: 0, done: new Set(), halted: null, fenced: true };
 
   if (resume) {
@@ -528,14 +536,14 @@ export async function runCommand(root, file, options = {}) {
   const log = options.log || console.log;
   if (options.resume) return resumeCommand(root, options.resume, { log, force: options.force, dryRun: options.dryRun });
   const plan = planExperiment(root, file, options);
-  const totalCalls = [...plan.groups.values()].reduce((sum, models) => sum + models.length, 0) * plan.cases.length * plan.repeats;
-  log(`Experiment ${plan.experiment.id}: suite ${plan.suite.id} ${plan.suite.version}, prompt ${plan.prompt.id} v${plan.prompt.version}, ${totalCalls} call(s) across ${plan.groups.size} harness(es)`);
+  const totalCalls = [...plan.groups.values()].reduce((sum, group) => sum + group.models.length, 0) * plan.cases.length * plan.repeats;
+  log(`Experiment ${plan.experiment.id}: suite ${plan.suite.id} ${plan.suite.version}, prompt ${plan.prompt.id} v${plan.prompt.version}, ${totalCalls} call(s) in ${plan.groups.size} run(s)`);
   if (options.dryRun) {
-    for (const [harness, models] of plan.groups) {
+    for (const { harness, effort, models } of plan.groups.values()) {
       const adapter = getAdapter(harness, root);
       const flags = plan.userConfig === 'isolated' ? adapter.isolation?.args || [] : [];
       for (const key of models) {
-        const m = modelPlan(plan, adapter, key);
+        const m = modelPlan(plan, adapter, key, effort);
         log(`  ${harness}: ${key} → model "${m.harnessModel}", effort ${m.effort ?? 'default'}, user setup ${flags.length ? `skipped (${flags.join(' ')})` : 'loaded'}${plan.access === 'edit' ? `, access edit (${(adapter.edit?.args || []).join(' ') || 'no flags'})` : ''}${m.notApplied.length ? `, not forwarded: ${m.notApplied.join(', ')}` : ''}${plan.registry[key]?.pinned === false ? ', alias (not a pinned snapshot)' : ''}`);
       }
     }
@@ -544,9 +552,9 @@ export async function runCommand(root, file, options = {}) {
   }
   const results = [];
   const sessions = [];
-  for (const [harness, models] of plan.groups) {
+  for (const { harness, effort, models } of plan.groups.values()) {
     try {
-      sessions.push(await openRun(root, plan, harness, models, { log }));
+      sessions.push(await openRun(root, plan, harness, models, { log, effort }));
     } catch (error) {
       log(`\n${harness}: skipped. ${error.message}`);
       results.push({ harness, status: 'skipped', error: error.message });
@@ -588,8 +596,12 @@ export async function resumeCommand(root, ref, { log = console.log, force = fals
   if (plan.prompt.sha256 !== manifest.prompt.sha256) differs.push(`prompt ${plan.prompt.id} changed`);
   if (plan.repeats !== manifest.repeats) differs.push(`repeats ${plan.repeats} differ from the run's ${manifest.repeats}`);
   const adapter = getAdapter(manifest.harness.name, root);
+  // The run is one group of the experiment: the one whose effort gives the efforts it recorded.
+  const sameEffort = (group) => manifest.models.every((item) => group.models.includes(item.model_key) && (modelPlan(plan, adapter, item.model_key, group.effort).effort ?? null) === (item.reasoning_effort ?? null));
+  const group = [...plan.groups.values()].find((item) => item.harness === manifest.harness.name && sameEffort(item))
+    ?? [...plan.groups.values()].find((item) => item.harness === manifest.harness.name);
   for (const item of manifest.models) {
-    const now = modelPlan(plan, adapter, item.model_key);
+    const now = modelPlan(plan, adapter, item.model_key, group?.effort);
     if (now.harnessModel !== item.model || (now.effort ?? null) !== (item.reasoning_effort ?? null)) differs.push(`${item.model_key} is now "${now.harnessModel}" at effort ${now.effort ?? 'default'}`);
   }
   if (differs.length) throw new Error(`Cannot resume ${manifest.run_id}; its inputs changed:\n  ${differs.join('\n  ')}\nStart a new run.`);
@@ -622,6 +634,6 @@ export async function resumeCommand(root, ref, { log = console.log, force = fals
     log('Dry run: nothing was called or written.');
     return [];
   }
-  const session = await openRun(root, plan, manifest.harness.name, manifest.models.map((item) => item.model_key), { log, resume: { manifest, runDir, rows, tornLine } });
+  const session = await openRun(root, plan, manifest.harness.name, manifest.models.map((item) => item.model_key), { log, effort: group?.effort, resume: { manifest, runDir, rows, tornLine } });
   return withSigint(log, (signal) => execute(root, plan, [session], { log, signal }));
 }

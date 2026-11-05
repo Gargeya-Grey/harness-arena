@@ -494,7 +494,7 @@ function pickExp() {
     e.access === 'edit' ? '<span class="chip warn">agent task: edit access</span>' : '',
     `<span class="chip ${e.user_config === 'isolated' ? '' : 'muted'}">user setup ${esc(e.user_config)}</span>`,
   ].join('');
-  const targets = (e.targets || []).map((t) => `<div class="target"><span class="mark-s"></span><b>${esc(t.model)}</b> through ${esc(t.harness)}</div>`).join('');
+  const targets = (e.targets || []).map((t) => `<div class="target"><span class="mark-s"></span><b>${esc(t.model)}</b> through ${esc(t.harness)}${t.effort ? ` · effort ${esc(t.effort)}` : ''}</div>`).join('');
   const problems = e.problems.length ? `<div class="notice warn">${e.problems.map(esc).join('<br>')}</div>` : '';
   detail.innerHTML = `${e.description ? `<p class="exp-desc"></p>` : ''}<div class="chip-row">${chips}</div><div class="targets">${targets}</div>${problems}`;
   if (e.description) detail.querySelector('.exp-desc').textContent = e.description;

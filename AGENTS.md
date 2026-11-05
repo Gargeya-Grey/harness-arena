@@ -54,7 +54,7 @@ docs/dashboard-spec.md    Dashboard design: UI, data contract, visual system
 
 1. Treat `results/` as append-only evidence. A correction is a new run with a new `run_id`.
 2. Keep raw and derived separate: `raw.jsonl` holds model responses; scores and `reports/` are recomputed from it without new model calls.
-3. Pin exact provider snapshots in `configs/models.yaml`. Give every params or effort variant its own `model_key`.
+3. Pin exact provider snapshots in `configs/models.yaml`. Give every params variant its own `model_key`. Effort is set per target in the experiment (`effort: high` or `efforts: [low, high]`); the registry's `reasoning_effort` is only the default when a target sets none. Each effort runs as its own run and shows as its own configuration.
 4. Hold suite version, prompt version, evaluator versions, and decoding params constant within a comparison. Changing one means a new experiment and a new run.
 5. Reuse IDs exactly. `case_id` is `<suite>-<slug>`, `model_key` is a registry key, prompt versions are quoted strings (`"1"`). Never renumber or repurpose an ID.
 6. Write every record to the schema in `schemas/`.
@@ -103,8 +103,8 @@ Done when existing runs still point at the version they recorded and no frozen t
 
 ### Declare a comparison
 
-1. Copy an experiment file. Set `suite`, `prompt`, `targets` (`- model: <key>` / `harness: <name>`), `repeats`, and `evaluators`. Add a `cases` list to run a subset.
-2. For a controlled comparison, change one axis only: same model through two harnesses, or two models through one harness.
+1. Copy an experiment file. Set `suite`, `prompt`, `targets` (`- model: <key>` / `harness: <name>`, optional `effort: <level>` or `efforts: [<level>, ...]`, `default` for the harness default), `repeats`, and `evaluators`. Add a `cases` list to run a subset.
+2. For a controlled comparison, change one axis only: same model through two harnesses, two models through one harness, or one model at several efforts (`efforts: [low, medium, high]`).
 3. Use 3 or more cases, and 3 or more repeats when reliability matters. The dashboard shows confidence intervals only from 3 cases; repeats of one case are not more cases.
 
 Done when `node lab validate` passes and `--dry-run` lists every target.

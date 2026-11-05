@@ -103,7 +103,7 @@ test('catalog lists experiments with targets and suite case ids, plus harnesses 
   assert.ok(cat.models.includes('pulse-alpha-free'));
   // The older format (one harness, a models list) gives the same target shape.
   const legacy = cat.experiments.find((item) => item.file === 'smoke-command-code.yaml');
-  assert.deepEqual(legacy.targets, [{ model: 'deepseek-v4.1-flash-max', harness: 'command-code' }]);
+  assert.deepEqual(legacy.targets, [{ model: 'deepseek-v4.1-flash-max', harness: 'command-code', effort: null }]);
   assert.deepEqual(legacy.problems, []);
 });
 

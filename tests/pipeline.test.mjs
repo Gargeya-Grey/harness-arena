@@ -69,7 +69,7 @@ test('plan: groups targets by harness and applies filters', () => {
   assert.equal(plan.cases.length, 1);
   assert.equal(plan.workdirMode, 'isolated');
   const one = planExperiment(REPO_ROOT, file, { models: ['gpt-6-luna-low'] });
-  assert.deepEqual([...one.groups.entries()], [['codex', ['gpt-6-luna-low']]]);
+  assert.deepEqual([...one.groups.entries()], [['codex', { harness: 'codex', effort: undefined, models: ['gpt-6-luna-low'] }]]);
   assert.throws(() => planExperiment(REPO_ROOT, file, { harness: 'nope' }), /No target matches/);
 });
 

@@ -108,7 +108,7 @@ export function catalog(root) {
         repeats: doc.repeats ?? 1,
         access: doc.access || 'answer',
         user_config: doc.user_config || 'loaded',
-        targets: resolved.targets.map((t) => ({ model: t.model, harness: t.harness })),
+        targets: resolved.targets.map((t) => ({ model: t.model, harness: t.harness, effort: t.effort ?? null })),
         cases: Array.isArray(doc.cases) ? doc.cases : null,
       });
       try {

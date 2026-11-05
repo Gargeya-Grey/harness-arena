@@ -125,6 +125,17 @@ node lab run experiments/agentic-sweep.yaml --harness opencode --repeats 1 --cas
 
 Example: `smoke-harness-sweep` runs Claude Haiku 5.5 through Claude Code and through Command Code. That pair is a controlled harness comparison. The other targets differ in model and harness, so they are descriptive.
 
+**Effort per target.** To compare efforts of one model, list them on the target:
+
+```yaml
+targets:
+  - model: claude-haiku-5.5
+    harness: claude-code
+    efforts: [low, medium, high]   # or effort: high; "default" is the harness default
+```
+
+Each effort runs as its own run, and the three are a controlled effort comparison. A target without an effort uses the model's `reasoning_effort` from `configs/models.yaml`. The plan refuses an effort on a harness that has no effort control (see the table above).
+
 ## Layout
 
 ```

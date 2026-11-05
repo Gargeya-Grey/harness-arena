@@ -120,7 +120,10 @@ export function validateRepo(root) {
       const experiment = loadYamlFile(abs);
       const { targets, problems: targetProblems } = resolveExperiment(experiment, registry);
       targetProblems.forEach((message) => report(abs, message));
-      for (const target of targets) if (target.harness && !adapters[target.harness]) report(abs, `unknown harness "${target.harness}"; known: ${Object.keys(adapters).join(', ')}`);
+      for (const target of targets) {
+        if (target.harness && !adapters[target.harness]) report(abs, `unknown harness "${target.harness}"; known: ${Object.keys(adapters).join(', ')}`);
+        else if (target.effort !== undefined && target.effort !== 'default' && !adapters[target.harness]?.supports_effort) report(abs, `${target.harness} has no effort control; effort "${target.effort}" for ${target.model} cannot apply`);
+      }
       if (experiment.user_config != null && !['loaded', 'isolated'].includes(experiment.user_config)) report(abs, `user_config must be "loaded" or "isolated"`);
       if (experiment.access != null && !['answer', 'edit'].includes(experiment.access)) report(abs, `access must be "answer" or "edit"`);
       const suite = suites.get(experiment.suite);
