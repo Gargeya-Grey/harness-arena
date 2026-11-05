@@ -39,7 +39,7 @@ export function withExtra(args, extra) {
 export function defineCli(spec) {
   const isolation = spec.isolation || { args: [], note: 'This harness has no flag to skip the user setup; it always loads it.' };
   const flags = isolation.args || [];
-  const home = isolation.home ? { files: isolation.home.files || [], writeBack: isolation.home.writeBack !== false, store: isolation.home.store || null } : null;
+  const home = isolation.home ? { files: isolation.home.files || [], writeBack: isolation.home.writeBack !== false, store: isolation.home.store || null, remove: isolation.home.remove || null } : null;
   // HOME and USERPROFILE always point at the temp home, so the CLI finds no real home folder at all.
   const homeEnv = (dir) => ({ HOME: dir, USERPROFILE: dir, ...(isolation.home?.env ? isolation.home.env(dir) : {}) });
   const edit = spec.edit || null;
@@ -97,7 +97,7 @@ export function defineCli(spec) {
       if (!(isolated && home)) return execute(baseEnv, null);
 
       // Isolated through a temp home: only the sign-in files go in; the folder is deleted afterwards.
-      const outcome = await runInTempHome({ files: home.files, writeBack: home.writeBack, store: home.store, homeDir: homeDir || os.homedir(), env: (dir) => ({ ...baseEnv, ...homeEnv(dir) }) }, (dir) =>
+      const outcome = await runInTempHome({ files: home.files, writeBack: home.writeBack, store: home.store, ...(home.remove ? { remove: home.remove } : {}), homeDir: homeDir || os.homedir(), env: (dir) => ({ ...baseEnv, ...homeEnv(dir) }) }, (dir) =>
         execute({ ...baseEnv, ...homeEnv(dir) }, dir).then((result) => ({ result, dir })),
       );
       if (outcome.error) return { error: outcome.error, wall_ms: 0, events: [] };

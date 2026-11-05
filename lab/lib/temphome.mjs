@@ -80,7 +80,8 @@ function removeFolder(dir) {
  * { value, home: { removed, written_back, kept } } with file names only.
  * The folder is deleted when fn succeeds, fails or throws.
  */
-export async function runInTempHome({ files, writeBack = true, homeDir = os.homedir(), tmpRoot = os.tmpdir(), store = null, env = () => ({}) }, fn) {
+// `remove` is the folder delete; tests pass one that fails.
+export async function runInTempHome({ files, writeBack = true, homeDir = os.homedir(), tmpRoot = os.tmpdir(), store = null, env = () => ({}), remove = removeFolder }, fn) {
   const missing = missingSignIn(files, homeDir, store);
   if (missing.length) {
     return { error: { type: 'auth', message: `Isolated mode needs the sign-in file ${missing.join(', ')} in your home folder. Sign in with the CLI once, then run again. The real home is not used as a fallback.` } };
@@ -113,9 +114,11 @@ export async function runInTempHome({ files, writeBack = true, homeDir = os.home
         if (store) await store.writeBack({ homeDir, dir, state, home });
       } catch (error) {
         home.kept.push(`write-back failed: ${error?.message || error}`);
+        // Said out loud too: when the call throws, the row (and home.kept) is lost with it.
+        process.stderr.write(`warning: a refreshed sign-in could not be written back (${error?.message || error}); sign in again if the next call fails with an auth error.\n`);
       }
     }
-    home.removed = removeFolder(dir);
+    home.removed = remove(dir);
     if (!home.removed) {
       // This folder holds a copy of the sign-in; say where, so the owner can delete it.
       process.stderr.write(`warning: could not delete the temp home ${dir}; it holds a copy of your sign-in. Delete it by hand.\n`);

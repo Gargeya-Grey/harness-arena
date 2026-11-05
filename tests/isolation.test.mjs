@@ -421,3 +421,51 @@ test('a token the CLI refreshed is written back even when the call throws afterw
   );
   assert.equal(JSON.parse(fs.readFileSync(path.join(home, AUTH), 'utf8')).token, 'rotated');
 });
+
+function captureStderr(t) {
+  const lines = [];
+  const original = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk, ...rest) => (lines.push(String(chunk)), true);
+  t.after(() => (process.stderr.write = original));
+  return lines;
+}
+
+test('a temp home that cannot be deleted is reported: a warning with its path, removed false, session_deleted false', async (t) => {
+  const home = fakeHome();
+  const lines = captureStderr(t);
+  const leftovers = [];
+  t.after(() => leftovers.forEach((dir) => fs.rmSync(dir, { recursive: true, force: true })));
+  const adapter = defineCli({
+    name: 'fake-stuck',
+    bin: 'node',
+    supportsEffort: false,
+    isolation: { note: 'Fake.', home: { files: [AUTH], env: (dir) => ({ CODEX_HOME: path.join(dir, '.codex') }), remove: (dir) => (leftovers.push(dir), false) } },
+    args: (ctx) => [script, ctx.prompt],
+    parse: () => ({ text: 'x', usage: {}, tool_calls: 0, skills_used: [], events: [], error: null, session_id: 's1', extra: {} }),
+    async after(parsed, { tempHome }) {
+      if (tempHome) parsed.extra = { ...parsed.extra, session_deleted: true };
+    },
+  });
+  const result = await call(adapter, 'ok', home);
+  assert.equal(result.extra.temp_home.removed, false);
+  assert.equal(result.extra.session_deleted, false, 'the session lives in the folder that is still there');
+  assert.match(lines.join(''), /could not delete the temp home .+ holds a copy of your sign-in/);
+});
+
+test('a failed write-back is recorded and said out loud', async (t) => {
+  const home = fakeHome();
+  const lines = captureStderr(t);
+  const store = {
+    label: 'fake store',
+    missing: () => [],
+    seed: async () => ({}),
+    writeBack: async () => {
+      throw new Error('database is locked');
+    },
+  };
+  const out = await runInTempHome({ files: [AUTH], homeDir: home, store }, () => 'value');
+  assert.equal(out.value, 'value');
+  assert.match(out.home.kept.join('\n'), /write-back failed: database is locked/);
+  assert.match(lines.join(''), /could not be written back \(database is locked\)/);
+  assert.equal(out.home.removed, true);
+});
