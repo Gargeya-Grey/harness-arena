@@ -48,7 +48,7 @@ test('the reasoning generator is deterministic and its output is what cases.json
     assert.ok(item.input.question.length > 40, `${item.case_id}: question`);
   }
 
-  const lines = fs.readFileSync(path.join(DATASETS, 'reasoning', 'cases.jsonl'), 'utf8').split('\n').filter(Boolean);
+  const lines = fs.readFileSync(path.join(DATASETS, 'reasoning', 'cases.jsonl'), 'utf8').split(/\r?\n/).filter(Boolean);
   assert.deepEqual(lines.slice(-generated.length), generated, 'the last lines of cases.jsonl must be the generator output, byte for byte');
   const handWritten = lines.slice(0, -generated.length).map((line) => JSON.parse(line).case_id);
   for (const item of parsed) assert.ok(!handWritten.includes(item.case_id), `${item.case_id} also appears among the hand-written cases`);
