@@ -55,7 +55,7 @@ export function modelCheck(requested, reported) {
   return seen.some(same) ? 'match' : 'mismatch';
 }
 
-function processAlive(pid) {
+export function processAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);

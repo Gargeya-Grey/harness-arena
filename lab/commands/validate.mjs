@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { listDirs, listFiles, readJson, readJsonl } from '../lib/fsutil.mjs';
 import { SchemaSet } from '../lib/schema.mjs';
-import { effectiveEffort, loadPrompt, loadRegistry, loadSuite, loadYamlFile, paths, resolveExperiment, runDirs } from '../lib/repo.mjs';
+import { targetProblems as checkTargets, loadPrompt, loadRegistry, loadSuite, loadYamlFile, paths, resolveExperiment, runDirs } from '../lib/repo.mjs';
 import { harnessesFile, loadAdapters, readDeclared } from '../adapters/index.mjs';
 import { getEvaluator } from '../evaluators/index.mjs';
 import { listTree } from '../lib/workspace.mjs';
@@ -120,17 +120,7 @@ export function validateRepo(root) {
       const experiment = loadYamlFile(abs);
       const { targets, problems: targetProblems } = resolveExperiment(experiment, registry);
       targetProblems.forEach((message) => report(abs, message));
-      const configs = new Set();
-      for (const target of targets) {
-        if (target.harness && !adapters[target.harness]) {
-          report(abs, `unknown harness "${target.harness}"; known: ${Object.keys(adapters).join(', ')}`);
-          continue;
-        }
-        if (target.effort !== undefined && target.effort !== 'default' && !adapters[target.harness]?.supports_effort) report(abs, `${target.harness} has no effort control; effort "${target.effort}" for ${target.model} cannot apply`);
-        const same = `${target.model}|${target.harness}|${effectiveEffort(target, registry[target.model], adapters[target.harness]) ?? 'default'}`;
-        if (configs.has(same)) report(abs, `${target.model} on ${target.harness} is listed twice at the same effort`);
-        configs.add(same);
-      }
+      for (const message of checkTargets(targets.filter((target) => target.harness), registry, adapters)) report(abs, message);
       if (experiment.user_config != null && !['loaded', 'isolated'].includes(experiment.user_config)) report(abs, `user_config must be "loaded" or "isolated"`);
       if (experiment.access != null && !['answer', 'edit'].includes(experiment.access)) report(abs, `access must be "answer" or "edit"`);
       const suite = suites.get(experiment.suite);

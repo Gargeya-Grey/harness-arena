@@ -37,15 +37,33 @@ function mainCheckout(root) {
  * the main checkout, so every worktree writes to the same store. Null: the root itself.
  * Tests (node --test) never pick up a local file; they set LAB_DATA when they need one.
  */
+/** The main checkout and every worktree of the repository that root belongs to. */
+function checkouts(root) {
+  const main = mainCheckout(root) ?? root;
+  const out = new Set([path.resolve(root), path.resolve(main)]);
+  const dir = path.join(main, '.git', 'worktrees');
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      // <main>/.git/worktrees/<name>/gitdir names <worktree>/.git
+      const gitdir = fs.readFileSync(path.join(dir, name, 'gitdir'), 'utf8').trim();
+      out.add(path.dirname(path.resolve(dir, name, gitdir)));
+    }
+  } catch {
+    // No worktrees.
+  }
+  return [...out];
+}
+
 export function dataDir(root = labRoot(), env = process.env) {
-  // Inside a checkout, git clean or a removed worktree would delete it, and the workdir
-  // guard would watch it twice; so the data folder must be outside every checkout.
-  const outside = (dir, source, checkouts) => {
-    const inside = checkouts.find((checkout) => isInside(dir, checkout));
+  // Inside a checkout of this repository (the main one or any worktree), git clean or
+  // git worktree remove would delete it, and that checkout's guard would see every
+  // other run write there; so the data folder must be outside all of them.
+  const outside = (dir, source) => {
+    const inside = checkouts(root).find((checkout) => isInside(dir, checkout));
     if (inside) throw new Error(`${source}: the data folder ${dir} is inside the repository checkout ${inside}; put it outside, for example ../Model-Lab-Data`);
     return dir;
   };
-  if (env.LAB_DATA) return outside(path.resolve(env.LAB_DATA), 'LAB_DATA', [root]);
+  if (env.LAB_DATA) return outside(path.resolve(env.LAB_DATA), 'LAB_DATA');
   if (env.NODE_TEST_CONTEXT || env.LAB_ROOT) return null;
   const main = mainCheckout(root);
   for (const dir of [root, main].filter(Boolean)) {
@@ -53,7 +71,7 @@ export function dataDir(root = labRoot(), env = process.env) {
     if (!fs.existsSync(file)) continue;
     const value = parseYaml(readText(file))?.data_dir;
     if (typeof value !== 'string' || !value.trim()) throw new Error(`${file}: data_dir must be a folder path`);
-    return outside(path.resolve(dir, value), file, [root, main].filter(Boolean));
+    return outside(path.resolve(dir, value), file);
   }
   return null;
 }
@@ -62,6 +80,33 @@ export function dataDir(root = labRoot(), env = process.env) {
 export function isInside(dir, parent) {
   const rel = path.relative(parent, dir);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/**
+ * Problems of resolved targets that need the harnesses: an unknown harness, an effort on
+ * a harness without effort control, and two targets that are one configuration (same
+ * model, harness and effective effort). The planner, validate and the dashboard catalog
+ * all use this one check.
+ */
+export function targetProblems(targets, registry, adapters) {
+  const problems = [];
+  const seen = new Set();
+  for (const target of targets) {
+    const adapter = adapters[target.harness];
+    if (!adapter) {
+      problems.push(`unknown harness "${target.harness}"; known: ${Object.keys(adapters).join(', ')}`);
+      continue;
+    }
+    if (target.effort !== undefined && target.effort !== 'default' && !adapter.supports_effort) {
+      problems.push(`${target.harness} has no effort control, so effort "${target.effort}" for ${target.model} cannot apply; remove it or use another harness`);
+      continue;
+    }
+    const effort = effectiveEffort(target, registry[target.model], adapter) ?? 'default';
+    const key = `${target.model}|${target.harness}|${effort}`;
+    if (seen.has(key)) problems.push(`${target.model} on ${target.harness} is listed twice at effort ${effort}: one configuration`);
+    seen.add(key);
+  }
+  return problems;
 }
 
 /**

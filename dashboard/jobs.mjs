@@ -7,7 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { paths, findRunDir, loadYamlFile, loadCases, loadRegistry, resolveExperiment } from '../lab/lib/repo.mjs';
+import { paths, findRunDir, loadYamlFile, loadCases, loadRegistry, resolveExperiment, targetProblems } from '../lab/lib/repo.mjs';
 import { loadAdapters } from '../lab/adapters/index.mjs';
 import { isoNow } from '../lab/lib/fsutil.mjs';
 
@@ -99,7 +99,7 @@ export function catalog(root) {
     try {
       const doc = loadYamlFile(path.join(p.experiments, file)) || {};
       const resolved = resolveExperiment(doc, registry);
-      entry.problems.push(...resolved.problems);
+      entry.problems.push(...resolved.problems, ...targetProblems(resolved.targets.filter((t) => t.harness), registry, loadAdapters(root)));
       Object.assign(entry, {
         id: doc.id || entry.id,
         description: doc.description || '',

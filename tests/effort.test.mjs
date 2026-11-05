@@ -94,7 +94,7 @@ test('two targets that run at the same effective effort are one configuration an
   // A harness without effort control runs both at its default: the same configuration.
   const noEffort = experiment(root, 'dup2', ['targets:', '  - model: claude-haiku', '    harness: fake-dup-noeffort', '    effort: default', '  - model: claude-haiku', '    harness: fake-dup-noeffort']);
   await assert.rejects(runCommand(root, noEffort, { log: () => {}, dryRun: true }), /listed twice/);
-  assert.match(validateRepo(root).problems.map((p) => p.message || p).join('\n'), /listed twice at the same effort/);
+  assert.match(validateRepo(root).problems.map((p) => p.message || p).join('\n'), /listed twice/);
 });
 
 test('an effort on a harness without effort control is refused before any call', async (t) => {

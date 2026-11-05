@@ -9,13 +9,13 @@ import { spawnSync } from 'node:child_process';
 import { appendJsonl, isoNow, readJson, readJsonl, readText, sha256, writeJson, safeSegment } from '../lib/fsutil.mjs';
 import { redactEvent, redactPaths } from '../lib/redact.mjs';
 import { parseYaml } from '../lib/yaml.mjs';
-import { effectiveEffort, isInside, loadPrompt, loadRegistry, loadSuite, paths, renderMessages, resolveExperiment } from '../lib/repo.mjs';
+import { loadPrompt, targetProblems, loadRegistry, loadSuite, paths, renderMessages, resolveExperiment } from '../lib/repo.mjs';
 import { costUsd } from '../lib/metrics.mjs';
 import { copyTree, snapshotWorkspace, stampDiff, treeHash, treeStamp } from '../lib/workspace.mjs';
 import { getAdapter } from '../adapters/index.mjs';
 import { extractSvg } from '../evaluators/index.mjs';
 import { resolveRunDir, scoreRun } from './score.mjs';
-import { modelCheck, normalizeErrorType, runLiveness } from '../lib/checks.mjs';
+import { modelCheck, normalizeErrorType, processAlive, runLiveness } from '../lib/checks.mjs';
 
 const DEFAULT_TIMEOUT_S = 300;
 const USER_CONFIG = new Set(['loaded', 'isolated']);
@@ -112,18 +112,12 @@ export function planFromExperiment(root, experiment, { harness: onlyHarness, mod
   if (!Number.isInteger(repeats) || repeats < 1) throw new Error(`repeats must be a positive integer, got ${repeats}`);
   // One run per harness and effort: a run's models share one effort setting, so two
   // efforts of one model are two runs, two configurations, one comparison.
+  const chosen = targets.filter((target) => (!onlyHarness || target.harness === onlyHarness) && (!onlyModels || onlyModels.includes(target.model)));
+  const adapters = Object.fromEntries(chosen.map((target) => [target.harness, getAdapter(target.harness, root)]));
+  const targetIssues = targetProblems(chosen, registry, adapters);
+  if (targetIssues.length) throw new Error(`${path.basename(file)}:\n  ${targetIssues.join('\n  ')}`);
   const groups = new Map();
-  const configs = new Map();
-  for (const target of targets) {
-    if (onlyHarness && target.harness !== onlyHarness) continue;
-    if (onlyModels && !onlyModels.includes(target.model)) continue;
-    const adapter = getAdapter(target.harness, root);
-    if (target.effort !== undefined && target.effort !== 'default' && !adapter.supports_effort) {
-      throw new Error(`${path.basename(file)}: ${target.harness} has no effort control, so effort "${target.effort}" for ${target.model} cannot apply. Remove it or use another harness.`);
-    }
-    const same = `${target.model}|${target.harness}|${effectiveEffort(target, registry[target.model], adapter) ?? 'default'}`;
-    if (configs.has(same)) throw new Error(`${path.basename(file)}: ${target.model} on ${target.harness} at effort ${effectiveEffort(target, registry[target.model], adapter) ?? 'default'} is listed twice (${configs.get(same)} and ${target.effort ?? 'registry effort'})`);
-    configs.set(same, target.effort ?? 'registry effort');
+  for (const target of chosen) {
     const key = target.effort === undefined ? target.harness : `${target.harness}@${target.effort}`;
     if (!groups.has(key)) groups.set(key, { harness: target.harness, effort: target.effort, models: [] });
     const group = groups.get(key);
@@ -188,35 +182,57 @@ function writeArtifact(runDir, kind, row, text, harness) {
 // while a run may be going. They hold no hidden check, so the guard skips them.
 const DASHBOARD_DIRS = ['boards', 'annotations', 'reports'];
 
-// The data folder is shared by every checkout, so other runs (this experiment's other
-// harnesses, a run in another worktree) write to it during a call. The guard watches
-// only the run folders that were finished before the call, without their derived
-// scores: a change there is an agent tampering with stored evidence.
-function dataScope(root) {
-  const data = paths(root).data;
-  const base = data ? path.join(data, 'results') : null;
-  if (!base || !fs.existsSync(base)) return [];
-  return fs.readdirSync(base, { withFileTypes: true }).filter((entry) => {
-    if (!entry.isDirectory()) return false;
-    try {
-      return readJson(path.join(base, entry.name, 'run.json')).status !== 'running';
-    } catch {
-      return false;
-    }
-  }).map((entry) => path.join(base, entry.name));
-}
-
+// The data folder is shared by every checkout. The guard watches all of it during an
+// agent call: every entry of results/ (a planted file or run folder counts), and every
+// file in each run folder, this experiment's open runs included (the runner writes
+// nothing during a call). Two things are left out: derived scores/, and a run folder
+// whose run.json says another live runner owns it (another worktree's run or resume).
 const DATA_KEY = 'data folder: ';
 
-function guardStamp(root, scope = []) {
+function ownedElsewhere(dir) {
+  try {
+    const manifest = readJson(path.join(dir, 'run.json'));
+    const pid = manifest?.runner?.pid;
+    return manifest?.status === 'running' && pid !== process.pid && processAlive(pid);
+  } catch {
+    return false;
+  }
+}
+
+function guardStamp(root) {
   const stamp = treeStamp(root, UNGUARDED_DIRS);
   for (const key of [...stamp.keys()]) if (DASHBOARD_DIRS.some((dir) => key.startsWith(`${dir}/`))) stamp.delete(key);
+  const elsewhere = new Set();
   const data = paths(root).data;
-  for (const dir of scope) {
-    const rel = path.relative(data, dir).split(path.sep).join('/');
-    for (const [key, value] of treeStamp(dir, UNGUARDED_DIRS)) if (!key.startsWith('scores/')) stamp.set(`${DATA_KEY}${rel}/${key}`, value);
+  const base = data ? path.join(data, 'results') : null;
+  if (base && fs.existsSync(base)) {
+    for (const entry of fs.readdirSync(base, { withFileTypes: true })) {
+      const rel = `results/${entry.name}`;
+      const abs = path.join(base, entry.name);
+      if (!entry.isDirectory()) {
+        stamp.set(`${DATA_KEY}${rel}`, sha256(fs.readFileSync(abs)));
+        continue;
+      }
+      if (ownedElsewhere(abs)) {
+        elsewhere.add(rel);
+        continue;
+      }
+      stamp.set(`${DATA_KEY}${rel}/`, 'folder');
+      for (const [key, value] of treeStamp(abs, UNGUARDED_DIRS)) if (!key.startsWith('scores/')) stamp.set(`${DATA_KEY}${rel}/${key}`, value);
+    }
   }
-  return stamp;
+  return { stamp, elsewhere };
+}
+
+/** The first changed key, leaving out run folders that another runner owned before or after the call. */
+function guardDiff(before, after) {
+  const skip = new Set([...before.elsewhere, ...after.elsewhere]);
+  const keep = (stamp) => new Map([...stamp].filter(([key]) => {
+    if (!key.startsWith(DATA_KEY)) return true;
+    const rel = key.slice(DATA_KEY.length).split('/').slice(0, 2).join('/');
+    return !skip.has(rel);
+  }));
+  return stampDiff(keep(before.stamp), keep(after.stamp));
 }
 
 /** The folders an agent must not name: the repository, and the data folder with every stored run. */
@@ -353,8 +369,7 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
   // Every open run of the experiment beats, so none looks stale while it waits its
   // turn. The heartbeat writes run.json, so it comes before the guard's first stamp.
   beat();
-  const scope = guarded ? dataScope(root) : [];
-  const stampBefore = guarded ? guardStamp(root, scope) : null;
+  const stampBefore = guarded ? guardStamp(root) : null;
   const fixtureSha = testCase.input?.workspace != null ? treeHash(workspaceDir(plan.suite, testCase)) : null;
   const startedAt = isoNow();
   let result;
@@ -379,9 +394,9 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
   let halt = false;
   if (guarded) {
     let escape = null;
-    const changed = stampDiff(stampBefore, guardStamp(root, scope));
+    const changed = guardDiff(stampBefore, guardStamp(root));
     if (changed?.startsWith(DATA_KEY)) {
-      escape = `changed the stored run file ${changed.slice(DATA_KEY.length)} in the data folder while it ran; the experiment stops and this run is not scored. That run folder is evidence: compare it with a backup before you trust it`;
+      escape = `changed or added ${changed.slice(DATA_KEY.length).replace(/\/$/, '')} in the data folder, where the stored runs are, while it ran; the experiment stops and this run is not scored. That run folder is evidence: compare it with a backup before you trust it`;
       halt = true;
     } else if (changed) {
       escape = `changed ${changed} in the lab repository while it ran; the experiment stops and this run is not scored. Check that file with git diff. If you edited it yourself during the call, this is a false alarm: keep your work and run again. Otherwise restore it (git checkout -- <file>) before the next run`;
