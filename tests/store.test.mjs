@@ -70,6 +70,19 @@ test('dataDir: LAB_DATA wins; lab.local.yaml at the root or at the main checkout
   assert.equal(dataDir(main, { LAB_ROOT: main }), null, 'LAB_ROOT (fixtures, UI work) keeps its own results/');
   fs.writeFileSync(path.join(main, 'lab.local.yaml'), 'data_dir: ""\n');
   assert.throws(() => dataDir(main, {}), /data_dir must be a folder path/);
+  fs.writeFileSync(path.join(main, 'lab.local.yaml'), 'data_dir: ./data\n');
+  assert.throws(() => dataDir(main, {}), /inside the repository checkout/, 'git clean would delete it');
+  assert.throws(() => dataDir(main, { LAB_DATA: path.join(main, 'x') }), /inside the repository checkout/);
+  // git worktree.useRelativePaths writes a gitdir relative to the worktree.
+  fs.writeFileSync(path.join(main, 'lab.local.yaml'), 'data_dir: ../Model-Lab-Data\n');
+  fs.writeFileSync(path.join(worktree, '.git'), `gitdir: ${path.relative(worktree, path.join(main, '.git', 'worktrees', 'wt')).split(path.sep).join('/')}\n`);
+  const prev = process.cwd();
+  process.chdir(os.tmpdir());
+  try {
+    assert.equal(dataDir(worktree, {}), path.resolve(main, '..', 'Model-Lab-Data'));
+  } finally {
+    process.chdir(prev);
+  }
 });
 
 test('new runs go to the data folder; committed runs in results/ are still read, each id once', async (t) => {
@@ -96,18 +109,48 @@ test('new runs go to the data folder; committed runs in results/ are still read,
   assert.equal(paths(root).annotations, path.join(data, 'annotations'));
 });
 
-test('an agent that writes into the data folder halts the experiment', async (t) => {
+test('an agent that changes a finished stored run halts the experiment; other runs writing their own folders do not', async (t) => {
   const { root, data } = setup(t, { agentic: true });
-  fs.mkdirSync(path.join(data, 'results'), { recursive: true });
+  // A finished run in the data folder, and one that another checkout is still writing.
+  const [committed] = runDirs(root);
+  const finished = path.join(data, 'results', committed.name);
+  fs.cpSync(committed.dir, finished, { recursive: true });
+  const busy = path.join(data, 'results', '20261105T000000Z__smoke__elsewhere__abcdef');
+  fs.mkdirSync(busy, { recursive: true });
+  fs.writeFileSync(path.join(busy, 'run.json'), JSON.stringify({ status: 'running' }));
+  let calls = 0;
   fake(t, 'fake-tamper', () => {
-    fs.writeFileSync(path.join(data, 'results', 'planted.txt'), 'x');
+    calls += 1;
+    // Another worktree's run appends rows and starts a new run folder: no halt.
+    fs.appendFileSync(path.join(busy, 'raw.jsonl'), '{}\n');
+    fs.mkdirSync(path.join(data, 'results', `20261105T00000${calls}Z__smoke__new__abcdef`), { recursive: true });
+    if (calls === 2) fs.appendFileSync(path.join(finished, 'raw.jsonl'), '{"planted":true}\n');
     return 'done';
   });
   const file = path.join(root, 'experiments', 'tamper.yaml');
-  fs.writeFileSync(file, ['id: tamper', 'suite: agentic', 'prompt: agent-task', 'repeats: 1', 'cases: [agentic-slugify-bug]', 'workdir: isolated', 'access: edit', 'harness: fake-tamper', 'models: [claude-haiku]', 'evaluators:', '  - id: workspace-tests', '    version: "1"', '    dimension: quality', ''].join('\n'));
+  fs.writeFileSync(file, ['id: tamper', 'suite: agentic', 'prompt: agent-task', 'repeats: 2', 'cases: [agentic-slugify-bug]', 'workdir: isolated', 'access: edit', 'harness: fake-tamper', 'models: [claude-haiku]', 'evaluators:', '  - id: workspace-tests', '    version: "1"', '    dimension: quality', ''].join('\n'));
   const [result] = await runCommand(root, file, { log: () => {} });
   assert.equal(result.halted, true);
-  const [row] = readJsonl(path.join(result.runDir, 'raw.jsonl')).rows;
-  assert.equal(row.error.type, 'left_workdir');
-  assert.match(row.error.message, /data folder: results\/planted\.txt/);
+  const rows = readJsonl(path.join(result.runDir, 'raw.jsonl')).rows;
+  assert.equal(rows[0].error, null, 'the first call only touched other runs');
+  assert.equal(rows[1].error.type, 'left_workdir');
+  assert.match(rows[1].error.message, new RegExp(`stored run file results/${committed.name}/raw\.jsonl in the data folder`));
+  fs.rmSync(busy, { recursive: true, force: true });
+});
+
+test('a dashboard job keeps the data folder: its child process gets LAB_DATA', async (t) => {
+  const { root, data } = setup(t);
+  const { createJobs } = await import('../dashboard/jobs.mjs');
+  const probe = path.join(root, 'probe.mjs');
+  fs.writeFileSync(probe, "console.log('LAB_DATA=' + process.env.LAB_DATA); console.log('LAB_ROOT=' + process.env.LAB_ROOT);\n");
+  const jobs = createJobs(root, { cliPath: probe });
+  const job = jobs.start({ command: 'validate' });
+  let lines = [];
+  for (let i = 0; i < 100; i += 1) {
+    await new Promise((r) => setTimeout(r, 50));
+    const got = jobs.get(job.id);
+    lines = (got?.lines || []).map((line) => line.text ?? line);
+    if (got && got.job?.status !== 'running' && got.status !== 'running') break;
+  }
+  assert.ok(lines.some((line) => String(line).includes(`LAB_DATA=${data}`)), lines.join('\n'));
 });

@@ -24,7 +24,7 @@ function mainCheckout(root) {
     if (!fs.statSync(gitFile).isFile()) return null;
     const gitdir = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(gitFile, 'utf8'))?.[1]?.trim();
     // <main>/.git/worktrees/<name>
-    return gitdir ? path.resolve(gitdir, '..', '..', '..') : null;
+    return gitdir ? path.resolve(root, gitdir, '..', '..', '..') : null;
   } catch {
     return null;
   }
@@ -38,16 +38,41 @@ function mainCheckout(root) {
  * Tests (node --test) never pick up a local file; they set LAB_DATA when they need one.
  */
 export function dataDir(root = labRoot(), env = process.env) {
-  if (env.LAB_DATA) return path.resolve(env.LAB_DATA);
+  // Inside a checkout, git clean or a removed worktree would delete it, and the workdir
+  // guard would watch it twice; so the data folder must be outside every checkout.
+  const outside = (dir, source, checkouts) => {
+    const inside = checkouts.find((checkout) => isInside(dir, checkout));
+    if (inside) throw new Error(`${source}: the data folder ${dir} is inside the repository checkout ${inside}; put it outside, for example ../Model-Lab-Data`);
+    return dir;
+  };
+  if (env.LAB_DATA) return outside(path.resolve(env.LAB_DATA), 'LAB_DATA', [root]);
   if (env.NODE_TEST_CONTEXT || env.LAB_ROOT) return null;
-  for (const dir of [root, mainCheckout(root)].filter(Boolean)) {
+  const main = mainCheckout(root);
+  for (const dir of [root, main].filter(Boolean)) {
     const file = path.join(dir, LOCAL_CONFIG);
     if (!fs.existsSync(file)) continue;
     const value = parseYaml(readText(file))?.data_dir;
     if (typeof value !== 'string' || !value.trim()) throw new Error(`${file}: data_dir must be a folder path`);
-    return path.resolve(dir, value);
+    return outside(path.resolve(dir, value), file, [root, main].filter(Boolean));
   }
   return null;
+}
+
+/** True when dir is parent or inside it. */
+export function isInside(dir, parent) {
+  const rel = path.relative(parent, dir);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/**
+ * The effort a target really runs at: its own, else the registry's, through a harness
+ * that can set effort; null (the harness default) otherwise. Two targets with the same
+ * model, harness and effective effort are one configuration.
+ */
+export function effectiveEffort(target, entry, adapter) {
+  if (!adapter?.supports_effort) return null;
+  if (target.effort === undefined) return entry?.reasoning_effort ?? null;
+  return target.effort === 'default' ? null : target.effort;
 }
 
 export function paths(root = labRoot()) {
@@ -153,7 +178,6 @@ export function resolveExperiment(experiment, registry) {
   const declared = Array.isArray(experiment.targets)
     ? experiment.targets
     : (experiment.models || []).map((model) => ({ model, harness: experiment.harness }));
-  const seen = new Set();
   for (const [index, target] of declared.entries()) {
     const entry = typeof target === 'string' ? { model: target, harness: experiment.harness } : { harness: experiment.harness, ...target };
     if (!entry?.model) {
@@ -175,9 +199,6 @@ export function resolveExperiment(experiment, registry) {
         problems.push(`targets[${index}]: effort ${JSON.stringify(effort)} must be a word such as low, medium, high or default`);
         continue;
       }
-      const key = `${entry.model}|${entry.harness}|${effort ?? registry[entry.model]?.reasoning_effort ?? 'default'}`;
-      if (seen.has(key)) problems.push(`targets[${index}]: ${entry.model} on ${entry.harness} at effort ${effort ?? 'registry'} is listed twice`);
-      seen.add(key);
       targets.push({ model: entry.model, harness: entry.harness, label: entry.label || null, effort });
     }
   }

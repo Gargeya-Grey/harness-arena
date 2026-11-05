@@ -50,12 +50,10 @@ function experiment(root, id, lines) {
 
 const registry = { m: { model: 'm', reasoning_effort: 'medium' } };
 
-test('resolveExperiment expands efforts, keeps the registry effort when none is given, and refuses duplicates', () => {
+test('resolveExperiment expands efforts, keeps the registry effort when none is given, and refuses bad values', () => {
   const { targets, problems } = resolveExperiment({ id: 'x', suite: 's', prompt: 'p', targets: [{ model: 'm', harness: 'h', efforts: ['low', 'high'] }, { model: 'm', harness: 'h' }] }, registry);
   assert.deepEqual(problems, []);
   assert.deepEqual(targets.map((t) => t.effort), ['low', 'high', undefined]);
-  const dup = resolveExperiment({ id: 'x', suite: 's', prompt: 'p', targets: [{ model: 'm', harness: 'h', effort: 'medium' }, { model: 'm', harness: 'h' }] }, registry);
-  assert.match(dup.problems.join('\n'), /listed twice/, 'medium from the target and medium from the registry are the same configuration');
   const both = resolveExperiment({ id: 'x', suite: 's', prompt: 'p', targets: [{ model: 'm', harness: 'h', effort: 'low', efforts: ['high'] }] }, registry);
   assert.match(both.problems.join('\n'), /not both/);
   const bad = resolveExperiment({ id: 'x', suite: 's', prompt: 'p', targets: [{ model: 'm', harness: 'h', efforts: ['High!'] }] }, registry);
@@ -84,6 +82,19 @@ test('two efforts of one model run as two runs, record their effort, and show as
   const mine = ctx.config_ids.filter((id) => state.configs[id].harness.name === 'fake-effort');
   assert.deepEqual(mine.map((id) => state.configs[id].effort ?? 'default').sort(), ['default', 'high', 'low']);
   assert.deepEqual(validateRepo(root).problems, []);
+});
+
+test('two targets that run at the same effective effort are one configuration and are refused', async (t) => {
+  const root = tempRoot(t);
+  fake(t, 'fake-dup');
+  fake(t, 'fake-dup-noeffort', { effort: false });
+  const registryEffort = (await import('../lab/lib/repo.mjs')).loadRegistry(root)['claude-haiku']?.reasoning_effort;
+  const same = experiment(root, 'dup', ['targets:', '  - model: claude-haiku', '    harness: fake-dup', `    effort: ${registryEffort ?? 'default'}`, '  - model: claude-haiku', '    harness: fake-dup']);
+  await assert.rejects(runCommand(root, same, { log: () => {}, dryRun: true }), /listed twice/);
+  // A harness without effort control runs both at its default: the same configuration.
+  const noEffort = experiment(root, 'dup2', ['targets:', '  - model: claude-haiku', '    harness: fake-dup-noeffort', '    effort: default', '  - model: claude-haiku', '    harness: fake-dup-noeffort']);
+  await assert.rejects(runCommand(root, noEffort, { log: () => {}, dryRun: true }), /listed twice/);
+  assert.match(validateRepo(root).problems.map((p) => p.message || p).join('\n'), /listed twice at the same effort/);
 });
 
 test('an effort on a harness without effort control is refused before any call', async (t) => {

@@ -184,7 +184,8 @@ export function createJobs(root, { cliPath = CLI, env = process.env } = {}) {
     const id = `${isoNow().replace(/[-:.]/g, '').slice(0, 15)}-${crypto.randomBytes(3).toString('hex')}`;
     const child = spawn(process.execPath, [cliPath, ...args], {
       cwd: root,
-      env: { ...env, LAB_ROOT: root, LAB_JOB: '1', NO_COLOR: '1', FORCE_COLOR: '0' },
+      // LAB_ROOT makes the child ignore lab.local.yaml, so it gets the data folder by name.
+      env: { ...env, LAB_ROOT: root, ...(paths(root).data ? { LAB_DATA: paths(root).data } : {}), LAB_JOB: '1', NO_COLOR: '1', FORCE_COLOR: '0' },
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       detached: process.platform !== 'win32',
