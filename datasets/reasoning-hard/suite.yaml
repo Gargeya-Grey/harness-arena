@@ -1,0 +1,16 @@
+id: reasoning-hard
+version: "1.0.0"
+description: >
+  Thirty hard problems with one exact answer, from seven seeded families: logic
+  grids, knights and knaves, cable networks and restricted routes, two-worker
+  scheduling, lattice paths and seating counts, congruence systems, and working-day
+  calendars. Each case needs six or more dependent steps or a search too large to
+  guess, and each is solvable on paper in about 10 to 30 minutes. The answer is a
+  whole number, one word, or a date. Every case is written by
+  datasets/reasoning-hard/generate.mjs (fixed seed, fresh names and numbers); the
+  answer comes from the exhaustive solvers in datasets/reasoning-hard/solvers.mjs,
+  which also prove it is unique. The instance behind each case is stored in its
+  metadata, which no prompt uses. Compared with the final-answer evaluator: a number
+  as a number, a word or date after normalising.
+defaults:
+  repeats: 3
