@@ -125,7 +125,9 @@ data_dir: ../Model-Lab-Data   # relative to this file, or an absolute path
 - The runner, `validate`, `score`, the report and the dashboard read the data folder and the runs committed in `results/` together. A run id found in both places is read from the data folder.
 - `LAB_DATA=<folder>` overrides the file for one command. `LAB_ROOT` (fixtures, UI work) and the tests ignore `lab.local.yaml`.
 - `node lab doctor` prints where runs are written.
-- During an agent call the workdir guard also watches the data folder: an agent that changes a stored run halts the experiment.
+- One runner at a time. `node lab run`, `--resume` and `node lab score` take a lock on the data folder (`.lab-run.lock`). A second command is refused while the first one runs, from any worktree. A lock left by a crashed process is taken over. A dry run takes no lock.
+- During an agent call the workdir guard watches all of `<data_dir>/results/`: every run, row, score, folder and link. An agent that changes, adds or deletes anything there halts the experiment, and that run is not scored. A folder the guard cannot read halts it too.
+- Limits: the guard does not watch `annotations/`, because the dashboard saves ratings at any time. It reads every stored file before and after each agent call, so that cost grows with the store.
 
 Without `lab.local.yaml`, runs go to `results/` in the checkout, as before.
 

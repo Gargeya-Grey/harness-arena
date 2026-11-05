@@ -10,7 +10,8 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ADAPTERS } from '../lab/adapters/index.mjs';
 import { runCommand } from '../lab/commands/run.mjs';
-import { resolveRunDir } from '../lab/commands/score.mjs';
+import { resolveRunDir, scoreCommand } from '../lab/commands/score.mjs';
+import { LOCK_FILE, takeLock } from '../lab/lib/lock.mjs';
 import { validateRepo } from '../lab/commands/validate.mjs';
 import { readJsonl } from '../lab/lib/fsutil.mjs';
 import { dataDir, findRunDir, paths, runDirs } from '../lab/lib/repo.mjs';
@@ -134,6 +135,12 @@ const TAMPER = [
   ['a file planted beside the runs', ({ data }) => fs.writeFileSync(path.join(data, 'results', 'planted.txt'), 'x'), /results\/planted\.txt in the data folder/],
   ['a run folder planted', ({ data }) => fs.mkdirSync(path.join(data, 'results', '20261105T000001Z__smoke__forged__abcdef')), /forged__abcdef in the data folder/],
   ['a finished run deleted', ({ finished }) => fs.rmSync(finished, { recursive: true, force: true }), /in the data folder/],
+  ['a score forged in a finished run', ({ finished }) => {
+    fs.mkdirSync(path.join(finished, 'scores'), { recursive: true });
+    fs.writeFileSync(path.join(finished, 'scores', 'forged.jsonl'), '{"passed":true}\n');
+  }, /scores\/forged\.jsonl in the data folder/],
+  // A junction needs no admin rights on Windows; it must show as an entry, never be followed.
+  ['a link planted beside the runs', ({ data, cwd }) => fs.symlinkSync(cwd, path.join(data, 'results', 'planted-link'), 'junction'), /results\/planted-link in the data folder/],
 ];
 
 for (const [index, [what, act, message]] of TAMPER.entries()) {
@@ -157,32 +164,82 @@ for (const [index, [what, act, message]] of TAMPER.entries()) {
   });
 }
 
-test('the guard does not halt for another live runner: its new run, its rows, its resume of a finished run', async (t) => {
+/** The pid of a process that has finished: the runner of a crash. */
+async function goneRunner() {
+  const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+  await new Promise((resolve) => child.on('exit', resolve));
+  return child.pid;
+}
+
+function writeLock(data, pid) {
+  fs.mkdirSync(data, { recursive: true });
+  fs.writeFileSync(path.join(data, LOCK_FILE), `${JSON.stringify({ pid, command: 'node lab run other', checkout: 'elsewhere', at: '2026-11-05T00:00:00Z' })}\n`);
+}
+
+test('one runner at a time: run, resume and score are refused while another live process holds the lock', async (t) => {
+  const { root, data } = setup(t);
+  fake(t, 'fake-lock', () => '4');
+  const file = path.join(root, 'experiments', 'lock.yaml');
+  fs.writeFileSync(file, ['id: lock', 'suite: smoke', 'prompt: qa-single-turn', 'repeats: 1', 'cases: [smoke-001]', 'harness: fake-lock', 'models: [claude-haiku]', 'evaluators:', '  - id: exact-match', '    version: "1"', '    dimension: quality', ''].join('\n'));
+  const [first] = await runCommand(root, file, { log: () => {} });
+  assert.equal(fs.existsSync(path.join(data, LOCK_FILE)), false, 'a finished run releases the lock');
+  writeLock(data, otherRunner(t));
+  const before = runDirs(root).length;
+  await assert.rejects(runCommand(root, file, { log: () => {} }), /Another lab command is writing to the data folder: "node lab run other"/);
+  assert.equal(runDirs(root).length, before, 'a refused run writes no run folder');
+  await assert.rejects(runCommand(root, null, { resume: first.runId, log: () => {} }), /Another lab command/);
+  assert.throws(() => scoreCommand(root, [first.runId], { log: () => {} }), /Another lab command/);
+  // A dry run writes nothing, so it needs no lock.
+  assert.deepEqual(await runCommand(root, file, { dryRun: true, log: () => {} }), []);
+});
+
+test('a lock left by a process that is gone is taken over, and released after the run, also when the run fails', async (t) => {
+  const { root, data } = setup(t);
+  let fail = false;
+  fake(t, 'fake-stale', () => {
+    if (fail) throw new Error('harness blew up');
+    return '4';
+  });
+  const file = path.join(root, 'experiments', 'stale.yaml');
+  fs.writeFileSync(file, ['id: stale', 'suite: smoke', 'prompt: qa-single-turn', 'repeats: 1', 'cases: [smoke-001]', 'harness: fake-stale', 'models: [claude-haiku]', 'evaluators:', '  - id: exact-match', '    version: "1"', '    dimension: quality', ''].join('\n'));
+  writeLock(data, await goneRunner());
+  const notes = [];
+  const [result] = await runCommand(root, file, { log: (line) => notes.push(line) });
+  assert.ok(notes.some((line) => /took over a data folder lock left by process \d+, which is gone/.test(line)), notes.join('\n'));
+  assert.equal(result.status, 'completed');
+  assert.equal(fs.existsSync(path.join(data, LOCK_FILE)), false);
+  fail = true;
+  await runCommand(root, file, { log: () => {} }).catch(() => {});
+  assert.equal(fs.existsSync(path.join(data, LOCK_FILE)), false, 'a failed run releases the lock');
+  scoreCommand(root, [result.runId], { force: true, log: () => {} });
+  assert.equal(fs.existsSync(path.join(data, LOCK_FILE)), false, 'score releases the lock');
+  // A lock file that cannot be read and is new may be one another runner is writing.
+  fs.writeFileSync(path.join(data, LOCK_FILE), '');
+  assert.throws(() => takeLock(data, { command: 'x', root }), /is being written by another lab command/);
+});
+
+test('the guard halts, and does not crash, when the data folder cannot be read after the call', async (t) => {
   const { root, data } = setup(t, { agentic: true });
-  const [committed] = runDirs(root);
-  const resumed = path.join(data, 'results', committed.name);
-  fs.cpSync(committed.dir, resumed, { recursive: true });
-  const pid = otherRunner(t);
-  const busy = path.join(data, 'results', '20261105T000000Z__smoke__elsewhere__abcdef');
-  fs.mkdirSync(busy, { recursive: true });
-  fs.writeFileSync(path.join(busy, 'run.json'), JSON.stringify({ status: 'running', runner: { pid } }));
-  let calls = 0;
-  fake(t, 'fake-neighbour', () => {
-    calls += 1;
-    fs.appendFileSync(path.join(busy, 'raw.jsonl'), '{}\n');
-    const fresh = path.join(data, 'results', `20261105T00000${calls}Z__smoke__new__abcdef`);
-    fs.mkdirSync(fresh, { recursive: true });
-    fs.writeFileSync(path.join(fresh, 'run.json'), JSON.stringify({ status: 'running', runner: { pid } }));
-    if (calls === 2) {
-      const manifest = JSON.parse(fs.readFileSync(path.join(resumed, 'run.json'), 'utf8'));
-      fs.writeFileSync(path.join(resumed, 'run.json'), JSON.stringify({ ...manifest, status: 'running', runner: { pid, heartbeat_at: new Date().toISOString() } }));
-      fs.appendFileSync(path.join(resumed, 'raw.jsonl'), '{}\n');
+  let armed = false;
+  const read = fs.readdirSync;
+  t.mock.method(fs, 'readdirSync', function readdir(dir, ...rest) {
+    if (armed && String(dir).startsWith(path.join(data, 'results'))) {
+      armed = false;
+      const error = new Error('access denied');
+      error.code = 'EPERM';
+      throw error;
     }
+    return read.call(this, dir, ...rest);
+  });
+  fake(t, 'fake-unreadable', () => {
+    armed = true;
     return 'done';
   });
-  const [result] = await runCommand(root, agentExperiment(root, 'neighbour', 'fake-neighbour', 2), { log: () => {} });
-  assert.equal(result.halted, false);
-  assert.deepEqual(readJsonl(path.join(result.runDir, 'raw.jsonl')).rows.map((row) => row.error), [null, null]);
+  const [result] = await runCommand(root, agentExperiment(root, 'unreadable', 'fake-unreadable'), { log: () => {} });
+  assert.equal(result.halted, true);
+  const row = readJsonl(path.join(result.runDir, 'raw.jsonl')).rows.at(-1);
+  assert.equal(row.error.type, 'left_workdir');
+  assert.match(row.error.message, /cannot read \(EPERM access denied\)/);
 });
 
 test('a dashboard job keeps the data folder: its child process gets LAB_DATA', async (t) => {

@@ -17,15 +17,17 @@ const UNSAFE_NAME_ALL = new RegExp(UNSAFE_NAME.source, 'g');
 /**
  * Relative POSIX paths of every regular file under dir, sorted. Skips .git and
  * node_modules; never follows links. Links and other entries that are not a
- * regular file or folder go into `others` when it is given.
+ * regular file or folder go into `others` when it is given, and folders into `dirs`.
  */
-export function listTree(dir, skipDirs = SKIP_DIRS, others = null) {
+export function listTree(dir, skipDirs = SKIP_DIRS, others = null, dirs = null) {
   const out = [];
   const walk = (abs, rel) => {
     for (const entry of fs.readdirSync(abs, { withFileTypes: true })) {
       const next = rel ? `${rel}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
-        if (!skipDirs.has(entry.name)) walk(path.join(abs, entry.name), next);
+        if (skipDirs.has(entry.name)) continue;
+        dirs?.push(next);
+        walk(path.join(abs, entry.name), next);
       } else if (entry.isFile()) {
         out.push(next);
       } else if (others) {
@@ -65,11 +67,25 @@ export function treeHash(dir) {
  */
 export function treeStamp(root, skipDirs = SKIP_DIRS) {
   const stamp = new Map();
-  for (const rel of listTree(root, skipDirs)) {
+  const others = [];
+  const dirs = [];
+  const files = listTree(root, skipDirs, others, dirs);
+  // A folder is an entry too, so a planted empty folder (a forged run) shows.
+  for (const rel of dirs) stamp.set(`${rel}/`, 'folder');
+  for (const rel of files) {
     try {
       stamp.set(rel, sha256(fs.readFileSync(path.join(root, ...rel.split('/')))));
     } catch {
       stamp.set(rel, 'unreadable');
+    }
+  }
+  // A link or junction is an entry of its own (its target), never followed: a planted
+  // link must show, and must not make the stamp read a folder as a file.
+  for (const rel of others) {
+    try {
+      stamp.set(rel, `link:${fs.readlinkSync(path.join(root, ...rel.split('/')))}`);
+    } catch {
+      stamp.set(rel, 'special');
     }
   }
   return stamp;
