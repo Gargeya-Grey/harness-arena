@@ -88,6 +88,8 @@ function checkWith(name, overlay, tmp) {
   fs.cpSync(fixtureDir, workDir, { recursive: true });
   if (overlay) fs.cpSync(overlay, workDir, { recursive: true });
   const runDir = path.join(tmp, 'run');
+  // In a real run the run folder exists before the snapshot (lab/lib/runwrite.mjs needs it).
+  fs.mkdirSync(runDir, { recursive: true });
   const artifact = snapshotWorkspace({ fixtureDir, workDir, runDir, base: 'w', artifactId: 'x', createdAt: '2026-11-05T00:00:00Z' });
   return runWorkspaceCheck({ fixtureDir, check: loadCheck(path.join(DATASETS, 'agentic', 'checks'), name), runDir, manifestPath: artifact.path });
 }

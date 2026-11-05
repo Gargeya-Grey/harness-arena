@@ -1,0 +1,30 @@
+# The checks AGENTS.md names ("Check everything"), on every pull request and every push to main.
+# Windows: the process watch (a Job Object) and the owner's harnesses run there.
+# No model is called: the tests use fake harnesses and the fixture store.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Tests
+        run: npm test
+      - name: Validate the repository
+        run: node lab validate
+      - name: Validate the fixture store
+        run: node lab validate
+        env:
+          LAB_ROOT: tests/fixtures/repo

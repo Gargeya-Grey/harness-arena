@@ -61,7 +61,7 @@ export function scrubTempHome(text, dir) {
 
 function removeFolder(dir) {
   try {
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); // not a run folder: the call's temp home
   } catch {
     // A process the CLI started may still hold a file; the report says it was not removed.
   }
@@ -96,8 +96,8 @@ export async function runInTempHome({ files, writeBack = true, homeDir = os.home
     for (const rel of files) {
       const buffer = fs.readFileSync(path.join(homeDir, rel));
       const target = path.join(dir, rel);
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, buffer, { mode: 0o600 });
+      fs.mkdirSync(path.dirname(target), { recursive: true }); // not a run folder: the call's temp home
+      fs.writeFileSync(target, buffer, { mode: 0o600 }); // not a run folder: the call's temp home
       copied.set(rel, digest(buffer));
     }
     state = store ? await store.seed({ homeDir, dir, env: env(dir) }) : null;
@@ -145,11 +145,11 @@ function writeBackFile({ dir, homeDir, rel, before, home }) {
   }
   const staging = `${real}.lab-${process.pid}.tmp`;
   try {
-    fs.writeFileSync(staging, after, { mode: 0o600 });
-    fs.renameSync(staging, real);
+    fs.writeFileSync(staging, after, { mode: 0o600 }); // not a run folder: the owner's harness sign-in file, written back
+    fs.renameSync(staging, real); // not a run folder: the owner's harness sign-in file, written back
     home.written_back.push(rel);
   } catch {
-    fs.rmSync(staging, { force: true });
+    fs.rmSync(staging, { force: true }); // not a run folder: the owner's harness sign-in file, written back
     home.kept.push(`${rel} (write back failed)`);
   }
 }
