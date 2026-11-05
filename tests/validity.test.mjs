@@ -358,3 +358,74 @@ test('a call cut off by Ctrl+C is not stored, so the resume runs it again', asyn
   await resumeCommand(root, result.runId, { log: () => {} });
   assert.deepEqual(rowsOf(result.runDir).map((row) => [row.case_id, row.error]), [['smoke-001', null], ['smoke-002', null]]);
 });
+
+test('deep review: quota texts are lost, file names are not errors, a -001 stable version matches', () => {
+  assert.equal(normalizeErrorType({ type: 'harness_error', message: 'You exceeded your current quota, please check your plan and billing details.' }), 'rate_limit');
+  assert.equal(normalizeErrorType({ type: 'insufficient_quota', message: '' }), 'rate_limit');
+  assert.equal(normalizeErrorType({ type: 'harness_error', message: 'You have exhausted your daily quota.' }), 'rate_limit');
+  assert.equal(normalizeErrorType({ type: 'no_result', message: 'TypeError: x is undefined\n    at node_modules/foo/rate-limit.js:12:3' }), 'no_result');
+  assert.equal(normalizeErrorType({ type: 'no_result', message: String.raw`at C:\tools\auth\unauthorized-handler.mjs:4:1` }), 'no_result');
+  assert.equal(normalizeErrorType({ type: 'harness_error', message: 'Rate limit reached, see https://example.com/docs/rate-limits' }), 'rate_limit');
+  assert.equal(modelCheck('gemini-2.0-flash', 'gemini-2.0-flash-001'), 'match');
+  assert.equal(modelCheck('gemini-2.0-flash', 'gemini-2.0-flash-lite-001'), 'mismatch');
+});
+
+test('a dashboard stop keeps the failed row of the call it waited for: no hidden retry', async (t) => {
+  const root = tempRoot(t);
+  let calls = 0;
+  fake(t, 'fake-cancel', (question) => {
+    calls += 1;
+    if (calls === 1) {
+      process.emit('SIGINT', 'cancel');
+      return { error: { type: 'timeout', message: 'did not exit within 300 s' } };
+    }
+    return answer(question);
+  });
+  const file = experiment(root, 'cancel', ['repeats: 1', 'cases: [smoke-001, smoke-002]', 'harness: fake-cancel', 'models: [claude-haiku]']);
+  const [result] = await runCommand(root, file, { log: () => {} });
+  assert.deepEqual(rowsOf(result.runDir).map((row) => [row.case_id, row.error?.type]), [['smoke-001', 'timeout']]);
+  assert.equal(readJson(path.join(result.runDir, 'run.json')).runner.interrupted, true);
+});
+
+test('a stop during the last call that still stored its row leaves the run completed', async (t) => {
+  const root = tempRoot(t);
+  let calls = 0;
+  fake(t, 'fake-late', (question) => {
+    calls += 1;
+    if (calls === 2) process.emit('SIGINT', 'SIGINT');
+    return answer(question);
+  });
+  const file = experiment(root, 'late', ['repeats: 1', 'cases: [smoke-001, smoke-002]', 'harness: fake-late', 'models: [claude-haiku]']);
+  const [result] = await runCommand(root, file, { log: () => {} });
+  const manifest = readJson(path.join(result.runDir, 'run.json'));
+  assert.equal(rowsOf(result.runDir).length, 2);
+  assert.equal(manifest.status, 'completed');
+  assert.equal(manifest.runner.interrupted, undefined);
+  assert.doesNotMatch(manifest.notes, /Interrupted/);
+});
+
+test('resume: --force overrides a live pid, the dry run checks the harness version, a missing newline is added', async (t) => {
+  const root = tempRoot(t);
+  let version = '1.0.0';
+  let calls = 0;
+  fake(t, 'fake-force', (question) => (calls += 1, answer(question)), { version: () => version });
+  const file = experiment(root, 'force', ['repeats: 1', 'cases: [smoke-001, smoke-002, smoke-003]', 'harness: fake-force', 'models: [claude-haiku]']);
+  const [result] = await runCommand(root, file, { log: () => {} });
+  const rawFile = path.join(result.runDir, 'raw.jsonl');
+  const lines = fs.readFileSync(rawFile, 'utf8').split('\n');
+  // The last kept row is complete JSON but lost its newline in the crash.
+  fs.writeFileSync(rawFile, `${lines[0]}\n${lines[1]}`);
+  const manifest = readJson(path.join(result.runDir, 'run.json'));
+  writeJson(path.join(result.runDir, 'run.json'), { ...manifest, status: 'running', finished_at: null, runner: { pid: process.pid, heartbeat_at: new Date().toISOString() } });
+  await assert.rejects(resumeCommand(root, result.runId, { log: () => {} }), /pass --force/);
+  version = '1.0.1';
+  await assert.rejects(resumeCommand(root, result.runId, { log: () => {}, force: true, dryRun: true }), /now 1\.0\.1; the run used 1\.0\.0/);
+  version = '1.0.0';
+  const logs = [];
+  await resumeCommand(root, result.runId, { log: (line) => logs.push(line), force: true, dryRun: true });
+  assert.match(logs.join('\n'), /2 row\(s\) kept, 1 call\(s\) to make\./);
+  await resumeCommand(root, result.runId, { log: () => {}, force: true });
+  assert.equal(calls, 4);
+  assert.deepEqual(rowsOf(result.runDir).map((row) => row.case_id), ['smoke-001', 'smoke-002', 'smoke-003']);
+  assert.deepEqual(problemsOf(root), []);
+});

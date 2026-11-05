@@ -347,8 +347,10 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
     if (escape) result = { ...result, error: { type: 'left_workdir', message: `The agent ${escape}.` } };
   }
   // Ctrl+C in a terminal also stops the harness, so its call fails for no fault of its
-  // own. That call is not stored: a resume runs it again.
-  if (!halt && signal?.aborted && result.error && result.error.type !== 'left_workdir') {
+  // own. That call is not stored: a resume runs it again. A dashboard stop ("cancel")
+  // does not touch the harness, so its call ends on its own and its row is kept, error
+  // or not: dropping it would retry a real failure in secret.
+  if (!halt && signal?.aborted && signal.reason === 'SIGINT' && result.error && result.error.type !== 'left_workdir') {
     if (isolatedDir) removeFolder(callCwd);
     log(`  ${testCase.case_id} r${repeat} ${m.modelKey}: stopped during the call; not stored, a resume runs it again`);
     return false;
@@ -499,8 +501,10 @@ async function execute(root, plan, sessions, { log, signal }) {
       }
     }
   }
-  // A stop during the last call ends the loop normally; the run is still incomplete.
-  if (signal?.aborted) aborted = true;
+  // A stop during the last call ends the loop normally. The run is incomplete only
+  // when that call was not stored.
+  const total = plan.cases.length * plan.repeats;
+  if (signal?.aborted && sessions.some((session) => session.done.size < total * session.models.length)) aborted = true;
   const results = [];
   for (const session of sessions) {
     const halted = haltedBy ? (session === haltedBy ? 'left_workdir' : 'experiment_halted') : null;
@@ -511,9 +515,10 @@ async function execute(root, plan, sessions, { log, signal }) {
 
 function withSigint(log, work) {
   const controller = new AbortController();
-  const onSignal = () => {
+  // The dashboard emits SIGINT with "cancel" (lab/cli.mjs); a terminal Ctrl+C gives "SIGINT".
+  const onSignal = (source) => {
     log('\nStopping after the current call. The run is kept and marked failed; continue it later with --resume.');
-    controller.abort();
+    controller.abort(source === 'cancel' ? 'cancel' : 'SIGINT');
   };
   process.once('SIGINT', onSignal);
   return work(controller.signal).finally(() => process.removeListener('SIGINT', onSignal));
@@ -562,7 +567,11 @@ export async function resumeCommand(root, ref, { log = console.log, force = fals
   const liveness = runLiveness(manifest);
   if (manifest.harness?.settings?.halted) throw new Error(`${manifest.run_id} was halted by the workdir guard; it cannot be resumed. Start a new run.`);
   if (manifest.status === 'completed') throw new Error(`${manifest.run_id} is completed; nothing to resume.`);
-  if (liveness === 'live') throw new Error(`${manifest.run_id} is still running (process ${manifest.runner.pid}).`);
+  // A crashed runner's process id can belong to another program by now. Only the owner
+  // can tell, so --force overrides "live" too.
+  if (liveness === 'live' && !force) {
+    throw new Error(`${manifest.run_id} is still running (process ${manifest.runner.pid}, last heartbeat ${manifest.runner.heartbeat_at}). If process ${manifest.runner.pid} is not a lab runner, pass --force.`);
+  }
   if (manifest.status === 'running' && liveness === 'unknown' && !force) {
     throw new Error(`${manifest.run_id} says running but has no heartbeat (written before resume existed). If no runner is working on it, pass --force.`);
   }
@@ -584,19 +593,29 @@ export async function resumeCommand(root, ref, { log = console.log, force = fals
     if (now.harnessModel !== item.model || (now.effort ?? null) !== (item.reasoning_effort ?? null)) differs.push(`${item.model_key} is now "${now.harnessModel}" at effort ${now.effort ?? 'default'}`);
   }
   if (differs.length) throw new Error(`Cannot resume ${manifest.run_id}; its inputs changed:\n  ${differs.join('\n  ')}\nStart a new run.`);
+  // The same check openRun makes, so a dry run never promises a resume that is refused.
+  const detected = await adapter.detect();
+  if (!detected.version) throw new Error(`${manifest.harness.name}: CLI not found or "--version" failed.`);
+  if (String(detected.version) !== manifest.harness.version) {
+    throw new Error(`${manifest.harness.name} is now ${detected.version}; the run used ${manifest.harness.version}. A resumed run must use the same harness version.`);
+  }
   const rawFile = path.join(runDir, 'raw.jsonl');
   const { rows, problems } = readJsonl(rawFile);
   // A crash in the middle of an append leaves a torn last line with no newline. It was
-  // never a record; it is dropped (and the drop recorded), so the next row starts clean.
+  // never a record; it is cut off (and the cut recorded), so the next row starts clean.
+  // A complete last row without its newline gets the newline, or the next row would join it.
+  const text = fs.existsSync(rawFile) ? fs.readFileSync(rawFile, 'utf8') : '';
   let tornLine = false;
+  let addNewline = false;
   if (problems.length) {
-    const text = fs.readFileSync(rawFile, 'utf8');
-    const lines = text.split('\n');
-    const torn = problems.length === 1 && !text.endsWith('\n') && problems[0].line === lines.length;
+    const torn = problems.length === 1 && !text.endsWith('\n') && problems[0].line === text.split('\n').length;
     if (!torn) throw new Error(`Cannot resume ${manifest.run_id}: raw.jsonl line ${problems[0].line} is not valid JSON (${problems[0].message}).`);
     tornLine = true;
-    if (!dryRun) fs.writeFileSync(rawFile, lines.slice(0, -1).map((line) => `${line}\n`).join(''), 'utf8');
+  } else if (text && !text.endsWith('\n')) {
+    addNewline = true;
   }
+  if (!dryRun && tornLine) fs.truncateSync(rawFile, Buffer.byteLength(text.slice(0, text.lastIndexOf('\n') + 1), 'utf8'));
+  if (!dryRun && addNewline) fs.appendFileSync(rawFile, '\n', 'utf8');
   const total = plan.cases.length * plan.repeats * manifest.models.length;
   if (dryRun) {
     log(`Resume ${manifest.run_id}: ${rows.length} row(s) kept, ${total - rows.length} call(s) to make${tornLine ? '; a torn last line would be dropped' : ''}.`);

@@ -105,7 +105,7 @@ Done when existing runs still point at the version they recorded and no frozen t
 
 1. Copy an experiment file. Set `suite`, `prompt`, `targets` (`- model: <key>` / `harness: <name>`), `repeats`, and `evaluators`. Add a `cases` list to run a subset.
 2. For a controlled comparison, change one axis only: same model through two harnesses, or two models through one harness.
-3. Use 3 or more repeats when reliability matters; the dashboard shows confidence intervals only from n = 3.
+3. Use 3 or more cases, and 3 or more repeats when reliability matters. The dashboard shows confidence intervals only from 3 cases; repeats of one case are not more cases.
 
 Done when `node lab validate` passes and `--dry-run` lists every target.
 

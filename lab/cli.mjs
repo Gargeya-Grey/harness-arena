@@ -113,7 +113,7 @@ async function main(argv) {
 if (process.env.LAB_JOB === '1') {
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (text) => {
-    if (/\bcancel\b/.test(text)) process.emit('SIGINT', 'SIGINT');
+    if (/\bcancel\b/.test(text)) process.emit('SIGINT', 'cancel');
   });
   process.stdin.on('error', () => {});
   process.stdin.unref();

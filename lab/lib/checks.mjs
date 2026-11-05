@@ -10,15 +10,18 @@
 const LOST_TYPES = new Set(['rate_limit', 'auth', 'not_installed', 'spawn_error']);
 // Whole phrases only: these run on stderr tails, where a stack line such as
 // cli.js:429:15 or a path such as /auth/ must not turn a crash into "lost".
-const RATE_LIMIT = /rate[ _-]?limit|usage[ _-]?limit|quota (?:exceeded|reached|exhausted)|exceeded (?:your |the )?quota|too many requests|(?:status|http|error|code)\W{0,3}(?:429|529)\b|\boverloaded(?:_error)?\b|resource[ _-]?exhausted|chatgpt-limit/i;
+const RATE_LIMIT = /rate[ _-]?limit|usage[ _-]?limit|quota (?:exceeded|reached|exhausted)|exceeded (?:your |the )?(?:current )?quota|insufficient[ _-]quota|exhausted (?:your |the )?(?:daily |monthly )?quota|too many requests|(?:status|http|error|code)\W{0,3}(?:429|529)\b|\boverloaded(?:_error)?\b|resource[ _-]?exhausted|chatgpt-limit/i;
 const AUTH = /unauthori[sz]ed|(?:status|http|error|code)\W{0,3}401\b|invalid (?:api|x-api) key|not logged in|log ?in required|please (?:log|sign) in|authentication (?:failed|required)/i;
+// File paths and stack frames (node_modules/foo/rate-limit.js:12:3, C:\x\auth\y, a URL)
+// are removed before the phrases are tested: a file name is not an error message.
+const PATHS = /\S*[\\/]\S*|\S+\.(?:[cm]?[jt]s|py|go|rs)(?::\d+)*/gi;
 
 /** The error type to store: a quota or sign-in failure gets its own type, whatever the harness called it. */
 export function normalizeErrorType(error) {
   if (!error) return null;
   const type = String(error.type || 'harness_error');
   if (LOST_TYPES.has(type) || type === 'timeout' || type === 'left_workdir') return type;
-  const text = `${type} ${error.message || ''}`;
+  const text = `${type} ${error.message || ''}`.replace(PATHS, ' ');
   if (RATE_LIMIT.test(text)) return 'rate_limit';
   if (AUTH.test(text)) return 'auth';
   return type;
@@ -34,9 +37,10 @@ function modelName(value) {
   return String(value).trim().toLowerCase().split('#')[0].split('/').pop().replace(/\./g, '-');
 }
 
-// Only a snapshot date or "latest" may follow the requested id: gemini-3-8-flash-lite
-// is another model than gemini-3-8-flash.
-const SNAPSHOT_SUFFIX = /^-(?:\d{8}|\d{4}-\d{2}-\d{2}|latest)$/;
+// Only a snapshot date, a three-digit stable version (gemini-2-0-flash-001) or
+// "latest" may follow the requested id: gemini-3-8-flash-lite is another model
+// than gemini-3-8-flash.
+const SNAPSHOT_SUFFIX = /^-(?:\d{8}|\d{4}-\d{2}-\d{2}|\d{3}|latest)$/;
 
 /**
  * Did the harness report the model that was requested? "unknown" when it reports

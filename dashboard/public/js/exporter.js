@@ -18,8 +18,8 @@ function mdRows() {
   const lines = [`| ${head.join(' | ')} |`, `| ${head.map(() => '---').join(' | ')} |`];
   rows.forEach((r) => {
     const a = r.agg || {};
-    const q = isNum(a.mean_quality) ? `${fixed(a.mean_quality)} (${a.quality_ci ? `${fixed(a.quality_ci[0])}–${fixed(a.quality_ci[1])}` : 'insufficient repeats'}, n=${a.counted_n ?? a.scored_n}, ${a.cases_n ?? NA} cases)` : 'unscored';
-    const p = isNum(a.pass_rate) ? `${pctText(a.pass_rate)} (${a.pass_rate_ci ? `${pctText(a.pass_rate_ci[0])}–${pctText(a.pass_rate_ci[1])}` : 'insufficient repeats'})` : 'unscored';
+    const q = isNum(a.mean_quality) ? `${fixed(a.mean_quality)} (${a.quality_ci ? `${fixed(a.quality_ci[0])}–${fixed(a.quality_ci[1])}` : 'fewer than 3 cases'}, n=${a.counted_n ?? a.scored_n}, ${a.cases_n ?? NA} cases)` : 'unscored';
+    const p = isNum(a.pass_rate) ? `${pctText(a.pass_rate)} (${a.pass_rate_ci ? `${pctText(a.pass_rate_ci[0])}–${pctText(a.pass_rate_ci[1])}` : 'fewer than 3 cases'})` : 'unscored';
     const cost = isNum(a.total_cost_usd) ? `${usdText(a.total_cost_usd)} / ${isNum(a.cost_per_passed_case) ? usdText(a.cost_per_passed_case) : NA}` : NA;
     lines.push(`| ${[
       `${names.get(r.cfg.id)} (${r.cfg.harness.name} ${r.cfg.harness.version}, ${r.cfg.effort || 'default'} effort, ${r.cfg.access_method})`,
