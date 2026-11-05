@@ -394,7 +394,9 @@ function renderNetwork(instance) {
     if (instance.prebuilt) {
       lines.push(`These links already exist and cost nothing more: ${list(instance.prebuilt.map((i) => `${nodes[edges[i][0]]} to ${nodes[edges[i][1]]}`))}. The links that do not exist yet must be paid for at the price listed.`);
     }
-    lines.push('What is the smallest total cost, in thousands of dollars, of the links that still have to be paid for so that all the towns are connected?');
+    lines.push(instance.prebuilt
+      ? 'What is the smallest total cost, in thousands of dollars, of the links that still have to be paid for so that all the towns are connected?'
+      : 'What is the smallest total cost, in thousands of dollars, of a set of links that connects all the towns?');
     lines.push('Answer format: a whole number, with no units.');
     return lines.join('\n');
   }
