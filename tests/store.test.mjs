@@ -21,6 +21,8 @@ import { readJsonl } from '../lab/lib/fsutil.mjs';
 import { dataDir, findRunDir, paths, runDirs } from '../lab/lib/repo.mjs';
 import { buildState } from '../lab/lib/state.mjs';
 import { buildArgs } from '../dashboard/jobs.mjs';
+import { runProcess } from '../lab/adapters/process.mjs';
+import { setProcessWatch } from '../lab/lib/procwatch.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES = path.join(REPO, 'tests', 'fixtures', 'repo');
@@ -319,7 +321,7 @@ test('a stale lock is taken over by one process only, even when several start at
 let release;
 try { release = takeLock(${JSON.stringify(data)}, { command: 'race', root: 'race' }); } catch (error) { console.log('refused'); process.exit(0); }
 console.log('held');
-setTimeout(() => { release(); }, 1500);`;
+setTimeout(() => { release(); }, 6000);`;
   const outputs = await Promise.all(Array.from({ length: 6 }, () => new Promise((resolve) => {
     const child = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'inherit'] });
     let out = '';
@@ -834,6 +836,74 @@ test('ledger: creating it adopts the committed runs of every worktree', (t) => {
   fs.writeFileSync(path.join(root, '.git', 'worktrees', 'wt', 'gitdir'), `${path.join(worktree, '.git')}\n`);
   ensureLedger(root);
   assert.equal(readLedger(ledgerPath(root)).runs.has(id), true);
+});
+
+test('process watch: a process the agent leaves running, even after a double fork, is ended after the call', { skip: process.platform !== 'win32' && 'Job Objects are Windows only' }, async (t) => {
+  const { root } = setup(t, { agentic: true });
+  const pidFile = path.join(tempDir(t, 'lab-store-pid-'), 'pid.txt');
+  const inner = `const c=require('child_process').spawn(process.execPath,['-e','setTimeout(()=>{},60000)'],{detached:true,stdio:'ignore'});require('fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));c.unref();`;
+  const outer = `require('child_process').spawn(process.execPath,['-e',${JSON.stringify(inner)}],{detached:true,stdio:'ignore'}).unref();setTimeout(()=>{},300)`;
+  ADAPTERS['fake-linger'] = {
+    name: 'fake-linger',
+    kind: 'cli',
+    entrypoint: 'headless',
+    access_method: 'subscription',
+    supports_effort: false,
+    edit: { args: [], note: 'fake' },
+    detect: async () => ({ version: '1.0.0' }),
+    applied: () => ({}),
+    async call() {
+      const result = await runProcess('node', ['-e', outer], { timeoutMs: 30000 });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return { text: 'done', finish_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 }, wall_ms: 1, events: [], ...(result.error ? { error: result.error } : {}) };
+    },
+  };
+  t.after(() => delete ADAPTERS['fake-linger']);
+  const notes = [];
+  const [result] = await runCommand(root, agentExperiment(root, 'linger', 'fake-linger'), { log: (line) => notes.push(line) });
+  assert.notEqual(result.halted, true, notes.join('\n'));
+  assert.ok(notes.some((line) => /ended 1 process\(es\) the call left running/.test(line)), notes.join('\n'));
+  const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+  assert.throws(() => process.kill(pid, 0), 'the grandchild is gone');
+});
+
+for (const [label, outcome, pattern] of [
+  ['a process that survives being ended', { ended: ['evil:1'], survivors: ['evil:1'], error: null }, /could not end \(evil:1\)/],
+  ['a watch that stopped during the call', { ended: [], survivors: [], error: 'the process watch stopped' }, /got past the process watch/],
+]) {
+  test(`process watch: ${label} halts the run`, async (t) => {
+    const { root } = setup(t, { agentic: true });
+    setProcessWatch(async () => ({ assign: async () => {}, finish: async () => outcome }));
+    t.after(() => setProcessWatch(null));
+    fake(t, `fake-watch-${label.length}`, () => 'done');
+    const [result] = await runCommand(root, agentExperiment(root, `watch${label.length}`, `fake-watch-${label.length}`), { log: () => {} });
+    assert.equal(result.halted, true);
+    assert.equal(trustOf(root, result.runId, result.runDir).state, 'halted');
+    const row = JSON.parse(fs.readFileSync(path.join(result.runDir, 'raw.jsonl'), 'utf8').split('\n')[0]);
+    assert.match(row.error.message, pattern);
+  });
+}
+
+test('process watch: a watch that cannot start makes no call, and the run resumes', async (t) => {
+  const { root } = setup(t, { agentic: true });
+  setProcessWatch(async () => {
+    throw new Error('no powershell');
+  });
+  t.after(() => setProcessWatch(null));
+  let calls = 0;
+  fake(t, 'fake-nowatch', () => {
+    calls += 1;
+    return 'done';
+  });
+  const [result] = await runCommand(root, agentExperiment(root, 'nowatch', 'fake-nowatch'), { log: () => {} });
+  setProcessWatch(null);
+  assert.equal(calls, 0);
+  const manifest = JSON.parse(fs.readFileSync(path.join(result.runDir, 'run.json'), 'utf8'));
+  assert.equal(manifest.harness.settings.halted, undefined);
+  assert.equal(manifest.runner.interrupted, true);
+  const [resumed] = await runCommand(root, null, { resume: result.runId, log: () => {} });
+  assert.equal(resumed.status, 'completed');
+  assert.equal(calls, 1);
 });
 
 test('a dashboard job keeps the data folder: its child process gets LAB_DATA', async (t) => {

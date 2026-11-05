@@ -24,7 +24,7 @@ lab/cli.mjs               Entry point: node lab <command>
 lab/adapters/             cli.mjs is the one harness seam; one file per built-in harness; declared.mjs; index.mjs registers them
 lab/evaluators/index.mjs  Versioned evaluators
 lab/commands/             run, score, validate, doctor/runs/report
-lab/lib/                  yaml.mjs, schema.mjs (subsets), metrics.mjs, state.mjs (derived view)
+lab/lib/                  yaml.mjs, schema.mjs (subsets), metrics.mjs, state.mjs (derived view), ledger.mjs, procwatch.mjs
 dashboard/server.mjs      Local server: /api/state, /api/artifact, annotations, boards, /api/catalog, /api/jobs
 dashboard/jobs.mjs        Starts allowlisted `node lab` commands for the control page (no shell)
 dashboard/public/         Static UI, no build step: index.html control page, compare.html comparison

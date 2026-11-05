@@ -17,6 +17,7 @@ import { extractSvg } from '../evaluators/index.mjs';
 import { resolveRunDir, scoreRun } from './score.mjs';
 import { modelCheck, normalizeErrorType, runLiveness } from '../lib/checks.mjs';
 import { LOCK_FILE, storeFolders, takeLocks } from '../lib/lock.mjs';
+import { startProcessWatch } from '../lib/procwatch.mjs';
 import { appendEntry, callFiles, closeEntry, ensureLedger, ledgerBytes, ledgerPath, lineSha, loadLedger, manifestCore, restoreLedger, rowLine, rowLines, trustRun } from '../lib/ledger.mjs';
 
 const DEFAULT_TIMEOUT_S = 300;
@@ -454,6 +455,19 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
     session.halted = 'guard_unreadable';
     return true;
   }
+  // No process the call starts may outlive it (lab/lib/procwatch.mjs). A watch that
+  // cannot start makes no call, as a guard that cannot read the folders makes none.
+  let watch = null;
+  if (guarded) {
+    try {
+      watch = await startProcessWatch();
+    } catch (error) {
+      if (isolatedDir) removeFolder(callCwd);
+      log(`  ${testCase.case_id} r${repeat} ${m.modelKey}: the process watch cannot start (${redactPaths(error.message)}); no call was made and the experiment stops. Resume the run when it works.`);
+      session.halted = 'guard_unreadable';
+      return true;
+    }
+  }
   const fixtureSha = testCase.input?.workspace != null ? treeHash(workspaceDir(plan.suite, testCase)) : null;
   const startedAt = isoNow();
   let result;
@@ -478,6 +492,13 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
   let halt = false;
   if (guarded) {
     let escape = null;
+    // First end what the call left running, then stamp: whatever those processes wrote
+    // before they ended is in the stamp after.
+    const procs = await watch.finish();
+    if (procs.ended.length) log(`  ${testCase.case_id} r${repeat} ${m.modelKey}: ended ${procs.ended.length} process(es) the call left running (${procs.ended.join(', ')})`);
+    if (procs.error) escape = `got past the process watch (${redactPaths(procs.error)}); the experiment stops and this run is not scored. A process it started may still be running: look for one before you trust the stored runs`;
+    else if (procs.survivors.length) escape = `left process(es) running that the runner could not end (${procs.survivors.join(', ')}); the experiment stops and this run is not scored. End them before the next run`;
+    if (escape) halt = true;
     const stampAfter = tryGuardStamp(plan.guard);
     const unreadable = stampAfter.error;
     const changed = unreadable ? null : stampDiff(stampBefore.stamp, stampAfter.stamp);
@@ -497,7 +518,7 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
     } else if (changed) {
       escape = `changed ${changed} in the lab repository while it ran; the experiment stops and this run is not scored. Check that file with git diff. If you edited it yourself during the call, this is a false alarm: keep your work and run again. Otherwise restore it (git checkout -- <file>) before the next run`;
       halt = true;
-    } else if (mentionsFolder(`${JSON.stringify(result.events ?? [])}\n${result.text ?? ''}`, scopeFolders(plan.guard))) {
+    } else if (!escape && mentionsFolder(`${JSON.stringify(result.events ?? [])}\n${result.text ?? ''}`, scopeFolders(plan.guard))) {
       escape = 'worked in the lab repository outside its work folder, where it could read the hidden checks';
     }
     if (escape) result = { ...result, error: { type: 'left_workdir', message: `The agent ${escape}.` } };

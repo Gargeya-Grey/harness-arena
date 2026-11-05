@@ -8,6 +8,15 @@ import path from 'node:path';
 
 const cache = new Map();
 
+// The process watch (lab/lib/procwatch.mjs) puts every harness process in a Job Object
+// during a guarded call. A watcher returns a promise; the prompt is sent only once every
+// watcher has the process, and a process a watcher cannot hold is ended.
+const spawnWatchers = new Set();
+export function watchSpawns(watcher) {
+  spawnWatchers.add(watcher);
+  return () => spawnWatchers.delete(watcher);
+}
+
 export function resolveCommand(name) {
   if (cache.has(name)) return cache.get(name);
   let found = null;
@@ -100,7 +109,18 @@ export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, on
       finish({ code, error: null });
     });
     child.stdin.on('error', () => {});
-    child.stdin.end(input ?? '');
+    const holds = !child.pid ? [] : [...spawnWatchers].map((watcher) => Promise.resolve().then(() => watcher(child.pid)));
+    if (!holds.length) {
+      child.stdin.end(input ?? '');
+      return;
+    }
+    Promise.all(holds).then(
+      () => child.stdin.end(input ?? ''),
+      (error) => {
+        child.kill('SIGKILL');
+        finish({ code: null, error: { type: 'process_watch', message: error.message } });
+      },
+    );
   });
 }
 
