@@ -1,0 +1,9 @@
+id: coding-hard
+version: "1.0.0"
+description: >
+  Hard JavaScript functions with exact specs: fast algorithms for huge inputs,
+  precise parsers, interval and polygon edge rules, simulations with tie-breaks,
+  and graph problems with a twist. Each answer runs against hidden tests in a
+  sandboxed Node process (js-function evaluator). Score is the share of tests passed.
+defaults:
+  repeats: 3

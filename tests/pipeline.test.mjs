@@ -101,6 +101,32 @@ test('validate: a broken run is reported, not ignored', () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test('validate: a completed run is counted against the suite version it recorded, not a newer one', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-grown-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.cpSync(FIXTURES, root, { recursive: true });
+  const runId = fs.readdirSync(path.join(root, 'results')).find((name) => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, 'results', name, 'run.json'), 'utf8'));
+    return manifest.status === 'completed' && !manifest.experiment?.cases?.length;
+  });
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'results', runId, 'run.json'), 'utf8'));
+  const suiteDir = path.join(root, 'datasets', manifest.suite.id);
+  const countProblem = (problems) => problems.filter((line) => line.includes(runId) && /completed run has/.test(line));
+  // The suite grows a case and a new version: the stored run is still whole.
+  const casesFile = path.join(suiteDir, 'cases.jsonl');
+  const [first] = fs.readFileSync(casesFile, 'utf8').trim().split('\n');
+  fs.appendFileSync(casesFile, `${JSON.stringify({ ...JSON.parse(first), case_id: `${manifest.suite.id}-grown` })}\n`);
+  const suiteFile = path.join(suiteDir, 'suite.yaml');
+  fs.writeFileSync(suiteFile, fs.readFileSync(suiteFile, 'utf8').replace(/^version: .*$/m, 'version: "99.0.0"'));
+  assert.deepEqual(countProblem(validateRepo(root).problems), []);
+  // At the version it recorded, a missing row is still reported.
+  fs.writeFileSync(suiteFile, fs.readFileSync(suiteFile, 'utf8').replace(/^version: .*$/m, `version: "${manifest.suite.version}"`));
+  fs.writeFileSync(casesFile, `${fs.readFileSync(casesFile, 'utf8').trim().split('\n').slice(0, -1).join('\n')}\n`);
+  const raw = path.join(root, 'results', runId, 'raw.jsonl');
+  fs.writeFileSync(raw, `${fs.readFileSync(raw, 'utf8').trim().split('\n').slice(1).join('\n')}\n`);
+  assert.equal(countProblem(validateRepo(root).problems).length, 1);
+});
+
 test('state: fixture contexts, configurations and observations', () => {
   const state = buildState(FIXTURES);
   assert.deepEqual(state.problems, []);

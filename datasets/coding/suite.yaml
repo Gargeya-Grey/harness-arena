@@ -1,5 +1,5 @@
 id: coding
-version: "1.0.0"
+version: "1.1.0"
 description: >
   Small JavaScript functions, each checked by running it against hidden tests in
   a sandboxed Node process (js-function evaluator). Score is the share of tests passed.

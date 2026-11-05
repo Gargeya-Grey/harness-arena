@@ -1,0 +1,30 @@
+{
+  "probes": {
+    "keeps a burst, then a refusal, with the documented result shape": {"allowed":[true,true,true,false],"remaining":[2,1,0,0],"keys":["allowed","limit","remaining","resetMs","retryAfterMs"],"limit":3},
+    "every key has a bucket of its own under one rule": {"a":[true,true,false],"b":[true,true,false],"size":2},
+    "a client that polls faster than the refill interval is let through on time": {"fast":[false,false,true,false,false,true],"polls":[false,false,true,false,false,true]},
+    "no token arrives early": [false,false,false,false,false,true,false,true],
+    "retryAfterMs is the exact wait, rounded up": [[false,1000],[false,750],[false,3334],[false,250],[false,1500],[false,1000000]],
+    "waiting exactly retryAfterMs is enough, one millisecond less is not": [[3334,false,true],[2000,false,true],[2858,false,true],[143,false,true],[16000,false,true]],
+    "a refused request takes nothing": [true,false,1000],
+    "a request that costs more than the burst can never pass and takes nothing": {"big":[false,null,3,3],"after":[true,0],"exact":true},
+    "keeps a cost that is not a whole number refused": ["RangeError","RangeError","RangeError","RangeError","RangeError"],
+    "keeps the bucket at the burst at most": {"allowed":[true,true,true,false],"remaining":[2,1,0,0]},
+    "remaining counts whole tokens and resetMs is the time to a full bucket": {"r":[true,0,9000],"used":[1,1500,4],"fresh":[2,1000]},
+    "the most specific rule wins, whatever the order": [4,3,2,2,1,2],
+    "keeps a key without a rule an error": ["Error",true],
+    "a clock that moves back does not create tokens": [false,false,true],
+    "idle full buckets are dropped first when there are too many keys": {"size":2,"a":[true,false],"after":2},
+    "the least recently used key goes when no bucket is full": {"size":2,"a":false,"b":true},
+    "the number of keys never passes maxKeys": 10,
+    "keeps reset giving a key a full bucket": [true,true,true,true,2],
+    "headers round every time up and leave retry-after to refused requests": [{"ratelimit-limit":"10","ratelimit-remaining":"7","ratelimit-reset":"3"},{"ratelimit-limit":"10","ratelimit-remaining":"0","ratelimit-reset":"10","retry-after":"2"},{"ratelimit-limit":"10","ratelimit-remaining":"0","ratelimit-reset":"1","retry-after":"1"},{"ratelimit-limit":"3","ratelimit-remaining":"0","ratelimit-reset":"0"}],
+    "the middleware limits by the key it is given and by cost": [{"passed":true,"status":200,"remaining":"1"},{"passed":true,"status":200,"remaining":"0"},{"passed":false,"status":429,"retry":"1","remaining":"0"},{"passed":true,"status":200,"remaining":"0"},{"passed":false,"status":429,"retry":"1","remaining":"0"}],
+    "keeps the exports": []
+  },
+  "files": {
+    "test/limiter.test.mjs": {"same_as_starter":true},
+    "test/rules.test.mjs": {"same_as_starter":true},
+    "test/http.test.mjs": {"same_as_starter":true}
+  }
+}
