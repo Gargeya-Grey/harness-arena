@@ -55,10 +55,10 @@ node lab doctor                                      # live harnesses only: whic
 - **Dashboard**: drive it with `agent-browser` (installed globally). Use roles and accessible names, not coordinates:
 
   ```bash
-  agent-browser open http://127.0.0.1:$PORT/compare.html   # comparison; / is the control page
+  agent-browser open http://127.0.0.1:$PORT/results.html   # one test; / is Home, Run and Lab
   agent-browser snapshot -i                   # interactive elements with refs
-  agent-browser find role tab click --name "Answers"
-  agent-browser screenshot "$EVIDENCE/answers.png"
+  agent-browser find role button click --name "Change test"
+  agent-browser screenshot "$EVIDENCE/change-test.png"
   ```
 
   The Chrome browser tools (`mcp__claude-in-chrome__*`) also work when the session has them.

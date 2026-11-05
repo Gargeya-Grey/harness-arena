@@ -1,113 +1,127 @@
-// Inspector drawer: one observation in full, in three tabs.
-import { S, obsById, cellObs, cfgOf, caseOf, outcome, letterOf } from './model.js';
-import { html, raw, setHtml, isNum, NA, msHtml, usdHtml, tokText, fixed, dateTime, download } from './util.js';
+// Side panel: one try in full. Answer (the check first, then what the setup returned) and Evidence.
+import { S, obsById, cellObs, cfgOf, caseOf, outcome, setupsOf, ctx, repeatsOf } from './model.js';
+import { caseName, durText, shortDate } from './words.js';
+import { errorWord } from './verdict.js';
+import { html, raw, setHtml, isNum, usdText, tokText, dateTime, download } from './util.js';
 import { artifactHtml, visualArtifacts } from './artifacts.js';
-import { syncOpenChip } from './answers.js';
+import { syncOpenMark } from './cases.js';
+import { rateWanted } from './summary.js';
 
 const TABS = [
   ['answer', 'Answer'],
-  ['metrics', 'Metrics'],
-  ['provenance', 'Provenance'],
+  ['evidence', 'Evidence'],
 ];
 
 let openerKey = null;
 let closeTimer = 0;
 
 const json = (v) => JSON.stringify(v, null, 2);
-const dd = (v) => (v === null || v === undefined || v === '' ? html`<span class="muted">${NA}</span>` : v);
+const nil = (text = 'none') => html`<span class="muted">${text}</span>`;
+const mono = (v) => (v === null || v === undefined || v === '' ? nil() : html`<span class="mono">${v}</span>`);
 
 function neighbors(o) {
-  const sameCfg = cellObs(o.case_id, o.config_id);
-  const i = sameCfg.findIndex((x) => x.id === o.id);
-  const prevRep = i > 0 ? sameCfg[i - 1] : null;
-  const nextRep = i >= 0 && i < sameCfg.length - 1 ? sameCfg[i + 1] : null;
+  const same = cellObs(o.case_id, o.config_id);
+  const i = same.findIndex((x) => x.id === o.id);
   const order = S.sel;
   const j = order.indexOf(o.config_id);
   const at = (cfgId) => {
     const list = cellObs(o.case_id, cfgId);
     return list.find((x) => x.repeat === o.repeat) || list[0] || null;
   };
-  let prevCfg = null;
-  let nextCfg = null;
+  let prevSetup = null;
+  let nextSetup = null;
   if (j >= 0) {
-    for (let k = j - 1; k >= 0 && !prevCfg; k -= 1) prevCfg = at(order[k]);
-    for (let k = j + 1; k < order.length && !nextCfg; k += 1) nextCfg = at(order[k]);
+    for (let k = j - 1; k >= 0 && !prevSetup; k -= 1) prevSetup = at(order[k]);
+    for (let k = j + 1; k < order.length && !nextSetup; k += 1) nextSetup = at(order[k]);
   }
-  return { prevRep, nextRep, prevCfg, nextCfg };
+  return { prevTry: i > 0 ? same[i - 1] : null, nextTry: i >= 0 && i < same.length - 1 ? same[i + 1] : null, prevSetup, nextSetup };
+}
+
+// What the agent changed, from the stored workspace record.
+function workspaceFiles(o) {
+  const a = (o.artifacts || []).find((x) => /__workspace$/.test(x.artifact_id || '') && x.content);
+  if (!a) return null;
+  try {
+    const w = JSON.parse(a.content);
+    return { changed: w.changed || [], deleted: w.deleted || [] };
+  } catch {
+    return null;
+  }
+}
+
+function checkHtml(o) {
+  const out = outcome(o);
+  if (o.status === 'error') return '';
+  const s = (o.scores || []).find((x) => x.dimension === 'quality') || (o.scores || [])[0];
+  if (!s) return html`<section class="pane"><h3 class="pane-h">Check</h3><p class="muted">${out.kind === 'unscored' ? 'Not checked: this test has no automatic check for this answer.' : 'No check result stored.'}</p></section>`;
+  const d = s.details || {};
+  const results = Array.isArray(d.results) ? d.results : null;
+  const head = results
+    ? `${results.filter((r) => r.ok).length} of ${results.length} checks passed`
+    : out.text.charAt(0).toUpperCase() + out.text.slice(1);
+  const expected = d.expected !== undefined ? d.expected : null;
+  const got = d.extracted !== undefined ? d.extracted : d.actual !== undefined ? d.actual : null;
+  return html`<section class="pane"><h3 class="pane-h">Check <span class="mark mark-${out.kind}">${out.glyph} ${out.text}</span></h3>
+    <p class="check-head">${head}<span class="muted"> · ${s.evaluator_id}</span></p>
+    ${results ? html`<ul class="checks">${results.map((r) => html`<li class="${r.ok ? 'ok' : 'bad'}"><span class="ck" aria-hidden="true">${r.ok ? '✓' : '✕'}</span><span>${r.name}</span><span class="sr">${r.ok ? 'passed' : 'failed'}</span></li>`)}</ul>` : ''}
+    ${expected !== null ? html`<dl class="kv"><dt>Expected</dt><dd class="mono">${typeof expected === 'string' ? expected : JSON.stringify(expected)}</dd>${got !== null ? html`<dt>Got</dt><dd class="mono">${typeof got === 'string' ? got : JSON.stringify(got)}</dd>` : ''}</dl>` : ''}
+    ${d.error ? html`<p class="bad">${typeof d.error === 'string' ? d.error : JSON.stringify(d.error)}</p>` : ''}
+  </section>`;
 }
 
 function answerTab(o, cfg) {
   const k = caseOf(o.case_id);
-  const out = outcome(o);
-  const arts = visualArtifacts(o);
-  const msgs = (o.request && o.request.messages) || [];
-  const human = o.human;
-  return html`
-    ${k ? html`<div><div class="sec-title">Question</div>${Object.keys(k.input || {}).map((key) => html`<div class="msg"><span class="msg-role label">${key}</span><div class="pre mono">${typeof k.input[key] === 'string' ? k.input[key] : JSON.stringify(k.input[key])}</div></div>`)}
-      <div class="msg"><span class="msg-role label">Expected</span><div class="pre mono">${k.expected === null || k.expected === undefined ? 'none declared' : typeof k.expected === 'string' ? k.expected : JSON.stringify(k.expected)}</div></div></div>` : ''}
-    <div><div class="sec-title">Response <span class="mark mark-${out.kind}">${out.glyph} ${out.text}</span></div>
-      ${o.status === 'error' ? html`<div class="errbox">${(o.error && o.error.type) || 'error'}: ${(o.error && o.error.message) || 'no message'}</div>` : html`<div class="pre mono" tabindex="0" aria-label="Full response text">${o.response && o.response.text ? o.response.text : 'No response text.'}</div>`}
-      ${o.response && o.response.finish_reason ? html`<div class="label">Finish reason <span class="mono">${o.response.finish_reason}</span></div>` : ''}
-    </div>
-    ${arts.length ? html`<div><div class="sec-title">Artifacts</div>${arts.map((a) => html`<div class="msg">${artifactHtml(a, `${cfg.display_name}, ${o.case_id}, repeat ${o.repeat}`, true)}<div class="label"><span class="mono">${a.mime || a.kind}</span>${a.derived ? ' (derived)' : ''}</div></div>`)}</div>` : ''}
-    <div><div class="sec-title">Scores</div>
-      ${o.scores && o.scores.length ? o.scores.map((s) => html`<div class="score"><strong class="mono">${s.evaluator_id}@${s.evaluator_version}</strong> <span class="label">${s.dimension}</span>
-        <div>value <span class="num">${isNum(s.value) ? s.value : NA}</span> · ${s.passed === true ? html`<span class="mark mark-pass">✓ passed</span>` : s.passed === false ? html`<span class="mark mark-fail">✕ failed</span>` : html`<span class="muted">no pass verdict</span>`}</div>
-        ${s.details && Object.keys(s.details).length ? html`<div class="pre mono">${json(s.details)}</div>` : ''}</div>`) : html`<div class="muted">No evaluator scores. This observation is ${o.status === 'error' ? 'a failed call' : 'unscored'}.</div>`}
-      ${human ? html`<div class="score"><strong>Human rating</strong> <span class="num">${human.value === null ? NA : human.value}</span> of 5 by ${human.reviewer} on <time class="mono">${dateTime(human.created_at)}</time>${human.notes ? html`<div class="pre mono">${human.notes}</div>` : ''}</div>` : ''}
-    </div>
-    <div><div class="sec-title">Request sent</div>
-      ${o.request && o.request.system_prompt ? html`<div class="msg"><span class="msg-role label">system</span><div class="pre mono">${o.request.system_prompt}</div></div>` : ''}
-      ${msgs.length ? msgs.map((m) => html`<div class="msg"><span class="msg-role label">${m.role}</span><div class="pre mono">${typeof m.content === 'string' ? m.content : json(m.content)}</div></div>`) : html`<div class="muted">No request messages stored.</div>`}
-    </div>`;
-}
-
-function kv(rows) {
-  return html`<dl class="kv">${rows.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>`;
-}
-
-function metricsTab(o) {
+  const agent = Boolean(k && k.input && k.input.workspace != null);
+  const arts = o.status === 'error' ? [] : visualArtifacts(o);
+  const files = agent ? workspaceFiles(o) : null;
   const u = o.usage || {};
-  return html`<div>${kv([
-    ['Quality', isNum(o.quality) ? html`<span class="num">${fixed(o.quality)}</span>` : html`<span class="muted">unscored</span>`],
-    ['Passed', o.passed === true ? 'yes' : o.passed === false ? 'no' : html`<span class="muted">unscored</span>`],
-    ['Format check', o.format_pass === true ? 'passed' : o.format_pass === false ? 'failed' : html`<span class="muted">not applicable</span>`],
-    ['Latency, harness end-to-end', msHtml(o.latency_ms)],
-    ['Latency, model request', msHtml(o.model_request_duration_ms)],
-    ['Cost, API-equivalent (not billed)', usdHtml(o.cost_usd)],
-    ['Input tokens, all prompt tokens', isNum(u.input_tokens) ? html`<span class="num">${u.input_tokens}</span>` : html`<span class="muted">${NA}</span>`],
-    ['Cache read tokens', isNum(u.cache_read_tokens) ? html`<span class="num">${u.cache_read_tokens}</span>` : html`<span class="muted">${NA}</span>`],
-    ['Cache write tokens', isNum(u.cache_write_tokens) ? html`<span class="num">${u.cache_write_tokens}</span>` : html`<span class="muted">${NA}</span>`],
-    ['Output tokens', isNum(u.output_tokens) ? html`<span class="num">${u.output_tokens}</span>` : html`<span class="muted">${NA}</span>`],
-    ['Speed', isNum(o.tokens_per_second) ? html`<span class="num">${fixed(o.tokens_per_second, 1)}</span> tok/s` : html`<span class="muted">${NA}</span>`],
-    ['Tool calls', isNum(o.tool_calls) ? html`<span class="num">${o.tool_calls}</span>` : html`<span class="muted">${NA}</span>`],
-    ['Skills used', o.skills_used && o.skills_used.length ? html`<span class="mono">${o.skills_used.join(', ')}</span>` : html`<span class="muted">none</span>`],
-  ])}</div>`;
+  const facts = [
+    isNum(o.latency_ms) ? durText(o.latency_ms) : null,
+    isNum(u.input_tokens) ? `${tokText(u.input_tokens)} tokens in, ${tokText(u.output_tokens)} out` : null,
+    isNum(o.tool_calls) ? `${o.tool_calls} tool call${o.tool_calls === 1 ? '' : 's'}` : null,
+    isNum(o.cost_usd) ? `API price ${usdText(o.cost_usd)}` : null,
+  ].filter(Boolean);
+  const err = o.error || {};
+  const question = k ? Object.entries(k.input || {}).filter(([key]) => key !== 'workspace') : [];
+  return html`
+    ${o.status === 'error' ? html`<section class="pane"><h3 class="pane-h">No answer</h3><div class="errbox"><strong>${errorWord(err.type) || 'error'}</strong><span>${String(err.message || 'No message.').split('\n')[0]}</span></div></section>` : ''}
+    ${checkHtml(o)}
+    ${files ? html`<section class="pane"><h3 class="pane-h">Files the agent changed</h3>${files.changed.length || files.deleted.length ? html`<ul class="files">${files.changed.map((p) => html`<li><span class="mono">${p}</span></li>`)}${files.deleted.map((p) => html`<li><span class="mono">${p}</span> <span class="muted">deleted</span></li>`)}</ul>` : nil('No file changed.')}</section>` : ''}
+    ${arts.length ? html`<section class="pane"><h3 class="pane-h">Picture</h3>${arts.map((a) => artifactHtml(a, `${cfg.display_name}, ${o.case_id}, try ${o.repeat + 1}`, true))}</section>` : ''}
+    ${o.status !== 'error' ? html`<section class="pane"><h3 class="pane-h">${agent ? 'The agent’s summary' : 'Answer'}</h3><div class="answer-text" tabindex="0" aria-label="Answer text">${o.response && o.response.text ? o.response.text : 'No answer text.'}</div></section>` : ''}
+    ${facts.length ? html`<p class="facts">${facts.join(' · ')}</p>` : ''}
+    ${question.length ? html`<details class="more-box"><summary class="disclose">${agent ? 'The task' : 'The question'}</summary>
+      ${question.map(([key, v]) => html`<div class="msg"><span class="msg-role">${key}</span><div class="answer-text">${typeof v === 'string' ? v : JSON.stringify(v)}</div></div>`)}
+      ${k.expected !== null && k.expected !== undefined && !agent ? html`<div class="msg"><span class="msg-role">Expected</span><div class="answer-text">${typeof k.expected === 'string' ? k.expected : JSON.stringify(k.expected)}</div></div>` : ''}
+    </details>` : ''}`;
 }
 
-function provenanceTab(o, cfg) {
-  const h = cfg.harness || {};
+function evidenceTab(o, cfg) {
+  const run = ((S.data && S.data.runs) || []).find((r) => r.run_id === o.run_id);
+  const u = o.usage || {};
   const meta = o.metadata || {};
-  const mono = (v) => (v === null || v === undefined || v === '' ? html`<span class="muted">${NA}</span>` : html`<span class="mono">${v}</span>`);
-  return html`<div>${kv([
-    ['Run', mono(o.run_id)],
-    ['Configuration', mono(o.config_id)],
+  const params = o.request && o.request.params && Object.keys(o.request.params).length ? JSON.stringify(o.request.params) : null;
+  const rows = [
+    ['Run', html`${mono(o.run_id)}${run ? html`<span class="sub">${run.experiment_id || ''}${run.created_at ? ` · ${shortDate(run.created_at)}` : ''}</span>` : ''}`],
     ['Model', mono(cfg.model)],
-    ['Model key', mono(o.model_key)],
-    ['Provider', cfg.provider],
-    ['Harness', html`${h.name} <span class="mono">${h.version}</span>`],
-    ['Entrypoint', mono(h.entrypoint)],
-    ['Access method', cfg.access_method],
-    ['Effort', cfg.effort ? mono(cfg.effort) : html`<span class="muted">default</span>`],
-    ['Params applied', o.request && o.request.params && Object.keys(o.request.params).length ? html`<span class="mono">${JSON.stringify(o.request.params)}</span>` : html`<span class="muted">none</span>`],
-    ['Prompt', html`<span class="mono">${o.request ? o.request.prompt_id : NA} v${o.request ? o.request.prompt_version : NA}</span>`],
+    ['Harness', html`${cfg.harness.name} <span class="mono">${cfg.harness.version}</span>`],
+    ['Effort', cfg.effort ? mono(cfg.effort) : nil('default')],
+    ['User setup', cfg.user_config === 'isolated' ? 'kept out' : 'loaded'],
+    ['Settings applied', params ? mono(params) : nil()],
+    ['Prompt', mono(o.request ? `${o.request.prompt_id} v${o.request.prompt_version}` : null)],
     ['Case', mono(o.case_id)],
-    ['Repeat', mono(o.repeat)],
-    ['Started', html`<time class="mono">${o.started_at || NA}</time>`],
-    ['Finished', html`<time class="mono">${o.finished_at || NA}</time>`],
-    ['Session id', mono(meta.harness_session_id)],
-  ])}</div>
-  <details class="detail-box"><summary>Metadata (JSON)</summary><div class="pre mono">${json(meta)}</div></details>`;
+    ['Try', `${o.repeat + 1} of ${repeatsOf()}`],
+    ['Started', html`<time class="mono">${o.started_at ? dateTime(o.started_at) : 'unknown'}</time>`],
+    ['Time', isNum(o.latency_ms) ? durText(o.latency_ms) : nil('not measured')],
+    ['Model time', isNum(o.model_request_duration_ms) ? durText(o.model_request_duration_ms) : nil('not reported')],
+    ['Tokens', isNum(u.input_tokens) ? `${u.input_tokens} in · ${u.cache_read_tokens ?? 0} from cache · ${u.output_tokens} out` : nil('not reported')],
+    ['Tool calls', isNum(o.tool_calls) ? String(o.tool_calls) : nil('not reported')],
+    ['API price', isNum(o.cost_usd) ? usdText(o.cost_usd) : nil('not priced')],
+    ['Session', mono(meta.harness_session_id)],
+  ];
+  return html`<dl class="kv">${rows.map(([kk, v]) => html`<dt>${kk}</dt><dd>${v}</dd>`)}</dl>
+    <details class="more-box"><summary class="disclose">Everything stored for this try (JSON)</summary><div class="pre mono">${json(o)}</div></details>
+    <p><button type="button" class="btn secondary small" data-act="insp-json" data-obs="${o.id}" data-fk="insp:json">Download JSON</button></p>`;
 }
 
 export function renderInspector() {
@@ -119,33 +133,34 @@ export function renderInspector() {
     closeInspector({ instant: true });
     return;
   }
+  const c = ctx();
   const tab = S.insp.tab || 'answer';
   const out = outcome(o);
   const nb = neighbors(o);
+  const k = caseOf(o.case_id);
+  const name = (setupsOf(S.sel).find((s) => s.id === o.config_id) || { name: cfg.display_name }).name;
   const keep = el.querySelector('.insp-body');
   const scroll = keep && keep.dataset.obs === o.id && keep.dataset.tab === tab ? keep.scrollTop : 0;
-  const navBtn = (act, label, target, fk) => html`<button type="button" class="ctl" data-act="insp-go" data-obs="${target ? target.id : ''}" data-fk="${fk}"${target ? '' : raw(' disabled')}>${label}</button>`;
+  const total = repeatsOf();
+  const navBtn = (label, target, fk) => html`<button type="button" class="btn quiet small" data-act="insp-go" data-obs="${target ? target.id : ''}" data-fk="${fk}"${target ? '' : raw(' disabled')}>${label}</button>`;
   setHtml(
     el,
     html`<div class="insp-head">
-      <div class="insp-title"><h2 id="insp-title" class="row-id">${letterOf(o.config_id) ? html`<span class="lt" aria-hidden="true">${letterOf(o.config_id)}</span>` : ''}<span>${cfg.display_name}</span></h2>
-        <div class="insp-sub label">${cfg.harness.name} <span class="mono">${cfg.harness.version}</span> · <span class="mono">${o.case_id}</span> · repeat <span class="mono">r${o.repeat}</span> · <span class="mark mark-${out.kind}">${out.glyph} ${out.text}</span></div></div>
-      <button type="button" class="icon-ctl" data-act="insp-close" data-fk="insp:close" aria-label="Close inspector"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3.5 3.5l7 7M10.5 3.5l-7 7" class="ico"/></svg></button>
+      <div class="insp-title"><h2 id="insp-title">${name}</h2>
+        <p class="insp-sub">${c ? caseName(o.case_id, c.suite.id, k && k.input) : o.case_id} · try ${o.repeat + 1}${total > 1 ? ` of ${total}` : ''} · <span class="mark mark-${out.kind}">${out.glyph} ${out.text}</span></p></div>
+      <button type="button" class="icon-btn" data-act="insp-close" data-fk="insp:close" aria-label="Close the side panel"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button>
     </div>
-    <div class="tabs" role="tablist" aria-label="Inspector sections">${TABS.map(([id, label]) => html`<button type="button" class="tab" role="tab" id="tab-${id}" data-act="insp-tab" data-tab="${id}" data-fk="insp:tab:${id}" aria-selected="${String(tab === id)}" aria-controls="insp-panel" tabindex="${tab === id ? 0 : -1}">${label}</button>`)}</div>
-    <div class="insp-body" id="insp-panel" role="tabpanel" aria-labelledby="tab-${tab}" data-obs="${o.id}" data-tab="${tab}">${tab === 'answer' ? answerTab(o, cfg) : tab === 'metrics' ? metricsTab(o) : provenanceTab(o, cfg)}</div>
-    <div class="insp-nav" role="group" aria-label="Move to another observation of this case">
-      ${navBtn('go', '‹ Previous repeat', nb.prevRep, 'insp:prev-rep')}${navBtn('go', 'Next repeat ›', nb.nextRep, 'insp:next-rep')}
-      ${navBtn('go', '‹ Previous config', nb.prevCfg, 'insp:prev-cfg')}${navBtn('go', 'Next config ›', nb.nextCfg, 'insp:next-cfg')}
-    </div>
-    <div class="insp-foot">
-      <button type="button" class="ctl" data-act="rate" data-obs="${o.id}" data-fk="insp:rate">Rate</button>
-      <button type="button" class="ctl" data-act="insp-json" data-obs="${o.id}" data-fk="insp:json">Download JSON</button>
+    <div class="tabs" role="tablist" aria-label="Side panel">${TABS.map(([id, label]) => html`<button type="button" class="tab" role="tab" id="tab-${id}" data-act="insp-tab" data-tab="${id}" data-fk="insp:tab:${id}" aria-selected="${String(tab === id)}" aria-controls="insp-panel" tabindex="${tab === id ? 0 : -1}">${label}</button>`)}</div>
+    <div class="insp-body" id="insp-panel" role="tabpanel" aria-labelledby="tab-${tab}" data-obs="${o.id}" data-tab="${tab}">${tab === 'answer' ? answerTab(o, cfg) : evidenceTab(o, cfg)}</div>
+    <div class="insp-nav" role="group" aria-label="Another try of this case">
+      ${navBtn('‹ Previous try', nb.prevTry, 'insp:prev-try')}${navBtn('Next try ›', nb.nextTry, 'insp:next-try')}
+      ${S.sel.length > 1 ? html`${navBtn('‹ Previous setup', nb.prevSetup, 'insp:prev-setup')}${navBtn('Next setup ›', nb.nextSetup, 'insp:next-setup')}` : ''}
+      ${rateWanted() ? html`<button type="button" class="btn secondary small insp-rate" data-act="rate" data-obs="${o.id}" data-fk="insp:rate">Rate this answer</button>` : ''}
     </div>`,
   );
   const body = el.querySelector('.insp-body');
   if (body && scroll) body.scrollTop = scroll;
-  syncOpenChip();
+  syncOpenMark();
 }
 
 export function openInspector(obsId, { instant = false, tab = 'answer', openerFk = null } = {}) {
@@ -174,7 +189,7 @@ export function closeInspector({ instant = false } = {}) {
   if (!S.insp && el.hidden) return;
   S.insp = null;
   document.body.classList.remove('insp-open');
-  syncOpenChip();
+  syncOpenMark();
   const key = openerKey;
   openerKey = null;
   el.toggleAttribute('data-instant', instant);
@@ -195,7 +210,7 @@ export function closeInspector({ instant = false } = {}) {
 export function inspectorJson(obsId) {
   const o = obsById(obsId);
   if (!o) return false;
-  download(`${o.case_id}__${o.config_id}__r${o.repeat}.json`, JSON.stringify(o, null, 2), 'application/json');
+  download(`${o.case_id}__${o.config_id}__try${o.repeat + 1}.json`, JSON.stringify(o, null, 2), 'application/json');
   return true;
 }
 

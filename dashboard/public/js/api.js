@@ -23,3 +23,7 @@ export const postBoard = (body) =>
   fetch('/api/boards', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(parse);
 
 export const deleteBoard = (id) => fetch(`/api/boards/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(parse);
+
+// Start an allowlisted `node lab` command. A 409 means another job runs.
+export const postJob = (body) =>
+  fetch('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(parse);
