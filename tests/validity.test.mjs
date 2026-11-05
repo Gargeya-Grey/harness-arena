@@ -15,6 +15,7 @@ import { errorClass, modelCheck, normalizeErrorType, runLiveness } from '../lab/
 import { readJson, readJsonl, writeJson } from '../lab/lib/fsutil.mjs';
 import { bootstrapClustered, bootstrapMean, clusteredInterval } from '../lab/lib/metrics.mjs';
 import { buildState } from '../lab/lib/state.mjs';
+import { crashInLedger } from './crash.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES = path.join(REPO, 'tests', 'fixtures', 'repo');
@@ -187,6 +188,7 @@ test('a crashed run shows as stale and resumes with only its missing rows', asyn
   const kept = fs.readFileSync(rawFile, 'utf8').split('\n').slice(0, 2);
   fs.writeFileSync(rawFile, `${kept.join('\n')}\n`);
   fs.rmSync(path.join(result.runDir, 'scores'), { recursive: true, force: true });
+  crashInLedger(root, result.runId, 2);
   const manifest = readJson(path.join(result.runDir, 'run.json'));
   writeJson(path.join(result.runDir, 'run.json'), { ...manifest, status: 'running', finished_at: null, runner: { pid: manifest.runner.pid, heartbeat_at: '2026-01-01T00:00:00.000Z' } });
   assert.equal(runLiveness(readJson(path.join(result.runDir, 'run.json'))), 'stale');
@@ -327,6 +329,7 @@ test('resume --dry-run calls nothing; a torn last line is dropped and recorded',
   const rawFile = path.join(result.runDir, 'raw.jsonl');
   const lines = fs.readFileSync(rawFile, 'utf8').split('\n');
   fs.writeFileSync(rawFile, `${lines[0]}\n${lines[1].slice(0, 40)}`);
+  crashInLedger(root, result.runId, 1, { scores: true });
   const manifest = readJson(path.join(result.runDir, 'run.json'));
   writeJson(path.join(result.runDir, 'run.json'), { ...manifest, status: 'running', finished_at: null, runner: { pid: manifest.runner.pid, heartbeat_at: '2026-01-01T00:00:00.000Z' } });
   const logs = [];
@@ -415,6 +418,7 @@ test('resume: --force overrides a live pid, the dry run checks the harness versi
   const lines = fs.readFileSync(rawFile, 'utf8').split('\n');
   // The last kept row is complete JSON but lost its newline in the crash.
   fs.writeFileSync(rawFile, `${lines[0]}\n${lines[1]}`);
+  crashInLedger(root, result.runId, 2, { scores: true });
   const manifest = readJson(path.join(result.runDir, 'run.json'));
   writeJson(path.join(result.runDir, 'run.json'), { ...manifest, status: 'running', finished_at: null, runner: { pid: process.pid, heartbeat_at: new Date().toISOString() } });
   await assert.rejects(resumeCommand(root, result.runId, { log: () => {} }), /pass --force/);

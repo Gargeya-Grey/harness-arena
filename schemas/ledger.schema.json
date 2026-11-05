@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://model-testing.local/schemas/ledger.schema.json",
+  "title": "Ledger entry",
+  "description": "One entry of the evidence ledger, lab.ledger.jsonl at the main checkout (not committed). One JSON object per line; the file only grows. See lab/lib/ledger.mjs.",
+  "type": "object",
+  "required": ["at", "kind", "run_id"],
+  "additionalProperties": false,
+  "properties": {
+    "at": { "type": "string", "format": "date-time" },
+    "kind": { "enum": ["open", "row", "halt", "close", "adopt", "scores"] },
+    "run_id": { "type": "string" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "row: the sha256 of the row's line in raw.jsonl, newline included." },
+    "reason": { "type": "string", "description": "halt: why the run stopped (left_workdir, write_failed)." },
+    "status": { "type": "string", "description": "close: the status written to run.json." },
+    "halted": { "type": "string", "description": "close: how the run was halted, if it was." },
+    "files": {
+      "type": "object",
+      "description": "close, adopt: sha256 of every file of the run folder but scores/. scores: sha256 of every scores/ file.",
+      "additionalProperties": { "type": "string" }
+    },
+    "lines": {
+      "type": "array",
+      "description": "close, adopt: the sha256 of each line of raw.jsonl, in order.",
+      "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+    }
+  }
+}

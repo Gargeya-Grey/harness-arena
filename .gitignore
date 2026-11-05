@@ -38,3 +38,4 @@ lab.local.yaml
 *.log
 *.err
 results/.lab-run.lock
+lab.ledger.jsonl

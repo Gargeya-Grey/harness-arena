@@ -12,6 +12,9 @@ import { ADAPTERS } from '../lab/adapters/index.mjs';
 import { runCommand } from '../lab/commands/run.mjs';
 import { resolveRunDir, scoreCommand } from '../lab/commands/score.mjs';
 import { LOCK_FILE, takeLock } from '../lab/lib/lock.mjs';
+import { ledgerPath, readLedger, trustRun } from '../lab/lib/ledger.mjs';
+import { scoreRun } from '../lab/commands/score.mjs';
+import { crashInLedger } from './crash.mjs';
 import { validateRepo } from '../lab/commands/validate.mjs';
 import { readJsonl } from '../lab/lib/fsutil.mjs';
 import { dataDir, findRunDir, paths, runDirs } from '../lab/lib/repo.mjs';
@@ -366,6 +369,150 @@ test('a guard that cannot read the folders before the call makes no call and lea
   const [resumed] = await runCommand(root, null, { resume: result.runId, log: () => {} });
   assert.equal(calls, 1);
   assert.equal(resumed.status, 'completed');
+});
+
+const trustOf = (root, runId, runDir) => trustRun(readLedger(ledgerPath(root)), runId, runDir);
+const stateRun = (root, runId) => buildState(root).runs.find((run) => run.run_id === runId);
+
+test('ledger: created by the first run with every stored run adopted; a run edited later is caught by state, validate, score and resume', async (t) => {
+  const { root, data } = setup(t);
+  fake(t, 'fake-ledger', () => '4');
+  const file = path.join(root, 'experiments', 'ledger.yaml');
+  fs.writeFileSync(file, ['id: ledger', 'suite: smoke', 'prompt: qa-single-turn', 'repeats: 1', 'cases: [smoke-001, smoke-002]', 'harness: fake-ledger', 'models: [claude-haiku]', 'evaluators:', '  - id: exact-match', '    version: "1"', '    dimension: quality', ''].join('\n'));
+  assert.equal(fs.existsSync(ledgerPath(root)), false);
+  const notes = [];
+  const [result] = await runCommand(root, file, { log: (line) => notes.push(line) });
+  assert.ok(notes.some((line) => /created the evidence ledger/.test(line)), notes.join('\n'));
+  const ledger = readLedger(ledgerPath(root));
+  for (const { name } of runDirs(root)) assert.ok(ledger.runs.has(name), `${name} is in the ledger`);
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
+  assert.equal(stateRun(root, result.runId).trust.state, 'trusted');
+  assert.deepEqual(validateRepo(root).problems, []);
+  // Outside any call (no guard watching), a row of the finished run is changed.
+  const raw = path.join(result.runDir, 'raw.jsonl');
+  fs.writeFileSync(raw, fs.readFileSync(raw, 'utf8').replace('"4"', '"5"'));
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'untrusted');
+  const listed = stateRun(root, result.runId);
+  assert.equal(listed.trust.state, 'untrusted');
+  assert.ok(buildState(root).observations.filter((item) => item.run_id === result.runId).every((item) => item.run_scored === false));
+  assert.ok(validateRepo(root).problems.some((line) => line.includes(result.runId) && /does not match the evidence ledger: raw\.jsonl changed/.test(line)));
+  const skipped = [];
+  assert.deepEqual(scoreRun(root, result.runDir, { log: (line) => skipped.push(line), force: true }), []);
+  assert.match(skipped.join('\n'), /does not match the evidence ledger/);
+  // A forged score in a finished run is caught the same way.
+  fs.writeFileSync(raw, fs.readFileSync(raw, 'utf8').replace('"5"', '"4"'));
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
+  fs.appendFileSync(path.join(result.runDir, 'scores', 'exact-match@1.jsonl'), '{"forged":true}\n');
+  assert.match(trustOf(root, result.runId, result.runDir).reason, /scores/);
+  assert.ok(data);
+});
+
+test('ledger: the halt is saved first, so a run folder the agent broke never resumes and is never scored', async (t) => {
+  const { root } = setup(t, { agentic: true });
+  fake(t, 'fake-break', ({ cwd }) => {
+    const current = runDirs(root).find(({ name }) => name.includes('__break__')).dir;
+    // A passing row for a later repeat, and a folder where the runner writes its events.
+    fs.appendFileSync(path.join(current, 'raw.jsonl'), `${JSON.stringify({ forged: true })}\n`);
+    fs.mkdirSync(path.join(current, 'harness-events.ndjson'));
+    assert.ok(cwd);
+    return 'done';
+  });
+  const notes = [];
+  const [result] = await runCommand(root, agentExperiment(root, 'break', 'fake-break', 2), { log: (line) => notes.push(line) });
+  assert.equal(result.halted, true);
+  const manifest = JSON.parse(fs.readFileSync(path.join(result.runDir, 'run.json'), 'utf8'));
+  assert.notEqual(manifest.status, 'running', 'the run closed');
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'halted');
+  assert.equal(stateRun(root, result.runId).resumable, false);
+  await assert.rejects(runCommand(root, null, { resume: result.runId, force: true, log: () => {} }), /halted by the workdir guard/);
+  assert.deepEqual(scoreRun(root, result.runDir, { log: () => {} }), []);
+});
+
+test('ledger: a store swapped for a junction and swapped back is still a halted run', async (t) => {
+  const { root, data } = setup(t, { agentic: true });
+  const results = path.join(data, 'results');
+  fake(t, 'fake-swap', () => {
+    fs.cpSync(results, path.join(data, 'clean'), { recursive: true });
+    fs.renameSync(results, path.join(data, 'moved'));
+    fs.symlinkSync(path.join(data, 'clean'), results, 'junction');
+    return 'done';
+  });
+  const [result] = await runCommand(root, agentExperiment(root, 'swap', 'fake-swap'), { log: () => {} });
+  assert.equal(result.halted, true);
+  // The owner undoes the swap: the real store is back, with the run as the agent left it.
+  fs.rmSync(results, { recursive: true, force: true });
+  fs.renameSync(path.join(data, 'moved'), results);
+  const runDir = path.join(results, result.runId);
+  assert.equal(trustOf(root, result.runId, runDir).state, 'halted');
+  await assert.rejects(runCommand(root, null, { resume: result.runId, force: true, log: () => {} }), /halted by the workdir guard/);
+});
+
+test('ledger: hard links to a finished run do not let the runner write into it', async (t) => {
+  const { root, data } = setup(t, { agentic: true });
+  const [committed] = runDirs(root);
+  const finished = path.join(data, 'results', committed.name);
+  fs.cpSync(committed.dir, finished, { recursive: true });
+  fake(t, 'fake-link', () => {
+    const current = runDirs(root).find(({ name }) => name.includes('__hardlink__')).dir;
+    for (const name of ['run.json', 'raw.jsonl']) {
+      fs.rmSync(path.join(current, name), { force: true });
+      fs.linkSync(path.join(finished, name), path.join(current, name));
+    }
+    return 'done';
+  });
+  const before = ['run.json', 'raw.jsonl'].map((name) => fs.readFileSync(path.join(finished, name), 'utf8'));
+  const [result] = await runCommand(root, agentExperiment(root, 'hardlink', 'fake-link'), { log: () => {} });
+  assert.equal(result.halted, true);
+  assert.deepEqual(['run.json', 'raw.jsonl'].map((name) => fs.readFileSync(path.join(finished, name), 'utf8')), before);
+  assert.equal(trustOf(root, committed.name, finished).state, 'trusted');
+});
+
+test('a store that is a link when the run starts is refused before any call', async (t) => {
+  const { root, data } = setup(t, { agentic: true });
+  const real = tempDir(t, 'lab-store-real-');
+  fs.rmSync(path.join(data, 'results'), { recursive: true, force: true });
+  fs.symlinkSync(real, path.join(data, 'results'), 'junction');
+  let calls = 0;
+  fake(t, 'fake-linked', () => (calls += 1, 'done'));
+  await assert.rejects(runCommand(root, agentExperiment(root, 'linked', 'fake-linked'), { log: () => {} }), /is a link .*cannot watch through it/);
+  assert.equal(calls, 0);
+  assert.deepEqual(fs.readdirSync(real), []);
+});
+
+test('ledger: a crash between the row and its entry leaves one unrecorded row; a resume drops it and calls it again', async (t) => {
+  const { root } = setup(t);
+  let calls = 0;
+  fake(t, 'fake-crash', () => (calls += 1, '4'));
+  const file = path.join(root, 'experiments', 'crash.yaml');
+  fs.writeFileSync(file, ['id: crash', 'suite: smoke', 'prompt: qa-single-turn', 'repeats: 1', 'cases: [smoke-001, smoke-002, smoke-003]', 'harness: fake-crash', 'models: [claude-haiku]', 'evaluators:', '  - id: exact-match', '    version: "1"', '    dimension: quality', ''].join('\n'));
+  const [result] = await runCommand(root, file, { log: () => {} });
+  const raw = path.join(result.runDir, 'raw.jsonl');
+  const lines = fs.readFileSync(raw, 'utf8').split('\n');
+  fs.writeFileSync(raw, `${lines[0]}\n${lines[1]}\n`);
+  fs.rmSync(path.join(result.runDir, 'scores'), { recursive: true, force: true });
+  const manifest = JSON.parse(fs.readFileSync(path.join(result.runDir, 'run.json'), 'utf8'));
+  fs.writeFileSync(path.join(result.runDir, 'run.json'), JSON.stringify({ ...manifest, status: 'running', finished_at: null, runner: { pid: manifest.runner.pid, heartbeat_at: '2026-01-01T00:00:00.000Z' } }));
+  crashInLedger(root, result.runId, 1);
+  assert.deepEqual(trustOf(root, result.runId, result.runDir), { state: 'open', unrecorded_last: true });
+  // A second unrecorded row is not a crash: it is refused.
+  fs.appendFileSync(raw, `${lines[2]}\n`);
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'untrusted');
+  fs.writeFileSync(raw, `${lines[0]}\n${lines[1]}\n`);
+  const notes = [];
+  const [resumed] = await runCommand(root, null, { resume: result.runId, log: (line) => notes.push(line) });
+  assert.ok(notes.some((line) => /dropped the last row/.test(line)), notes.join('\n'));
+  assert.equal(calls, 3 + 2);
+  assert.equal(resumed.status, 'completed');
+  assert.equal(trustOf(root, result.runId, result.runDir).state, 'trusted');
+});
+
+test('with a data folder, a lock held on the checkout\'s results/ refuses the run too', async (t) => {
+  const { root } = setup(t);
+  fake(t, 'fake-both', () => '4');
+  const file = path.join(root, 'experiments', 'both.yaml');
+  fs.writeFileSync(file, ['id: both', 'suite: smoke', 'prompt: qa-single-turn', 'repeats: 1', 'cases: [smoke-001]', 'harness: fake-both', 'models: [claude-haiku]', 'evaluators:', '  - id: exact-match', '    version: "1"', '    dimension: quality', ''].join('\n'));
+  writeLock(path.join(root, 'results'), otherRunner(t));
+  await assert.rejects(runCommand(root, file, { log: () => {} }), /Another lab command/);
 });
 
 test('a dashboard job keeps the data folder: its child process gets LAB_DATA', async (t) => {

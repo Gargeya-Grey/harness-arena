@@ -8,6 +8,7 @@ import { paths, loadRegistry, loadCases, runDirs } from './repo.mjs';
 import { SchemaSet } from './schema.mjs';
 import { clusteredInterval, mean, percentile, sum, variance } from './metrics.mjs';
 import { errorClass, modelCheck, runLiveness } from './checks.mjs';
+import { ledgerPath, readLedger, scoresCount, trustRun } from './ledger.mjs';
 
 const TEXT_INLINE_LIMIT = 2 * 1024 * 1024;
 
@@ -265,8 +266,9 @@ function aggregate(rows, config, { hasQuality = true } = {}) {
 }
 
 /** A run that stopped before its last row and can continue: stale, or stopped by the user, never halted by the guard. */
-export function resumable(manifest) {
+export function resumable(manifest, trust = null) {
   if (manifest?.harness?.settings?.halted) return false;
+  if (trust && (trust.state === 'halted' || trust.state === 'untrusted')) return false;
   if (manifest?.status === 'running') return runLiveness(manifest) === 'stale';
   return manifest?.status === 'failed' && Boolean(manifest.runner?.interrupted);
 }
@@ -314,6 +316,16 @@ export function buildState(root, { validate = true } = {}) {
   const suitesSeen = new Set();
   const cases = {};
 
+  // The evidence ledger (lab/lib/ledger.mjs): a run that does not match it is listed,
+  // flagged, and its scores do not count.
+  let ledger = null;
+  try {
+    ledger = readLedger(ledgerPath(root));
+    for (const item of ledger?.problems || []) note(ledgerPath(root), `line ${item.line}: ${item.message}`);
+  } catch (error) {
+    note(ledgerPath(root), `cannot read the evidence ledger: ${error.message}`);
+  }
+
   for (const { dir: runDir } of runDirs(root)) {
     const manifestPath = path.join(runDir, 'run.json');
     if (!fs.existsSync(manifestPath)) continue;
@@ -326,6 +338,13 @@ export function buildState(root, { validate = true } = {}) {
     }
     check('run.schema.json', manifest, manifestPath);
     if (!manifest?.run_id || !manifest.suite || !manifest.prompt) continue;
+    let trust;
+    try {
+      trust = trustRun(ledger, manifest.run_id, runDir);
+    } catch (error) {
+      trust = { state: 'untrusted', reason: `its files cannot be read (${error.code || error.message})` };
+    }
+    if (trust.state === 'untrusted') note(manifestPath, `does not match the evidence ledger: ${trust.reason}; its scores do not count`);
 
     const rawPath = path.join(runDir, 'raw.jsonl');
     const { rows: rawRows, problems: rawProblems } = readJsonl(rawPath);
@@ -380,7 +399,8 @@ export function buildState(root, { validate = true } = {}) {
     const runConfigIds = new Set();
     let errors = 0;
     // A halted run is never scored, whatever score file sits in its folder.
-    const runScored = manifest.status !== 'running' && !manifest.harness?.settings?.halted && listFiles(scoresDir, '.jsonl').length > 0;
+    // So is a run that does not match the evidence ledger, or that the ledger says was halted.
+    const runScored = manifest.status !== 'running' && !manifest.harness?.settings?.halted && scoresCount(trust) && listFiles(scoresDir, '.jsonl').length > 0;
     for (const raw of rawRows) {
       const config = buildConfig(manifest, raw.model_key, raw, registry);
       if (!configs[config.id]) {
@@ -442,7 +462,9 @@ export function buildState(root, { validate = true } = {}) {
       status: manifest.status,
       // live, stale (the runner is gone: resume it) or unknown, for a run that says running.
       liveness: runLiveness(manifest),
-      resumable: resumable(manifest),
+      resumable: resumable(manifest, trust),
+      // From the evidence ledger: legacy (no ledger yet), trusted, open, halted or untrusted.
+      trust,
       context_key: key,
       suite: manifest.suite,
       prompt: manifest.prompt,

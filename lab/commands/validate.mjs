@@ -10,6 +10,7 @@ import { harnessesFile, loadAdapters, readDeclared } from '../adapters/index.mjs
 import { getEvaluator } from '../evaluators/index.mjs';
 import { listTree } from '../lib/workspace.mjs';
 import { runLiveness } from '../lib/checks.mjs';
+import { LEDGER_SCHEMA, ledgerPath, readLedger, trustRun } from '../lib/ledger.mjs';
 import { FILL_IN, unfilled } from './new-case.mjs';
 
 export function validateRepo(root) {
@@ -154,6 +155,18 @@ export function validateRepo(root) {
     }
   }
 
+  // The evidence ledger: every entry to its schema, every run checked against it.
+  let ledger = null;
+  try {
+    ledger = readLedger(ledgerPath(root));
+  } catch (error) {
+    report(ledgerPath(root), `cannot read the evidence ledger: ${error.message}`);
+  }
+  for (const item of ledger?.problems || []) report(ledgerPath(root), `line ${item.line}: ${item.message}`);
+  for (const { line, entry } of ledger?.entries || []) {
+    schemas.validate(LEDGER_SCHEMA, entry).forEach((error) => report(ledgerPath(root), `line ${line}: ${error}`));
+  }
+
   for (const { name, dir: runDir } of runDirs(root)) {
     const manifestFile = path.join(runDir, 'run.json');
     if (!fs.existsSync(manifestFile)) continue;
@@ -166,6 +179,12 @@ export function validateRepo(root) {
       continue;
     }
     check('run.schema.json', manifest, manifestFile);
+    try {
+      const trust = trustRun(ledger, manifest.run_id, runDir);
+      if (trust.state === 'untrusted') report(manifestFile, `does not match the evidence ledger: ${trust.reason}`);
+    } catch (error) {
+      report(manifestFile, `cannot be checked against the evidence ledger: ${error.message}`);
+    }
     const liveness = runLiveness(manifest);
     if (liveness === 'stale') warnings.push(`${rel(manifestFile)}: stopped without finishing; continue it with node lab run --resume ${name}`);
     if (liveness === 'unknown') warnings.push(`${rel(manifestFile)}: says running but has no heartbeat; if no runner is working on it, continue it with node lab run --resume ${name} --force`);

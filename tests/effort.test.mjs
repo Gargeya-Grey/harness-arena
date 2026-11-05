@@ -12,6 +12,7 @@ import { validateRepo } from '../lab/commands/validate.mjs';
 import { readJson, readJsonl, writeJson } from '../lab/lib/fsutil.mjs';
 import { resolveExperiment } from '../lab/lib/repo.mjs';
 import { buildState } from '../lab/lib/state.mjs';
+import { crashInLedger } from './crash.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES = path.join(REPO, 'tests', 'fixtures', 'repo');
@@ -114,6 +115,7 @@ test('a stopped run of one effort resumes at that effort', async (t) => {
   const high = results.find((r) => readJson(path.join(r.runDir, 'run.json')).models[0].reasoning_effort === 'high');
   fs.writeFileSync(path.join(high.runDir, 'raw.jsonl'), '');
   fs.rmSync(path.join(high.runDir, 'scores'), { recursive: true, force: true });
+  crashInLedger(root, high.runId, 0);
   const manifest = readJson(path.join(high.runDir, 'run.json'));
   writeJson(path.join(high.runDir, 'run.json'), { ...manifest, status: 'running', finished_at: null, runner: { pid: manifest.runner.pid, heartbeat_at: '2026-01-01T00:00:00.000Z' } });
   calls.length = 0;

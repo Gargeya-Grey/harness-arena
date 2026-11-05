@@ -9,14 +9,15 @@ import { spawnSync } from 'node:child_process';
 import { appendJsonl, isoNow, readJson, readJsonl, readText, sha256, writeJson, safeSegment } from '../lib/fsutil.mjs';
 import { redactEvent, redactPaths } from '../lib/redact.mjs';
 import { parseYaml } from '../lib/yaml.mjs';
-import { loadPrompt, mainCheckout, targetProblems, loadRegistry, loadSuite, paths, renderMessages, resolveExperiment } from '../lib/repo.mjs';
+import { loadPrompt, mainCheckout, targetProblems, loadRegistry, loadSuite, paths, renderMessages, resolveExperiment, runDirs } from '../lib/repo.mjs';
 import { costUsd } from '../lib/metrics.mjs';
 import { copyTree, snapshotWorkspace, stampDiff, treeHash, treeStamp } from '../lib/workspace.mjs';
 import { getAdapter } from '../adapters/index.mjs';
 import { extractSvg } from '../evaluators/index.mjs';
 import { resolveRunDir, scoreRun } from './score.mjs';
 import { modelCheck, normalizeErrorType, runLiveness } from '../lib/checks.mjs';
-import { storeFolder, takeLock } from '../lib/lock.mjs';
+import { storeFolders, takeLocks } from '../lib/lock.mjs';
+import { appendEntry, closeEntry, ensureLedger, ledgerPath, lineSha, readLedger, rowLine, trustRun } from '../lib/ledger.mjs';
 
 const DEFAULT_TIMEOUT_S = 300;
 const USER_CONFIG = new Set(['loaded', 'isolated']);
@@ -202,12 +203,28 @@ const NO_SKIP = new Set();
 export function guardScope(root) {
   const { data, resultsDirs } = paths(root);
   const main = mainCheckout(root);
+  const ledger = ledgerPath(root);
+  // The guard stamps what is inside a store folder, so a store that is a link (a junction
+  // or a symbolic link) cannot be watched: it is refused before any call.
+  for (const dir of [data, ...resultsDirs, path.dirname(ledger)].filter(Boolean)) {
+    if (entryKind(dir).startsWith('link:')) throw new Error(`${dir} is a link (a junction or a symbolic link); the workdir guard cannot watch through it. Point data_dir at its real folder, or make it a plain folder.`);
+  }
   return {
     root,
     data,
     results: resultsDirs,
     configs: [...new Set([root, main].filter(Boolean).map((dir) => path.join(dir, 'lab.local.yaml')))],
+    ledger,
+    ledgerDir: fs.realpathSync.native(path.dirname(ledger)),
   };
+}
+
+/** The folders an agent must not name, fixed with the guard scope. */
+const scopeFolders = (scope) => [scope.root, scope.data].filter(Boolean);
+
+/** One ledger entry of this run, written only into the ledger the run started with. */
+function record(plan, entry) {
+  appendEntry(plan.guard.ledger, entry, { realDir: plan.guard.ledgerDir });
 }
 
 function entryKind(file) {
@@ -230,6 +247,8 @@ function guardStamp(scope) {
     const kind = entryKind(file);
     stamp.set(`config: ${file}`, kind === 'file' ? `file ${sha256(fs.readFileSync(file))}` : kind);
   }
+  const ledgerKind = entryKind(scope.ledger);
+  stamp.set(`ledger: ${scope.ledger}`, ledgerKind === 'file' ? `file ${sha256(fs.readFileSync(scope.ledger))}` : ledgerKind);
   if (data) {
     stamp.set(`${DATA_KEY}.`, entryKind(data));
     if (fs.existsSync(data)) {
@@ -265,10 +284,21 @@ function tryGuardStamp(scope) {
  * a change the guard halts on; the runner still writes its row and closes the run.
  */
 function own(file) {
+  let stat;
   try {
-    if (!(fs.statSync(file).mode & 0o200)) fs.chmodSync(file, 0o666);
+    stat = fs.lstatSync(file);
   } catch {
-    // Not there yet, or the write itself reports the problem.
+    return file; // Not there yet.
+  }
+  // Never write through a link: a file with a second link (a hard link to another run's
+  // file) is copied to a new file of its own first, and anything else is refused.
+  if (!stat.isFile()) throw new Error(`${path.basename(file)} in the run folder is not a plain file`);
+  if (!(stat.mode & 0o200)) fs.chmodSync(file, 0o666);
+  if (stat.nlink > 1) {
+    const copy = `${file}.lab-${process.pid}.tmp`;
+    fs.copyFileSync(file, copy);
+    fs.rmSync(file, { force: true });
+    fs.renameSync(copy, file);
   }
   return file;
 }
@@ -381,6 +411,7 @@ async function openRun(root, plan, harnessName, modelKeys, { log, resume = null,
     notes: `Run by lab ${harnessName}; experiment file sha256 ${plan.experimentSha}.`,
   };
   writeJson(path.join(session.runDir, 'run.json'), session.manifest);
+  record(plan, { kind: 'open', run_id: session.runId });
   log(`\n${session.runId}\n  harness ${adapter.name} ${detected.version} · ${models.length} model(s) · ${plan.cases.length} case(s) · ${plan.repeats} repeat(s) · workdir ${plan.workdirMode}`);
   if (isolated && !isolationArgs.length) log(`  note: ${adapter.name} cannot skip the user setup; it loads, and the run records user_config loaded`);
   for (const m of models) {
@@ -448,7 +479,8 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
     } else if (changed?.startsWith(DATA_KEY) || changed?.startsWith(STORE_KEY)) {
       const prefix = changed.startsWith(DATA_KEY) ? DATA_KEY : STORE_KEY;
       const where = prefix === DATA_KEY ? 'in the data folder' : 'in the repository';
-      const what = changed.slice(prefix.length).replace(/\/\.?$/, '') || 'the folder itself';
+      const rest = changed.slice(prefix.length).replace(/\/\.?$/, '');
+      const what = !rest || rest === '.' ? 'the folder itself' : rest;
       escape = `changed, added or removed ${what} ${where}, where the stored runs are, while it ran; the experiment stops and this run is not scored. Those runs are evidence: compare them with a backup before you trust them`;
       halt = true;
     } else if (changed?.startsWith('config: ')) {
@@ -457,10 +489,19 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
     } else if (changed) {
       escape = `changed ${changed} in the lab repository while it ran; the experiment stops and this run is not scored. Check that file with git diff. If you edited it yourself during the call, this is a false alarm: keep your work and run again. Otherwise restore it (git checkout -- <file>) before the next run`;
       halt = true;
-    } else if (mentionsFolder(`${JSON.stringify(result.events ?? [])}\n${result.text ?? ''}`, labFolders(root))) {
+    } else if (mentionsFolder(`${JSON.stringify(result.events ?? [])}\n${result.text ?? ''}`, scopeFolders(plan.guard))) {
       escape = 'worked in the lab repository outside its work folder, where it could read the hidden checks';
     }
     if (escape) result = { ...result, error: { type: 'left_workdir', message: `The agent ${escape}.` } };
+    if (halt) {
+      // The halt goes to the ledger first, before any other write: whatever the agent did
+      // to the run folder, a resume or a score of this run is then refused.
+      try {
+        record(plan, { kind: 'halt', run_id: session.runId, reason: 'left_workdir' });
+      } catch (error) {
+        log(`  warning: the halt could not be written to the ledger (${error.message}); this run has no close entry, so it reads as not trusted`);
+      }
+    }
   }
   // Ctrl+C in a terminal also stops the harness, so its call fails for no fault of its
   // own. That call is not stored: a resume runs it again. A dashboard stop ("cancel")
@@ -535,15 +576,31 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
     }
   }
   if (isolatedDir) row.metadata.workdir_removed = removeFolder(callCwd);
-  appendJsonl(own(path.join(runDir, 'raw.jsonl')), row);
-  own(path.join(runDir, 'harness-events.ndjson'));
-  for (const event of result.events || []) {
-    // Events keep what the call did, not how this machine is set up (lab/lib/redact.mjs).
-    appendJsonl(path.join(runDir, 'harness-events.ndjson'), { case_id: row.case_id, model_key: row.model_key, repeat, event: redactEvent(event) });
+  try {
+    appendJsonl(own(path.join(runDir, 'raw.jsonl')), row);
+    record(plan, { kind: 'row', run_id: session.runId, sha256: lineSha(rowLine(row)) });
+    own(path.join(runDir, 'harness-events.ndjson'));
+    for (const event of result.events || []) {
+      // Events keep what the call did, not how this machine is set up (lab/lib/redact.mjs).
+      appendJsonl(path.join(runDir, 'harness-events.ndjson'), { case_id: row.case_id, model_key: row.model_key, repeat, event: redactEvent(event) });
+    }
+    session.done.add(rowKey(row.case_id, row.model_key, repeat));
+    if (row.error) session.failures += 1;
+    heartbeat(session);
+  } catch (error) {
+    // A write that fails after the call (a folder put in place of a run file) stops the
+    // experiment, and the run still closes, so it never stays "running".
+    log(`  ${testCase.case_id} r${repeat} ${m.modelKey}: could not store the row (${redactPaths(error.message)}); the experiment stops`);
+    if (!halt) {
+      try {
+        record(plan, { kind: 'halt', run_id: session.runId, reason: 'write_failed' });
+      } catch {
+        // The run then has no close entry and reads as not trusted.
+      }
+    }
+    session.halted = 'left_workdir';
+    return true;
   }
-  session.done.add(rowKey(row.case_id, row.model_key, repeat));
-  if (row.error) session.failures += 1;
-  heartbeat(session);
   if (modelChecked === 'mismatch') log(`  warning: ${adapter.name} reports model "${result.model_reported}", not "${m.harnessModel}"; the row is marked model_check mismatch`);
   if (isolatedDir && !row.metadata.workdir_removed) log(`  warning: could not delete the call folder ${callCwd}; a process the harness started may still hold it`);
   if (halt) {
@@ -557,7 +614,8 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
 }
 
 /** Finish one run: status, harness version at the end, scores. */
-async function closeRun(root, plan, session, { log, aborted, halted }) {
+async function closeRun(root, plan, session, { log, aborted, halted: haltedAs }) {
+  let halted = haltedAs;
   const { manifest, runDir, adapter } = session;
   manifest.finished_at = isoNow();
   if (plan.workdirMode !== 'repo') manifest.harness.settings.workdir_git_fence = session.fenced;
@@ -579,7 +637,17 @@ async function closeRun(root, plan, session, { log, aborted, halted }) {
       ? ' Stopped: a file of the lab repository changed during an agent call. Not scored; node lab score skips it unless --force.'
       : ' Stopped: another run of this experiment halted when a file of the lab repository changed during an agent call. Not scored; node lab score skips it unless --force.';
   }
-  writeJson(own(path.join(runDir, 'run.json')), manifest);
+  try {
+    writeJson(own(path.join(runDir, 'run.json')), manifest);
+  } catch (error) {
+    log(`  warning: could not write run.json of ${session.runId} (${redactPaths(error.message)})`);
+  }
+  try {
+    record(plan, closeEntry('close', session.runId, runDir, { status: manifest.status, ...(halted ? { halted } : {}) }));
+  } catch (error) {
+    log(`  warning: the close entry could not be written to the ledger (${error.message}); this run reads as not trusted`);
+    halted = halted || 'ledger_unwritable';
+  }
   // The changed files may include the hidden checks, so a halted run is not scored.
   const written = halted ? [] : scoreRun(root, runDir, { log });
   log(`\n${session.runId}`);
@@ -599,8 +667,8 @@ function beatAll(sessions) {
  * only the one whose turn it was. Each harness still writes its own run.
  */
 async function execute(root, plan, sessions, { log, signal }) {
-  // Fixed before the first call (see guardScope).
-  plan.guard = guardScope(root);
+  // Fixed before the first run folder is made (see guardScope).
+  plan.guard ??= guardScope(root);
   let aborted = false;
   let haltedBy = null;
   outer: for (let repeat = 0; repeat < plan.repeats; repeat += 1) {
@@ -664,9 +732,11 @@ export async function runCommand(root, file, options = {}) {
     log('Dry run: nothing was called or written.');
     return [];
   }
-  // One writer at a time on the data folder (lab/lib/lock.mjs); a second runner is refused here.
-  const release = takeLock(storeFolder(root), { command: `node lab run ${plan.experiment.id}`, root, log });
+  // One writer at a time on every store (lab/lib/lock.mjs); a second runner is refused here.
+  const release = takeLocks(storeFolders(root), { command: `node lab run ${plan.experiment.id}`, root, log });
   try {
+    ensureLedger(ledgerPath(root), runDirs(root), { log });
+    plan.guard = guardScope(root);
     const results = [];
     const sessions = [];
     for (const { harness, effort, models } of plan.groups.values()) {
@@ -692,7 +762,7 @@ export async function runCommand(root, file, options = {}) {
 export async function resumeCommand(root, ref, { log = console.log, force = false, dryRun = false } = {}) {
   if (dryRun) return resumeRun(root, ref, { log, force, dryRun });
   // The lock comes before the run is read, so no other runner writes its rows meanwhile.
-  const release = takeLock(storeFolder(root), { command: `node lab run --resume ${ref}`, root, log });
+  const release = takeLocks(storeFolders(root), { command: `node lab run --resume ${ref}`, root, log });
   try {
     return await resumeRun(root, ref, { log, force, dryRun });
   } finally {
@@ -742,8 +812,27 @@ async function resumeRun(root, ref, { log, force, dryRun }) {
   if (String(detected.version) !== manifest.harness.version) {
     throw new Error(`${manifest.harness.name} is now ${detected.version}; the run used ${manifest.harness.version}. A resumed run must use the same harness version.`);
   }
+  // The ledger decides what a resume may keep: a run it halted or cannot match is refused,
+  // and the one unrecorded last row a crash may leave is dropped and called again.
+  if (!dryRun) ensureLedger(ledgerPath(root), runDirs(root), { log });
+  const trust = trustRun(readLedger(ledgerPath(root)), manifest.run_id, runDir);
+  if (trust.state === 'halted') throw new Error(`${manifest.run_id} was halted by the workdir guard (evidence ledger: ${trust.reason}); it cannot be resumed. Start a new run.`);
+  if (trust.state === 'untrusted') throw new Error(`Cannot resume ${manifest.run_id}: it does not match the evidence ledger (${trust.reason}). Start a new run.`);
   const rawFile = path.join(runDir, 'raw.jsonl');
-  const { rows, problems } = readJsonl(rawFile);
+  // A torn last line is cut below, as before; a complete last row with no entry is cut here.
+  let droppedRow = false;
+  if (trust.unrecorded_last && !readJsonl(rawFile).problems.length) {
+    droppedRow = true;
+    if (!dryRun) {
+      const before = fs.readFileSync(rawFile, 'utf8');
+      const cut = before.endsWith('\n') ? before.slice(0, -1).lastIndexOf('\n') + 1 : before.lastIndexOf('\n') + 1;
+      fs.truncateSync(rawFile, Buffer.byteLength(before.slice(0, cut), 'utf8'));
+      log(`  note: dropped the last row of ${manifest.run_id}: the ledger has no entry for it (a crash between the two writes); it is called again`);
+    }
+  }
+  const { rows: readRows, problems } = readJsonl(rawFile);
+  // In a dry run nothing was cut: the dropped row still counts as one to call.
+  const rows = droppedRow && dryRun ? readRows.slice(0, -1) : readRows;
   // A crash in the middle of an append leaves a torn last line with no newline. It was
   // never a record; it is cut off (and the cut recorded), so the next row starts clean.
   // A complete last row without its newline gets the newline, or the next row would join it.
@@ -765,6 +854,7 @@ async function resumeRun(root, ref, { log, force, dryRun }) {
     log('Dry run: nothing was called or written.');
     return [];
   }
+  plan.guard = guardScope(root);
   const session = await openRun(root, plan, manifest.harness.name, manifest.models.map((item) => item.model_key), { log, effort: group?.effort, resume: { manifest, runDir, rows, tornLine } });
   return withSigint(log, (signal) => execute(root, plan, [session], { log, signal }));
 }

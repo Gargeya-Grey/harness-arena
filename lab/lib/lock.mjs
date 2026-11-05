@@ -15,10 +15,28 @@ const TAKEOVER_STALE_MS = 30000;
 // Locks this process holds now: a lock with this pid that is not here is a reused pid.
 const held = new Set();
 
-/** The folder whose lock a command takes: the data folder, else the checkout's results/. */
-export function storeFolder(root) {
-  const { data, results } = paths(root);
-  return data ?? results;
+/**
+ * The folders whose locks a command takes: every store its guard watches (the data
+ * folder and the checkout's results/), so a command of the same checkout that runs with
+ * no data folder is refused too.
+ */
+export function storeFolders(root) {
+  const { data } = paths(root);
+  return [...new Set([data, path.join(root, 'results')].filter(Boolean))];
+}
+
+/** Take every lock in a fixed order (sorted), or none: a refused lock releases the others. */
+export function takeLocks(folders, options) {
+  const releases = [];
+  try {
+    for (const folder of [...folders].sort()) releases.push(takeLock(folder, options));
+  } catch (error) {
+    for (const release of releases.reverse()) release();
+    throw error;
+  }
+  return () => {
+    for (const release of releases.reverse()) release();
+  };
 }
 
 const readText = (file) => {

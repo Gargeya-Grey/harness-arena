@@ -127,7 +127,19 @@ data_dir: ../Model-Lab-Data   # relative to this file, or an absolute path
 - `node lab doctor` prints where runs are written.
 - One runner at a time. `node lab run`, `--resume` and `node lab score` take a lock, `.lab-run.lock`, in the data folder (or in `results/` when there is none). A second command is refused while the first one runs, from any worktree. A lock left by a crashed process is taken over, by one process only. If Windows gave the dead runner's process id to another program, the refusal names the lock file to delete. A dry run takes no lock.
 - During an agent call the workdir guard watches everything the lab reads from a store, with no skip list: every run, row, score, folder (of any name) and link in each `results/`, the read-only bit, the real path of each store folder, the lock file, and both `lab.local.yaml` files. The data folder is fixed when the run starts. An agent that changes, adds or deletes anything there halts the experiment, and that run is not scored. A folder the guard cannot read after the call halts it too; before the call, no call is made and the run can be resumed.
+- The data folder and `results/` must be plain folders: a store that is a junction or a symbolic link is refused before any call, because the guard cannot watch through it.
 - Limits: the guard does not watch `annotations/`, because the dashboard saves ratings at any time. It reports a planted run and never deletes it, so that run stays visible until you remove it. It reads every stored file before and after each agent call, so that cost grows with the store.
+
+### The evidence ledger
+
+The guard only sees what changes while it watches. The ledger catches a forged or edited run later, whenever it is read, however the change was made.
+
+- `lab.ledger.jsonl` at the main checkout (shared by every worktree, not committed) records each run as it is written: when it opens, the sha256 of each row, a halt (written first, before any other write), the sha256 of every file when it closes, and the scores files.
+- The first `node lab run` or `node lab score` creates it and records every run already stored, as it is then.
+- `validate`, `score`, `--resume` and the dashboard check each run against it. A run whose files do not match, or that is not in it, is flagged in the dashboard, reported by `validate`, never scored, and never resumed. A run the ledger halted stays halted, whatever its `run.json` says.
+- A crash between a row and its ledger entry leaves one unrecorded last row; a resume drops it and calls it again.
+- It detects tampering; it does not prevent it. An agent runs with your file permissions. Real prevention needs OS isolation (a separate user or a sandbox), which the lab does not do yet.
+- Without a ledger file (a fresh clone, the fixtures), every run reads as before.
 
 Without `lab.local.yaml`, runs go to `results/` in the checkout, as before.
 

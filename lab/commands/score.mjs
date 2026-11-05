@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { listDirs, readJson, readJsonl } from '../lib/fsutil.mjs';
 import { findRunDir, loadSuite, runDirs } from '../lib/repo.mjs';
-import { storeFolder, takeLock } from '../lib/lock.mjs';
+import { storeFolders, takeLocks } from '../lib/lock.mjs';
+import { appendEntry, ensureLedger, ledgerPath, readLedger, scoresEntry, trustRun } from '../lib/ledger.mjs';
 import { getEvaluator } from '../evaluators/index.mjs';
 
 export function resolveRunDir(root, ref) {
@@ -20,9 +21,18 @@ export function resolveRunDir(root, ref) {
 
 export function scoreRun(root, runDir, { log = () => {}, force = false } = {}) {
   const manifest = readJson(path.join(runDir, 'run.json'));
+  // The evidence ledger comes first: a run that does not match it is never scored, and a
+  // run it halted counts as halted whatever run.json says.
+  const ledger = readLedger(ledgerPath(root));
+  const trust = trustRun(ledger, manifest.run_id, runDir);
+  if (trust.state === 'untrusted') {
+    log(`  skip: this run does not match the evidence ledger (${trust.reason}); it is not scored`);
+    return [];
+  }
+  const halted = manifest.harness?.settings?.halted || (trust.state === 'halted' ? trust.reason : null);
   // A run stopped by the workdir guard may have been scored against changed files.
-  if (manifest.harness?.settings?.halted && !force) {
-    log(`  skip: this run was stopped (${manifest.harness.settings.halted}); pass --force to score it anyway`);
+  if (halted && !force) {
+    log(`  skip: this run was stopped (${halted}); pass --force to score it anyway`);
     return [];
   }
   const { rows, problems } = readJsonl(path.join(runDir, 'raw.jsonl'));
@@ -68,6 +78,8 @@ export function scoreRun(root, runDir, { log = () => {}, force = false } = {}) {
     fs.writeFileSync(file, scores.map((score) => JSON.stringify(score)).join('\n') + (scores.length ? '\n' : ''), 'utf8');
     written.push({ file, count: scores.length, passed: scores.filter((score) => score.passed).length });
   }
+  // The scores now in the folder are the ones the ledger vouches for.
+  if (ledger) appendEntry(ledgerPath(root), scoresEntry(manifest.run_id, runDir));
   return written;
 }
 
@@ -75,8 +87,9 @@ export function scoreCommand(root, refs, { all = false, force = false, log = con
   const dirs = all ? runDirs(root).map(({ dir }) => dir).filter((dir) => fs.existsSync(path.join(dir, 'run.json'))) : refs.map((ref) => resolveRunDir(root, ref));
   if (!dirs.length) throw new Error('Name a run id (or part of one), or pass --all');
   // Scores live in the data folder too, so scoring waits for no runner: one writer at a time.
-  const release = takeLock(storeFolder(root), { command: 'node lab score', root, log });
+  const release = takeLocks(storeFolders(root), { command: 'node lab score', root, log });
   try {
+    ensureLedger(ledgerPath(root), runDirs(root), { log });
     for (const dir of dirs) {
       log(path.basename(dir));
       for (const item of scoreRun(root, dir, { log, force })) {
