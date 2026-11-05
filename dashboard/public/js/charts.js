@@ -1,16 +1,18 @@
-// Charts: hand-rolled inline SVG. No per-configuration palette: every configuration carries its lineup
-// letter and its name, marks are ink, the best value is leaf-ink, errors are clay.
-// Row charts share one frame: a label column on the left, the plot on the right; narrow charts stack them.
-import { S, ctx, selectedCfgs, aggOf, chartNames, letterOf } from './model.js';
-import { html, esc, setHtml, isNum, msText, tokText, fixed, clamp, toCsv, download, slug, NA } from './util.js';
+// Charts: hand-rolled inline SVG. No colour per setup: each setup carries its letter and its name,
+// marks are ink, the best value is the accent, no answer is the danger colour.
+// A chart shows only when it carries a result; the others wait under "More charts".
+import { ctx, shownSetups, aggOf, chartNames, letterOf, selectedCfgs } from './model.js';
+import { bestMarks, facts, wilson } from './verdict.js';
+import { durText } from './words.js';
+import { html, esc, setHtml, isNum, tokText, clamp } from './util.js';
 
 const LH = 17;
 const CHAR = 6.9; // average width of a 13px Instrument Sans character, weight 500
-const MONO = 7.25; // width of a 12px Plex Mono character
-const textW = (s, mono = false) => String(s).length * (mono ? MONO : CHAR);
 const BADGE = 26; // letter badge plus its gap
+// On a phone a chart is drawn narrower and shown larger, so its smallest text (12px) reads at 16px or more.
+const PHONE = 440;
+const ZOOM = 1.35; // 12px x 1.35 = 16.2px; exactly 16/12 rounds to 15.99px
 
-const exportsById = {};
 let drawToken = 0;
 
 function niceStep(span, target) {
@@ -20,13 +22,40 @@ function niceStep(span, target) {
   return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p;
 }
 function linearTicks(max, target) {
-  const step = niceStep(max, target);
+  // An axis of zeros still needs a span: a zero step would never reach the end.
+  const step = niceStep(max > 0 && Number.isFinite(max) ? max : 1, target);
   const ticks = [];
   for (let v = 0; v <= max + step * 0.999; v += step) ticks.push(Number(v.toFixed(10)));
   return ticks;
 }
-
-// Fewest decimals that show every tick exactly.
+// Width of a 12px tick label, measured on Instrument Sans: digits 7.6px, a dot 3.1, a space 2.4.
+const tickW = (s) => [...String(s)].reduce((sum, ch) => sum + (/\d/.test(ch) ? 7.6 : ch === '.' ? 3.1 : ch === ' ' ? 2.4 : 7), 0);
+// Ticks for an axis of this width. The first label starts at the axis start, the last ends at its end,
+// the others are centred; no two labels come closer than 6px. About one tick per 90px, more when the
+// last tick would leave a third of the axis empty. label(v, ticks) is the text the chart draws.
+function fitTicks(max, width, label) {
+  const fits = (ticks) => {
+    const top = ticks[ticks.length - 1] || 1;
+    let end = -Infinity;
+    return ticks.every((v, i) => {
+      const x = (v / top) * width;
+      const lw = tickW(label(v, ticks));
+      const left = i === 0 ? x : i === ticks.length - 1 ? x - lw : x - lw / 2;
+      const ok = left >= end + 6;
+      end = left + lw;
+      return ok;
+    });
+  };
+  let target = Math.max(2, Math.floor(width / 90));
+  let ticks = linearTicks(max, target);
+  while (!fits(ticks) && target > 1) ticks = linearTicks(max, --target);
+  while (ticks[ticks.length - 1] > max * 1.3 && target < 40) {
+    const next = linearTicks(max, ++target);
+    if (!fits(next)) break;
+    ticks = next;
+  }
+  return ticks;
+}
 function decimalsFor(values) {
   for (let d = 0; d <= 6; d += 1) if (values.every((v) => Math.abs(Number(v.toFixed(d)) - v) < 1e-12)) return d;
   return 6;
@@ -46,8 +75,7 @@ function wrap(text, maxChars) {
   return lines;
 }
 
-// Full identities on separate lines: model first, then harness/effort. Never
-// truncate two configurations of the same model to an indistinguishable name.
+// Model on the first line, harness and effort on the next: two setups of one model never read the same.
 function identityLines(c, name, maxW) {
   const model = c.display_name || name;
   const detail = name.startsWith(`${model} · `) ? name.slice(model.length + 3) : c.harness.name;
@@ -59,11 +87,8 @@ function identityLines(c, name, maxW) {
 const svgStart = (w, h, label) => `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(label)}">`;
 const t = (x, y, cls, text, anchor = 'start') => `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" class="${cls}" text-anchor="${anchor}">${esc(text)}</text>`;
 const line = (x1, y1, x2, y2, cls) => `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" class="${cls}"/>`;
-
-// The letter badge, drawn with its top-left corner at (x, y).
 const badge = (x, y, letter) => `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="19" height="19" rx="5" class="chart-lt-bg"/>${t(x + 9.5, y + 13.4, 'chart-lt', letter || '?', 'middle')}`;
 
-// One configuration label, wrapping at word boundaries to its allotted width.
 function nameLabel(x, y, c, name, maxW, best = false) {
   const lines = identityLines(c, name, maxW);
   return `<g class="chart-identity">${badge(x, y - 14, letterOf(c.id))}${lines.map((s, i) => t(x + BADGE, y + i * LH, best ? 'chart-text chart-best' : 'chart-text', s)).join('')}</g>`;
@@ -89,24 +114,20 @@ function rowLayout(rows, labelW, extra, minHeight = 0) {
   return { layout, height };
 }
 
-function emptyChart(message) {
-  return { svg: null, message };
-}
+const pct = (v) => `${Math.round(v * 100)}%`;
 
-// ---- Quality vs cost ----------------------------------------------------------------------------
-function drawScatter(w, cfgs, names) {
+// ---- Passed against price -------------------------------------------------------------------------
+function drawPrice(w, cfgs, names, marks) {
   const items = [];
   const skipped = [];
+  // The share passed is the table's: passed of the decided tries, so a try with no answer counts as not passed.
   cfgs.forEach((c) => {
     const a = aggOf(c.id);
-    if (!a || !isNum(a.mean_quality)) skipped.push(`${letterOf(c.id)} ${names.get(c.id)} (no quality scores)`);
-    else if (!isNum(a.mean_cost_usd)) skipped.push(`${letterOf(c.id)} ${names.get(c.id)} (no cost data)`);
-    else items.push({ c, a, name: names.get(c.id) });
+    const f = facts(a);
+    if (f.rate === null) skipped.push(`${names.get(c.id)} (no checked answers)`);
+    else if (!isNum(a.mean_cost_usd)) skipped.push(`${names.get(c.id)} (no price)`);
+    else items.push({ c, a, name: names.get(c.id), q: f.rate, ci: wilson(f.passed, f.decided) });
   });
-  const n = items.reduce((s, i) => s + (i.a.scored_n || 0), 0);
-  const meta = { n: `n = ${n} scored observation${n === 1 ? '' : 's'} across ${items.length} configuration${items.length === 1 ? '' : 's'}`, note: skipped.length ? `Not plotted: ${skipped.join('; ')}.` : '', csv: [['configuration', 'mean_cost_usd_per_observation', 'mean_quality', 'quality_ci_low', 'quality_ci_high', 'scored_n']].concat(items.map((i) => [i.name, i.a.mean_cost_usd, i.a.mean_quality, i.a.quality_ci ? i.a.quality_ci[0] : null, i.a.quality_ci ? i.a.quality_ci[1] : null, i.a.scored_n])) };
-  if (!items.length) return { ...emptyChart('Nothing to plot. A point needs a mean quality and a mean cost; both come from scored runs with token pricing.'), meta };
-
   const costs = items.map((i) => i.a.mean_cost_usd);
   const minC = Math.min(...costs);
   const maxC = Math.max(...costs);
@@ -126,42 +147,35 @@ function drawScatter(w, cfgs, names) {
     for (let k = lo; k <= hi; k += 1) xTicks.push(10 ** k);
     while (xTicks.length > Math.max(2, Math.floor(pw / 84))) xTicks = xTicks.filter((_, i) => i % 2 === 0);
   } else {
-    const ticks = linearTicks(maxC * 1.08 || 1, Math.max(2, Math.floor(pw / 90)));
+    const ticks = fitTicks(maxC * 1.08 || 1, pw, (v, all) => `$${v.toFixed(decimalsFor(all))}`);
     const top = ticks[ticks.length - 1] || 1;
     xOf = (v) => m.l + (v / top) * pw;
     xTicks = ticks;
   }
-  const tickD = decimalsFor(xTicks);
+  // A log axis spans powers of ten, so each tick keeps its own decimals: "$0.000001" and "$0.01".
+  const tickText = (v) => `$${v.toFixed(decimalsFor(logScale ? [v] : xTicks))}`;
   const yOf = (v) => m.t + (1 - clamp(v, 0, 1)) * ph;
-  const bestQ = Math.max(...items.map((i) => i.a.mean_quality));
-  const bestItems = items.filter((i) => i.a.mean_quality === bestQ && items.some((o) => o.a.mean_quality !== bestQ));
-  const bestCost = bestItems.length ? Math.min(...bestItems.map((i) => i.a.mean_cost_usd)) : null;
-  const best = new Set(bestItems.filter((i) => i.a.mean_cost_usd === bestCost).map((i) => i.c.id));
-
+  const best = new Set(items.filter((i) => marks.passed.has(i.c.id)).map((i) => i.c.id));
   const legend = rowLayout(items, w, 12);
-  let g = svgStart(w, h + 16 + legend.height, `Quality against mean cost per observation for ${items.length} configurations`);
-  g += t(0, 11, 'chart-axis-text', 'quality');
+  let g = svgStart(w, h + 16 + legend.height, `Share passed against API price per try for ${items.length} setups`);
+  g += t(0, 11, 'chart-axis-text', 'passed');
   [0, 0.25, 0.5, 0.75, 1].forEach((v) => {
     g += line(m.l, yOf(v), w - m.r, yOf(v), 'chart-line');
-    g += t(m.l - 8, yOf(v) + 4, 'chart-axis-text', v.toFixed(2), 'end');
+    g += t(m.l - 8, yOf(v) + 4, 'chart-axis-text', pct(v), 'end');
   });
   xTicks.forEach((v) => {
     const x = xOf(v);
     g += line(x, m.t + ph, x, m.t + ph + 4, 'chart-line-dark');
-    g += t(x, m.t + ph + 18, 'chart-axis-text', `$${v.toFixed(tickD)}`, x < m.l + 24 ? 'start' : x > w - 30 ? 'end' : 'middle');
+    g += t(x, m.t + ph + 18, 'chart-axis-text', tickText(v), x < m.l + 24 ? 'start' : x > w - 30 ? 'end' : 'middle');
   });
-  g += t(w - m.r, h - 4, 'chart-axis-text', `Mean cost / observation (USD${logScale ? ', log' : ''})`, 'end');
-
-  // Keep names in the legend, outside the plotting area. Callout letters avoid
-  // both points AND the full confidence whiskers, not just the point centres.
-  const marks = items.map((i) => {
-    const q = i.a.quality_ci || [i.a.mean_quality, i.a.mean_quality];
-    return { x: xOf(i.a.mean_cost_usd) - 7, y: Math.min(yOf(q[1]), yOf(i.a.mean_quality)) - 7, w: 14, h: Math.abs(yOf(q[0]) - yOf(q[1])) + 14 };
+  g += t(w - m.r, h - 4, 'chart-axis-text', 'API price per try (USD)', 'end');
+  // Letters sit beside their points and avoid the points and the full whiskers.
+  const markBoxes = items.map((i) => {
+    const q = i.ci || [i.q, i.q];
+    return { x: xOf(i.a.mean_cost_usd) - 7, y: Math.min(yOf(q[1]), yOf(i.q)) - 7, w: 14, h: Math.abs(yOf(q[0]) - yOf(q[1])) + 14 };
   });
   const hit = (a, b, pad = 3) => a.x < b.x + b.w + pad && b.x < a.x + a.w + pad && a.y < b.y + b.h + pad && b.y < a.y + a.h + pad;
-  const blocks = items.map((i, k) => {
-    return { i, k, bw: 20, bh: 20, px: xOf(i.a.mean_cost_usd), py: yOf(i.a.mean_quality) };
-  });
+  const blocks = items.map((i) => ({ i, bw: 20, bh: 20, px: xOf(i.a.mean_cost_usd), py: yOf(i.q) }));
   blocks.sort((a, b) => a.py - b.py || a.px - b.px);
   const placed = [];
   blocks.forEach((b) => {
@@ -173,24 +187,24 @@ function drawScatter(w, cfgs, names) {
     for (const dy of shifts) {
       for (const right of sides) {
         const rect = { x: right ? b.px + 10 : b.px - 10 - b.bw, y: b.py - b.bh / 2 + dy, w: b.bw, h: b.bh };
-        const inside = rect.x >= 2 && rect.x + rect.w <= w - 2 && rect.y >= m.t - 12 && rect.y + rect.h <= m.t + ph + 6;
+        const inside = rect.x >= m.l + 2 && rect.x + rect.w <= w - 2 && rect.y >= m.t - 12 && rect.y + rect.h <= m.t + ph + 6;
         if (!inside) continue;
-        const clash = placed.filter((p) => hit(rect, p)).length * 2 + marks.filter((mk) => hit(rect, mk, 0)).length;
-        if (!fallback || clash < fallback.clash) fallback = { rect, right, dy, clash };
-        if (!placed.some((p) => hit(rect, p)) && !marks.some((mk) => hit(rect, mk, 0))) {
-          pick = { rect, right, dy };
+        const clash = placed.filter((p) => hit(rect, p)).length * 2 + markBoxes.filter((mk) => hit(rect, mk, 0)).length;
+        if (!fallback || clash < fallback.clash) fallback = { rect, right, clash };
+        if (!placed.some((p) => hit(rect, p)) && !markBoxes.some((mk) => hit(rect, mk, 0))) {
+          pick = { rect, right };
           break;
         }
       }
       if (pick) break;
     }
-    pick = pick || fallback || { rect: { x: b.px + 10, y: b.py - b.bh / 2, w: b.bw, h: b.bh }, right: true, dy: 0 };
+    pick = pick || fallback || { rect: { x: b.px + 10, y: b.py - b.bh / 2, w: b.bw, h: b.bh }, right: true };
     b.rect = pick.rect;
     b.right = pick.right;
     placed.push(pick.rect);
   });
   blocks.forEach((b) => {
-    const q = b.i.a.quality_ci;
+    const q = b.i.ci;
     if (!q) return;
     const cls = best.has(b.i.c.id) ? 'chart-whisker-best' : 'chart-whisker';
     g += line(b.px, yOf(q[0]), b.px, yOf(q[1]), cls) + line(b.px - 4, yOf(q[0]), b.px + 4, yOf(q[0]), cls) + line(b.px - 4, yOf(q[1]), b.px + 4, yOf(q[1]), cls);
@@ -203,82 +217,63 @@ function drawScatter(w, cfgs, names) {
     g += `<circle cx="${b.px.toFixed(1)}" cy="${b.py.toFixed(1)}" r="5" class="${isBest ? 'chart-mark-best' : 'chart-mark'}"/>`;
     g += `<g class="chart-callout">${badge(b.rect.x, b.rect.y, letterOf(b.i.c.id))}</g>`;
   });
-
   items.forEach((i, k) => { g += nameLabel(0, h + 30 + legend.layout[k].y, i.c, i.name, w, best.has(i.c.id)); });
-
   g += '</svg>';
-  return { svg: g, meta, note: 'Whiskers show the 95% interval of mean quality when a configuration has 3 or more scored observations. Up and to the left is better.' };
+  const note = `Up and to the left is better: more passed for less money. Whiskers show the likely range.${logScale ? ' The price axis is a log scale: each step is 10 times the one before.' : ''}${skipped.length ? ` Not drawn: ${skipped.join('; ')}.` : ''}`;
+  return { svg: g, note };
 }
 
-// ---- Latency ------------------------------------------------------------------------------------
-function drawLatency(w, cfgs, names) {
-  const model = S.lat === 'model';
-  const pick = (a) => (model ? { p50: a.p50_model_latency_ms, p95: a.p95_model_latency_ms } : { p50: a.p50_latency_ms, p95: a.p95_latency_ms });
+// ---- Time per try -----------------------------------------------------------------------------------
+function drawTime(w, cfgs, names, marks) {
   const rows = cfgs.map((c) => {
-    const a = aggOf(c.id);
-    const v = a ? pick(a) : { p50: null, p95: null };
-    return { c, a, name: names.get(c.id), ...v };
+    const a = aggOf(c.id) || {};
+    return { c, name: names.get(c.id), p50: isNum(a.p50_latency_ms) ? a.p50_latency_ms : null, p95: isNum(a.p95_latency_ms) ? a.p95_latency_ms : null, n: a.latency_n || 0 };
   });
-  const have = rows.filter((r) => isNum(r.p50));
-  const n = model ? null : rows.reduce((s, r) => s + (r.a && isNum(r.a.latency_n) ? r.a.latency_n : 0), 0);
-  const meta = {
-    n: model ? 'Model request time, successful calls only. n is not reported per configuration.' : `n = ${n} successful call${n === 1 ? '' : 's'} across ${have.length} configuration${have.length === 1 ? '' : 's'}. Failed calls are excluded.`,
-    csv: [['configuration', 'mode', 'p50_ms', 'p95_ms', 'latency_n']].concat(rows.map((r) => [r.name, model ? 'model request' : 'harness end-to-end', r.p50, r.p95, r.a ? r.a.latency_n : null])),
-  };
-  if (!have.length) return { ...emptyChart(model ? 'No model request times. This harness did not report them; switch to harness end-to-end.' : 'No latency data for the selected configurations.'), meta };
-  const maxV = Math.max(...have.map((r) => (isNum(r.p95) ? r.p95 : r.p50)));
+  const have = rows.filter((r) => r.p50 !== null);
+  const maxV = Math.max(...have.map((r) => (r.p95 !== null ? r.p95 : r.p50)));
   const f = frame(w);
-  const { layout, height } = rowLayout(rows, f.stacked ? w : f.labelW, f.stacked ? 62 : 34);
+  const { layout, height } = rowLayout(rows, f.stacked ? w : f.labelW, f.stacked ? 62 + LH : 18, f.stacked ? 0 : 56);
   const h = height + 26;
-  const ticks = linearTicks(maxV * 1.05, Math.max(2, Math.floor(f.pw / 90)));
+  // Ticks in one unit: minutes from 2 minutes up, seconds from 2 seconds up, else milliseconds.
+  const unit = maxV >= 120000 ? { ms: 60000, word: 'min' } : maxV >= 2000 ? { ms: 1000, word: 's' } : { ms: 1, word: 'ms' };
+  const ticks = fitTicks((maxV * 1.05) / unit.ms, f.pw, (v, all) => `${v.toFixed(decimalsFor(all))} ${unit.word}`).map((v) => v * unit.ms);
+  const tickD = decimalsFor(ticks.map((v) => v / unit.ms));
   const top = ticks[ticks.length - 1] || 1;
   const xOf = (v) => f.px + (v / top) * f.pw;
-  const bestP50 = have.length > 1 ? Math.min(...have.map((r) => r.p50)) : null;
-  const allEqual = have.every((r) => r.p50 === have[0].p50);
-  let g = svgStart(w, h, `${model ? 'Model request' : 'Harness end-to-end'} latency, p50 to p95, per configuration`);
+  let g = svgStart(w, h, 'Typical time and slow end per setup');
   ticks.forEach((v) => {
     const x = xOf(v);
     g += line(x, 0, x, height, 'chart-line');
-    g += t(x, height + 17, 'chart-axis-text', v === 0 ? '0 s' : msText(v), v === 0 ? 'start' : x > w - 30 ? 'end' : 'middle');
+    g += t(x, height + 17, 'chart-axis-text', `${(v / unit.ms).toFixed(tickD)} ${unit.word}`, v === 0 ? 'start' : x > w - 30 ? 'end' : 'middle');
   });
   rows.forEach((r, k) => {
     const { y, labelH } = layout[k];
-    const isBest = bestP50 !== null && !allEqual && r.p50 === bestP50;
-    const values = isNum(r.p50) ? `p50 ${msText(r.p50)} · p95 ${isNum(r.p95) ? msText(r.p95) : NA}` : (model ? 'not reported' : 'no successful calls');
-    if (f.stacked) {
-      g += nameLabel(0, y + 16, r.c, r.name, w, isBest);
-      g += t(BADGE, y + labelH + 18, 'chart-num', values);
-    } else {
-      g += nameLabel(0, y + 18, r.c, r.name, f.labelW, isBest);
-      g += t(BADGE, y + labelH + 18, 'chart-num', values);
-    }
-    if (!isNum(r.p50)) return;
-    const hi = isNum(r.p95) ? r.p95 : r.p50;
-    const cy = f.stacked ? y + labelH + 40 : y + labelH / 2;
+    const isBest = marks.time.has(r.c.id);
+    const spread = r.p95 !== null && r.n > 1 && r.p95 !== r.p50;
+    const values = r.p50 === null ? ['no answer to time'] : spread ? [`typical ${durText(r.p50)}`, `slow end ${durText(r.p95)}`] : [`typical ${durText(r.p50)}`];
+    g += nameLabel(0, y + (f.stacked ? 16 : 18), r.c, r.name, f.stacked ? w : f.labelW, isBest);
+    // Stacked (a phone): one value per line. Wide: one line beside the plot.
+    if (f.stacked) values.forEach((v, i) => { g += t(BADGE, y + labelH + 18 + i * LH, 'chart-num', v); });
+    else g += t(f.px, y + 38, 'chart-num', values.join(' · '));
+    if (r.p50 === null) return;
+    const hi = spread ? r.p95 : r.p50;
+    const cy = f.stacked ? y + labelH + 40 + LH : y + 13;
     g += line(xOf(r.p50), cy, xOf(hi), cy, isBest ? 'chart-range-best' : 'chart-range');
-    // The p95 ring goes first, so a p50 dot close to it stays visible on top.
     if (hi !== r.p50) g += `<circle cx="${xOf(hi).toFixed(1)}" cy="${cy}" r="5" class="${isBest ? 'chart-ring-best' : 'chart-ring'}"/>`;
     g += `<circle cx="${xOf(r.p50).toFixed(1)}" cy="${cy}" r="5" class="${isBest ? 'chart-mark-best' : 'chart-mark'}"/>`;
   });
   g += '</svg>';
-  return { svg: g, meta, note: 'Filled dot: p50. Open dot: p95. The line between them is the typical spread. Left is faster.' };
+  return { svg: g, note: 'Dot: typical time, half the tries were faster. Ring: slow end, 1 try in 20 was slower. Left is faster.' };
 }
 
-// ---- Tokens -------------------------------------------------------------------------------------
+// ---- Tokens per try --------------------------------------------------------------------------------
 function drawTokens(w, cfgs, names) {
   const rows = cfgs.map((c) => ({ c, a: aggOf(c.id), name: names.get(c.id) }));
   const metrics = [
-    { key: 'mean_input_tokens', label: 'input' },
-    { key: 'mean_cache_read_tokens', label: 'cache read' },
-    { key: 'mean_output_tokens', label: 'output' },
+    { key: 'mean_input_tokens', label: 'in' },
+    { key: 'mean_cache_read_tokens', label: 'from cache' },
+    { key: 'mean_output_tokens', label: 'out' },
   ];
-  const n = rows.reduce((s, r) => s + (r.a && isNum(r.a.ok_n) ? r.a.ok_n : 0), 0);
-  const have = rows.filter((r) => r.a && isNum(r.a.mean_input_tokens));
-  const meta = {
-    n: `n = ${n} successful call${n === 1 ? '' : 's'} across ${have.length} configuration${have.length === 1 ? '' : 's'}`,
-    csv: [['configuration', 'mean_input_tokens', 'mean_cache_read_tokens', 'mean_cache_write_tokens', 'mean_output_tokens']].concat(rows.map((r) => [r.name, r.a && r.a.mean_input_tokens, r.a && r.a.mean_cache_read_tokens, r.a && r.a.mean_cache_write_tokens, r.a && r.a.mean_output_tokens])),
-  };
-  if (!have.length) return { ...emptyChart('No token counts for the selected configurations.'), meta };
   const maxOf = Object.fromEntries(metrics.map((mt) => [mt.key, Math.max(0, ...rows.map((r) => (r.a && isNum(r.a[mt.key]) ? r.a[mt.key] : 0)))]));
   const f = frame(w);
   const bar = (x, y, bw, v, key) => {
@@ -286,12 +281,13 @@ function drawTokens(w, cfgs, names) {
     if (isNum(v) && maxOf[key] > 0) s += `<rect x="${x.toFixed(1)}" y="${y}" width="${Math.max(v > 0 ? 3 : 0, (v / maxOf[key]) * bw).toFixed(1)}" height="6" rx="3" class="chart-bar"/>`;
     return s;
   };
+  const val = (v) => (isNum(v) ? tokText(v) : '–');
   let g;
   if (f.stacked) {
     const { layout, height } = rowLayout(rows, w, metrics.length * 22 + 18);
-    const lw = 76;
+    const lw = 84;
     const vw = 56;
-    g = svgStart(w, height, 'Mean input, cache read and output tokens per call, each on its own scale');
+    g = svgStart(w, height, 'Tokens in, from cache and out per try, each on its own scale');
     rows.forEach((r, k) => {
       const { y, labelH } = layout[k];
       g += nameLabel(0, y + 16, r.c, r.name, w);
@@ -300,7 +296,7 @@ function drawTokens(w, cfgs, names) {
         const v = r.a ? r.a[mt.key] : null;
         g += t(0, by + 11, 'chart-axis-text', mt.label);
         g += bar(lw, by + 4, Math.max(30, w - lw - vw - 8), v, mt.key);
-        g += t(w, by + 11, 'chart-num', isNum(v) ? tokText(v) : NA, 'end');
+        g += t(w, by + 11, 'chart-num', val(v), 'end');
       });
     });
   } else {
@@ -308,7 +304,7 @@ function drawTokens(w, cfgs, names) {
     const { layout, height } = rowLayout(rows, f.labelW, 18);
     const gap = 18;
     const colW = (w - f.px - gap * (metrics.length - 1)) / metrics.length;
-    g = svgStart(w, headH + height, 'Mean input, cache read and output tokens per call, each on its own scale');
+    g = svgStart(w, headH + height, 'Tokens in, from cache and out per try, each on its own scale');
     metrics.forEach((mt, j) => { g += t(f.px + j * (colW + gap), 12, 'chart-axis-text', mt.label); });
     g += line(0, headH - 4, w, headH - 4, 'chart-line');
     rows.forEach((r, k) => {
@@ -317,31 +313,25 @@ function drawTokens(w, cfgs, names) {
       metrics.forEach((mt, j) => {
         const x = f.px + j * (colW + gap);
         const v = r.a ? r.a[mt.key] : null;
-        g += t(x, y + 18, 'chart-num', isNum(v) ? tokText(v) : NA);
+        g += t(x, y + 18, 'chart-num', val(v));
         g += bar(x, y + 25, colW, v, mt.key);
       });
     });
   }
   g += '</svg>';
-  return { svg: g, meta, note: 'Each token type has its own scale, so compare bars within one column only. Input counts every prompt token, cached ones included.' };
+  return { svg: g, note: 'Each kind has its own scale: compare bars within one column. Tokens in count every prompt token, cached ones too.' };
 }
 
-// ---- Reliability --------------------------------------------------------------------------------
-function drawReliability(w, cfgs, names) {
+// ---- Consistency --------------------------------------------------------------------------------
+function drawConsistency(w, cfgs, names) {
   const rows = cfgs.map((c) => ({ c, a: aggOf(c.id), name: names.get(c.id) }));
   const firm = rows.filter((r) => r.a && r.a.reliability_sufficient && isNum(r.a.reliability_agreement));
-  const n = rows.reduce((s, r) => s + (r.a && isNum(r.a.reliability_cases) ? r.a.reliability_cases : 0), 0);
-  const meta = {
-    n: `n = ${n} case${n === 1 ? '' : 's'} with repeats across ${firm.length} configuration${firm.length === 1 ? '' : 's'}`,
-    csv: [['configuration', 'reliability_agreement', 'reliability_cases', 'repeats', 'sufficient']].concat(rows.map((r) => [r.name, r.a && r.a.reliability_agreement, r.a && r.a.reliability_cases, r.a && r.a.repeats, r.a && r.a.reliability_sufficient])),
-  };
-  if (!rows.length) return { ...emptyChart('No configurations selected.'), meta };
   const valueW = 48;
   const f = frame(w, valueW);
   const { layout, height } = rowLayout(rows, f.stacked ? w : f.labelW, f.stacked ? 36 : 18);
   const top = firm.length > 1 ? Math.max(...firm.map((r) => r.a.reliability_agreement)) : null;
   const allEqual = firm.every((r) => r.a.reliability_agreement === firm[0].a.reliability_agreement);
-  let g = svgStart(w, height, 'Agreement across repeats per configuration');
+  let g = svgStart(w, height, 'How often the tries of one case agreed, per setup');
   rows.forEach((r, k) => {
     const { y, labelH } = layout[k];
     const ok = firm.includes(r);
@@ -352,33 +342,28 @@ function drawReliability(w, cfgs, names) {
       const v = clamp(r.a.reliability_agreement, 0, 1);
       g += `<rect x="${f.px}" y="${by}" width="${f.pw.toFixed(1)}" height="8" rx="4" class="chart-track"/>`;
       g += `<rect x="${f.px}" y="${by}" width="${Math.max(4, v * f.pw).toFixed(1)}" height="8" rx="4" class="${isBest ? 'chart-bar-best' : 'chart-bar'}"/>`;
-      g += t(w, by + 8, isBest ? 'chart-num chart-best' : 'chart-num', fixed(r.a.reliability_agreement, 2), 'end');
+      g += t(w, by + 8, isBest ? 'chart-num chart-best' : 'chart-num', pct(r.a.reliability_agreement), 'end');
     } else {
-      g += t(f.px, by + 8, 'chart-num', 'insufficient repeats');
+      g += t(f.px, by + 8, 'chart-num', 'too few tries');
     }
   });
   g += '</svg>';
-  return { svg: g, meta, note: 'Agreement across repeats of the same case: 1.00 means every repeat gave the same outcome. It needs 2 or more repeats of at least 1 case. Higher is better.' };
+  return { svg: g, note: 'How often the tries of one case gave the same result. 100% means every try agreed.' };
 }
 
-// ---- Errors -------------------------------------------------------------------------------------
-function drawErrors(w, cfgs, names) {
+// ---- Outcomes -----------------------------------------------------------------------------------
+function drawOutcomes(w, cfgs, names) {
   const count = (v) => (isNum(v) ? v : 0);
   const rows = cfgs.map((c) => {
-    const a = aggOf(c.id);
-    return { c, a, name: names.get(c.id), total: a ? count(a.n) : 0, err: a ? count(a.errors_n) : 0, uns: a ? count(a.unscored_n) : 0, ok: a ? count(a.scored_n) : 0 };
+    const a = aggOf(c.id) || {};
+    const passed = count(a.passed_n);
+    return { c, name: names.get(c.id), total: count(a.n), passed, failed: count(a.scored_n) - passed, err: count(a.errors_n), uns: count(a.unscored_n) };
   });
-  const n = rows.reduce((s, r) => s + r.total, 0);
-  const meta = {
-    n: `n = ${n} attempt${n === 1 ? '' : 's'} across ${rows.length} configuration${rows.length === 1 ? '' : 's'}. The denominator is every attempt, failures included.`,
-    csv: [['configuration', 'attempts', 'ok_scored', 'error', 'unscored']].concat(rows.map((r) => [r.name, r.total, r.ok, r.err, r.uns])),
-  };
-  if (!rows.length || !n) return { ...emptyChart('No attempts recorded for the selected configurations.'), meta };
-  const countText = (r) => `${r.ok} scored · ${r.err} error · ${r.uns} unscored`;
-  const valueW = Math.ceil(Math.max(...rows.map((r) => textW(countText(r), true)))) + 8;
+  const words = (r) => [`${r.passed} passed`, r.failed ? `${r.failed} failed` : null, r.err ? `${r.err} no answer` : null, r.uns ? `${r.uns} not checked` : null].filter(Boolean).join(' · ');
+  const valueW = Math.ceil(Math.max(...rows.map((r) => words(r).length * CHAR))) + 8;
   const f = frame(w, valueW);
   const { layout, height } = rowLayout(rows, f.stacked ? w : f.labelW, f.stacked ? 58 : 18);
-  let g = svgStart(w, height, 'Outcome counts per configuration: scored, error, unscored');
+  let g = svgStart(w, height, 'Every try per setup: passed, failed, no answer, not checked');
   g += '<defs><pattern id="hatch-uns" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="5" height="5" class="chart-hatch-bg"/><line x1="0" y1="0" x2="0" y2="5" class="chart-hatch-line"/></pattern></defs>';
   rows.forEach((r, k) => {
     const { y, labelH } = layout[k];
@@ -394,64 +379,66 @@ function drawErrors(w, cfgs, names) {
         g += `<rect x="${x.toFixed(1)}" y="${by}" width="${sw.toFixed(1)}" height="10" class="${cls}"${extra}/>`;
         x += sw;
       };
-      seg(r.ok, 'chart-bar');
+      seg(r.passed, 'chart-mark');
+      seg(r.failed, 'chart-bar');
       seg(r.err, 'chart-error');
       seg(r.uns, 'chart-hatch-rect', ' fill="url(#hatch-uns)"');
     }
-    g += `<text x="${f.stacked ? 0 : w}" y="${f.stacked ? y + labelH + 18 : y + labelH / 2 + 9}" class="chart-num" text-anchor="${f.stacked ? 'start' : 'end'}">${r.ok} scored · <tspan class="${r.err ? 'chart-num chart-error-text' : 'chart-num'}">${r.err} error</tspan> · ${r.uns} unscored</text>`;
+    g += t(f.stacked ? 0 : w, f.stacked ? y + labelH + 18 : y + labelH / 2 + 9, r.err ? 'chart-num chart-error-text' : 'chart-num', words(r), f.stacked ? 'start' : 'end');
   });
   g += '</svg>';
-  const legend = html`<div class="chart-legend"><span><span class="swatch"></span>scored</span><span><span class="swatch swatch-error"></span>error</span><span><span class="swatch swatch-unscored"></span>unscored</span></div>`;
-  return { svg: g, meta, note: 'Each bar shows all attempts for one configuration. An error is a failed call; unscored means no evaluator verdict.', after: legend };
+  const legend = html`<div class="chart-legend"><span><span class="key-swatch key-swatch-pass"></span>passed</span><span><span class="key-swatch"></span>failed</span><span><span class="key-swatch key-swatch-error"></span>no answer</span><span><span class="key-swatch key-swatch-unscored"></span>not checked</span></div>`;
+  return { svg: g, note: 'Every try of each setup.', after: legend };
 }
 
+const timed = (s) => s.facts.time !== null;
+const priced = (s) => { const a = aggOf(s.id); return Boolean(a && isNum(a.mean_cost_usd) && s.facts.rate !== null); };
+const steady = (s) => { const a = aggOf(s.id); return Boolean(a && a.reliability_sufficient); };
+const tokened = (s) => { const a = aggOf(s.id); return Boolean(a && isNum(a.mean_input_tokens)); };
+
+// main: the chart carries a result on its own. any: it has something to draw at all.
 const CHARTS = [
-  { id: 'scatter', title: 'Quality against cost', draw: drawScatter, file: 'quality-vs-cost', overview: true },
-  { id: 'latency', title: 'Latency', draw: drawLatency, file: 'latency', toggle: true, overview: true },
-  { id: 'tokens', title: 'Tokens per call', draw: drawTokens, file: 'tokens' },
-  { id: 'reliability', title: 'Reliability', draw: drawReliability, file: 'reliability' },
-  { id: 'errors', title: 'Errors', draw: drawErrors, file: 'errors', wide: true },
+  { id: 'time', title: 'Time per try', draw: drawTime, main: (l) => l.filter(timed).length >= 2, any: (l) => l.some(timed) },
+  { id: 'price', title: 'Passed against price', draw: drawPrice, main: (l) => l.filter(priced).length >= 2, any: (l) => l.some(priced) },
+  { id: 'consistency', title: 'Consistency', draw: drawConsistency, main: (l, c) => c.repeats >= 2 && new Set(l.filter(steady).map((s) => aggOf(s.id).reliability_agreement)).size >= 2, any: (l, c) => c.repeats >= 2 && l.some(steady) },
+  { id: 'tokens', title: 'Tokens per try', draw: drawTokens, main: () => false, any: (l) => l.some(tokened) },
+  { id: 'outcomes', title: 'Outcomes', draw: drawOutcomes, main: () => false, any: (l) => l.some((s) => s.facts.tries > 0) },
 ];
 
-// The Overview shows the two charts that answer "which is best for the money". The Charts view shows all five.
-function chartHost() {
-  if (S.view === 'overview') return { host: document.getElementById('charts-body'), list: CHARTS.filter((ch) => ch.overview), other: document.getElementById('charts-all') };
-  if (S.view === 'charts') return { host: document.getElementById('charts-all'), list: CHARTS, other: document.getElementById('charts-body') };
-  return null;
+export function chartPlan(list = shownSetups(), c = ctx()) {
+  if (!c || !list.length) return { main: [], more: [] };
+  const main = CHARTS.filter((ch) => ch.main(list, c));
+  const more = CHARTS.filter((ch) => !main.includes(ch) && ch.any(list, c));
+  return { main, more };
 }
 
+const card = (ch) => html`<section class="chart-card" id="chart-${ch.id}" aria-labelledby="chart-${ch.id}-h">
+  <h3 class="chart-h" id="chart-${ch.id}-h">${ch.title}</h3>
+  <div class="chart chart-body" data-slot="body"></div>
+  <p class="chart-note" data-slot="note"></p>
+</section>`;
+
 export function renderCharts() {
-  const target = chartHost();
-  if (!target) return;
-  const { host, list, other } = target;
-  if (other) other.innerHTML = '';
-  const c = ctx();
+  const sect = document.getElementById('charts-sect');
+  const main = document.getElementById('charts-main');
+  const more = document.getElementById('charts-more');
+  const moreBody = document.getElementById('charts-more-body');
+  if (!sect) return;
+  const plan = chartPlan();
+  sect.hidden = !plan.main.length && !plan.more.length;
+  if (sect.hidden) return;
+  main.hidden = !plan.main.length;
+  more.hidden = !plan.more.length;
+  const label = document.getElementById('charts-more-label');
+  if (label) setHtml(label, html`${plan.main.length ? 'More charts' : 'All charts'} <span class="count">${plan.more.length}</span>`);
+  setHtml(main, html`${plan.main.map(card)}`);
+  const open = more.open && plan.more.length > 0;
+  setHtml(moreBody, open ? html`${plan.more.map(card)}` : '');
+  const list = [...plan.main, ...(open ? plan.more : [])];
   const cfgs = selectedCfgs();
-  if (!c) {
-    setHtml(host, html`<div class="empty chart-wide">No runs yet. Run <code>node lab run experiments/smoke-harness-sweep.yaml</code>, then Refresh.</div>`);
-    return;
-  }
-  if (!cfgs.length) {
-    setHtml(host, html`<div class="empty chart-wide">No configurations selected. Add configurations to the lineup to draw the charts.</div>`);
-    return;
-  }
-  const token = ++drawToken;
   const names = chartNames(cfgs);
-  const shell = list.map((ch) => html`<section class="chart${ch.wide ? ' chart-wide' : ''}" id="chart-${ch.id}" aria-labelledby="chart-${ch.id}-h">
-    <div class="chart-head">
-      <div class="chart-title"><h3 id="chart-${ch.id}-h">${ch.title}</h3><span class="chart-n" data-slot="n"></span></div>
-      <div class="chart-tools">
-        <button type="button" class="link-btn" data-act="chart-svg" data-chart="${ch.id}" data-fk="chart:${ch.id}:svg" aria-label="Download ${ch.title} as SVG">SVG</button>
-        <button type="button" class="link-btn" data-act="chart-csv" data-chart="${ch.id}" data-fk="chart:${ch.id}:csv" aria-label="Download ${ch.title} as CSV">CSV</button>
-      </div>
-    </div>
-    ${ch.toggle ? html`<div class="chart-toggle" role="group" aria-label="Latency measure">
-      <button type="button" class="ctl" data-act="lat" data-lat="harness" data-fk="lat:harness" aria-pressed="${String(S.lat === 'harness')}">Harness end-to-end</button>
-      <button type="button" class="ctl" data-act="lat" data-lat="model" data-fk="lat:model" aria-pressed="${String(S.lat === 'model')}">Model request</button></div>` : ''}
-    <div class="chart-body" data-slot="body"></div>
-    <div class="chart-note" data-slot="note"></div>
-  </section>`);
-  setHtml(host, html`${shell}`);
+  const marks = bestMarks(shownSetups());
+  const token = ++drawToken;
   requestAnimationFrame(() => {
     if (token !== drawToken) return;
     list.forEach((ch) => {
@@ -459,19 +446,11 @@ export function renderCharts() {
       if (!fig) return;
       const body = fig.querySelector('[data-slot="body"]');
       const w = Math.max(220, Math.floor(body.clientWidth));
-      const out = ch.draw(w, cfgs, names);
-      exportsById[ch.id] = { csv: out.meta.csv, file: ch.file };
-      fig.querySelector('[data-slot="n"]').textContent = out.meta.n;
-      const noteParts = [out.note, out.meta.note].filter(Boolean).join(' ');
-      fig.querySelector('[data-slot="note"]').textContent = noteParts;
-      if (out.svg) {
-        body.innerHTML = out.svg;
-        if (out.after) body.insertAdjacentHTML('beforeend', String(out.after));
-      } else {
-        body.innerHTML = String(html`<div class="empty">${out.message}</div>`);
-      }
-      const svgBtn = fig.querySelector('[data-act="chart-svg"]');
-      if (svgBtn) svgBtn.disabled = !out.svg;
+      const zoom = w < PHONE ? ZOOM : 1;
+      const out = ch.draw(Math.floor(w / zoom), cfgs, names, marks);
+      body.innerHTML = zoom === 1 ? out.svg : out.svg.replace(/ width="(\d+)" height="(\d+)"/, (_, sw, sh) => ` width="${w}" height="${Math.round((sh * w) / sw)}"`);
+      if (out.after) body.insertAdjacentHTML('beforeend', String(out.after));
+      fig.querySelector('[data-slot="note"]').textContent = out.note || '';
     });
   });
 }
@@ -493,49 +472,4 @@ export function watchChartWidth() {
     timer = setTimeout(renderCharts, 140);
   });
   ro.observe(host);
-}
-
-// ---- Export -------------------------------------------------------------------------------------
-function exportStyle() {
-  const root = getComputedStyle(document.documentElement);
-  const resolve = (s) => s.replace(/var\((--[a-z0-9-]+)\)/g, (_, name) => root.getPropertyValue(name).trim() || '#000');
-  const rules = [];
-  for (const sheet of document.styleSheets) {
-    let list;
-    try {
-      list = sheet.cssRules;
-    } catch {
-      continue;
-    }
-    for (const rule of list) {
-      if (rule.selectorText && /\.chart-(text|num|axis-text|best|line|mark|ring|range|track|bar|error|hatch|whisker|lt)/.test(rule.selectorText)) rules.push(resolve(rule.cssText));
-    }
-  }
-  return rules.join('\n');
-}
-
-export function chartSvgString(id) {
-  const svg = document.querySelector(`#chart-${id} svg`);
-  if (!svg) return null;
-  const clone = svg.cloneNode(true);
-  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-  const bg = getComputedStyle(document.documentElement).getPropertyValue('--paper-raised').trim() || '#fff';
-  const w = clone.getAttribute('width');
-  const h = clone.getAttribute('height');
-  clone.insertAdjacentHTML('afterbegin', `<style>${exportStyle()}</style><rect width="${w}" height="${h}" fill="${bg}"/>`);
-  return new XMLSerializer().serializeToString(clone);
-}
-
-export function downloadChart(id, kind) {
-  const entry = exportsById[id];
-  if (!entry) return false;
-  const ctxPart = slug(ctx() ? ctx().key.split('::')[0] : 'model-lab');
-  if (kind === 'svg') {
-    const s = chartSvgString(id);
-    if (!s) return false;
-    download(`${ctxPart}-${entry.file}.svg`, s, 'image/svg+xml');
-  } else {
-    download(`${ctxPart}-${entry.file}.csv`, toCsv(entry.csv), 'text/csv');
-  }
-  return true;
 }

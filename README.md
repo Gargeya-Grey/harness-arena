@@ -19,12 +19,14 @@ node lab dashboard                                # http://127.0.0.1:4317
 
 ### Run from the browser
 
-`node lab dashboard` opens the control page at `http://127.0.0.1:4317`. From there you run everything without a terminal:
+`node lab dashboard` opens Model Lab at `http://127.0.0.1:4317`. From there you run everything without a terminal:
 
-- **Run**: pick an experiment, then a harness, models, cases and repeats. Preview shows the plan and calls nothing. Start asks once (`Start N calls?`), then runs and shows the live output. Stop lets the current call finish and keeps the run.
-- **Runs**: every stored run. Score again makes no model calls.
-- **Compare**: the comparison views (also at `/compare.html`).
-- **Harnesses**, **Checks**, **Activity**: `doctor`; `validate`, `report`, `runs`; the output of every job.
+- **Home**: the job that runs now, the latest results with their answer in one sentence, and anything that needs attention.
+- **Run**: pick an experiment. Under "Narrow it down", choose a harness, models, cases and tries per case. Preview shows the plan and calls nothing. Start asks once (`Start N calls?`), then shows the progress. Stop lets the current call finish and keeps the run. When it ends, See results opens the result.
+- **Results** (`/results.html`): one test at a time. One sentence says which setup did better, by how much, and how sure the data lets us be. Below it: the setups table, every try case by case, the charts that carry a result, your ratings with their notes, and the runs it is built from (Score again makes no model calls). Share copies a link or a Markdown table, downloads CSV or JSON, saves a picture, or saves the view.
+- **Lab**: harness checks (`doctor`), records that fail their schema, Validate, Score all, Report, recent jobs, and Appearance (theme colour, light or dark, motion).
+
+Old links to `/compare.html` open Results.
 
 The page runs the same `node lab` commands you would type, one at a time, on this machine only. It accepts no other command.
 
@@ -125,7 +127,7 @@ lab/                       The CLI: run, score, validate, doctor, runs, report
   adapters/                One file per built-in harness on one seam (cli.mjs); declared.mjs reads configs/harnesses.yaml
   evaluators/              Versioned scorers (exact-match, normalized-match, final-answer, js-function, svg-structure)
   lib/                     YAML and JSON Schema subsets, metrics, derived state
-dashboard/                 Local UI: server.mjs, jobs.mjs (runs lab commands), public/ (control page + compare, static, no build)
+dashboard/                 Local UI: server.mjs, jobs.mjs (runs lab commands), public/ (Home, Run, Lab and Results; static, no build)
 configs/models.yaml        Model registry: exact id, params, optional pricing, per-harness ids
 configs/harnesses.yaml     Extra CLI harnesses, declared with no code
 datasets/<suite>/          suite.yaml + cases.jsonl

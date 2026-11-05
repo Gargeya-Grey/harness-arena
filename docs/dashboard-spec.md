@@ -1,6 +1,6 @@
 # Dashboard specification
 
-**Status:** built through Phase 4 (see §10). Sections 5-7 describe the dashboard as built; the original React plan is replaced by a zero-dependency Node server and vanilla ES modules. This is the implementation contract for the local comparison dashboard. It extends `docs/strategy.md` with artifact and annotation storage; the existing run invariants still apply.
+**Status:** built through Phase 4 (see §10). In November 2026 Results replaced the Compare workspace and the Runs page (§6, §13). Sections 5-7 and 13 describe the dashboard as built; the original React plan is replaced by a zero-dependency Node server and vanilla ES modules. This is the implementation contract for the local comparison dashboard. It extends `docs/strategy.md` with artifact and annotation storage; the existing run invariants still apply.
 
 ## 1. Goals
 
@@ -19,7 +19,7 @@
 |---|---|
 | Audience and deployment | Local, private, single-user web app |
 | Data plumbing | Local Node server (`dashboard/server.mjs`) plus vanilla ES modules; no database, no build step |
-| Comparison interaction | Left rail with a lettered lineup (up to 8) and a configuration list; tabbed views share the lineup |
+| Comparison interaction | One Results page per test: the answer sentence, the setups table, case by case, charts, runs. Up to 8 setups shown, lettered A–H in table order |
 | Compatibility | Shared context is enforced; configuration axes are diffed and labeled |
 | Comparison entity | Configuration = model + harness + harness version + effort |
 | Cost | Notional API-equivalent cost, labeled as not billed |
@@ -27,17 +27,17 @@
 | Artifact storage | Raw output committed; derived renders regenerable; large media local and hashed |
 | Human review | Blind, case-by-case, 1-5 ratings, notes, random pairwise A/B |
 | Annotation storage | Append-only JSONL, separate from machine scores |
-| Information architecture | Single-page lab plus saved Boards drawer |
-| Charts | Hand-drawn SVG: quality against cost, latency, tokens, reliability, errors; plus an answers grid and per-observation inspector |
-| Export | Per-widget exports plus composed share cards and Markdown captions |
-| Visual direction | Fonts and colour tokens from the owner's house style; layout and components are the app's own. Light and dark themes |
+| Information architecture | Four places: Home, Run, Results, Lab. Saved views sit in Change test and Share |
+| Charts | Hand-drawn SVG: time, passed against price, consistency, tokens, outcomes. A chart shows first only when it carries a result |
+| Export | One Share menu for the whole result: link, saved view, Markdown, CSV, JSON, and a wide or square picture |
+| Visual direction | One design language for both pages: the owner's Odicto design system, with a light mode derived from it. Light and dark themes |
 | Stack | Node 22 built-ins only: `node:http`, `node:fs`, `node:test`; browser ES modules; hand-written SVG |
 
 ## 3. Domain model
 
 ### 3.1 Configuration
 
-A configuration is the unit added to the lineup.
+A configuration (a setup on screen) is the unit Results compares.
 
 | Field | Source | Example |
 |---|---|---|
@@ -79,7 +79,7 @@ Configuration axes are `model`, `harness`, `effort`, and `decoding` (temperature
 - **Controlled comparison:** exactly one axis varies. The dashboard may use causal language.
 - **Descriptive comparison:** more than one axis varies. The dashboard shows a visible "descriptive" badge, lists the differing axes, and avoids causal claims.
 
-This resolves the tension between strict comparability and comparing whatever access you have. Context is always enforced; configuration differences are surfaced rather than hidden. The comparison badge names what varies. If the lineup varies on several axes, the badge switches to Descriptive rather than blocking the view.
+This resolves the tension between strict comparability and comparing whatever access you have. Context is always enforced; configuration differences are surfaced rather than hidden. The fairness line under the answer names what varies. If the shown setups vary on several axes, it reads "Mixed test" rather than blocking the view.
 
 ### 3.4 Observation
 
@@ -202,14 +202,11 @@ Saved comparisons live in `boards/*.json`:
   },
   "treatment_axis": "model",
   "configs": ["…", "…"],
-  "view": {
-    "charts": ["scorecard", "quality-cost", "reliability", "latency", "errors"],
-    "theme": "dark"
-  }
+  "view": { "only": true }
 }
 ```
 
-Boards store references, never copied results. A board that no longer resolves is shown as stale with the missing run or config named.
+On screen a board is a saved view (§6.7). Results writes `view.only` (the "Only where setups differ" switch); boards saved by the old Compare page keep their other `view` fields, and Results ignores them. Boards store references, never copied results. A saved view whose test has no stored runs now stays in the list, disabled, with the reason.
 
 ### 4.4 Derived cache
 
@@ -233,18 +230,19 @@ dashboard/
   server.mjs              local server: indexer, /api routes, static files
   jobs.mjs                starts allowlisted `node lab` commands as jobs (section 13)
   public/
-    index.html            control page: run, score, validate, doctor (section 13)
+    index.html            control page: Home, Run, Lab (section 13)
     control.css/.js       control page style and script; boot.js applies theme before paint
-    compare.html          comparison shell: app bar, rail, views, inspector, dialog
-    styles.css            comparison tokens and components
-    app.js                boot, routing, theme, events
-    js/                   one module per view: leaderboard, answers, charts,
-                          runs, reviewview, inspector, configs, exporter, ...
+    results.html/.css/.js Results (section 6)
+    compare.html/.js      forwards old Compare links to /results.html, hash kept
+    theme.css, shell.js   shared tokens, components and the app rail
+    js/                   one module per part: verdict (the answer rules), summary,
+                          setups, cases, charts, runs, inspector, review, dialogs,
+                          exporter, words, model, ...
     fonts/                Instrument Sans and IBM Plex Mono, served locally
 boards/                   saved comparison boards (repo root)
 ```
 
-The server never calls a model itself. The control page starts the CLI as a child process (`dashboard/jobs.mjs`); the CLI makes the calls and writes the evidence, exactly as in a terminal. The comparison views only read evidence.
+The server never calls a model itself. The control page starts the CLI as a child process (`dashboard/jobs.mjs`); the CLI makes the calls and writes the evidence, exactly as in a terminal. Results only reads evidence, apart from writing ratings and saved views and starting a score job.
 
 ### 5.2 Stack
 
@@ -268,7 +266,7 @@ The server never calls a model itself. The control page starts the CLI as a chil
 | GET | `/api/jobs/:id?since=n` | One job and its output lines from line `n` |
 | POST | `/api/jobs/:id/cancel` | Stop a job (section 13) |
 
-Bind to `127.0.0.1` only. Reject requests with a non-local `Host` header, and any write with a foreign `Origin` or a non-JSON body. No external network calls. There is no file watcher and no event stream: the Refresh button reads the folder again, and the control page polls `/api/jobs`.
+Bind to `127.0.0.1` only. Reject requests with a non-local `Host` header, and any write with a foreign `Origin` or a non-JSON body. No external network calls. There is no file watcher and no event stream: both pages poll `/api/jobs` and read `/api/state` again when a run or score job ends.
 
 ### 5.4 Indexing
 
@@ -287,189 +285,150 @@ Bind to `127.0.0.1` only. Reject requests with a non-local `Host` header, and an
 
 ## 6. Interface
 
-### 6.1 Shell
+Two pages share one app rail: the control page `/` (Home, Run, Lab; §13) and Results (`/results.html`). Results replaced the Compare workspace and the Runs page in November 2026. `/compare.html` now only forwards to `/results.html` and keeps the hash, so old links still open.
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│ app bar: brand · context select · Overview Answers Charts Runs Review│
-│          · refresh · export · theme                                  │
-├──────────────┬──────────────────────────────────────┬────────────────┤
-│ rail         │ page head: comparison badge · counts │ inspector      │
-│ lineup A–H   │ view                                 │ (docked ≥1200px│
-│ config list  │                                      │  else drawer)  │
-│ boards       │                                      │                │
-└──────────────┴──────────────────────────────────────┴────────────────┘
-```
+Five rules decide every screen:
 
-- ≥1024px: the rail is a sticky 288px column.
-- <1024px: the rail collapses behind a "Lineup · N of 8 selected" toggle above the view.
-- ≥1200px: the inspector docks at 520px. While it is open the rail is hidden, so the view keeps its width. Below 1200px it is a drawer.
-- <1120px: view tabs take their own row; below 900px the context picker also takes its own row. The action group never shrinks over the tabs.
-- The page never scrolls sideways. Tables respond to the workspace width (including when the inspector is docked), not just the viewport. Below 920px the leaderboard and answers become labeled record blocks; the leaderboard preserves every metric. Wider answers grids scroll inside their own frame with a sticky case column and a visible scroll hint for more than four configurations.
+- **Answer first.** A result opens with one sentence: who did better, by how much, and how sure the data lets us be. The numbers below support that sentence.
+- **Show what exists; say once what is missing.** An empty metric is left out, and one quiet line says why ("No API prices: these models are free or not priced.").
+- **One name for each thing** (§6.1). p50, n, CI and r0 never appear on the main path.
+- **Detail on demand, in three levels:** sentence, then table, then one answer. Each level is one click from the level above.
+- **The page fits the test.** One setup gives a run report. Too few tries name no winner.
 
-### 6.2 App bar and page head
+### 6.1 Words
 
-- Context select: each option has two lines. The first names the suite and prompt; the second holds cases, repeats, evaluators, "subset", runs and the latest date, so two contexts never read the same. If two still match, the case ids are added. Changing the context keeps lineup entries that exist in the new context.
-- View tabs: Overview, Answers, Charts, Runs, Review. The view, context and lineup live in the URL hash, so every view is bookmarkable.
-- Refresh reads the results folder again. Export opens the export menu. The theme button switches light and dark.
-- The page head shows the comparison badge (Controlled, Replicate, Single or Descriptive, with what varies) and "N runs · N configurations · latest date".
+Screens use plain words. Files, schemas and the CLI keep their own.
 
-### 6.3 Configuration list
+| On screen | In the files | Meaning |
+|---|---|---|
+| Setup | configuration, target | A model through a harness at one effort |
+| Test | context | One suite version with its prompt, checks, cases and tries. Named by the suite id, capitalised: "Agentic" |
+| Try | repeat | One call of one case, counted from 1 |
+| Answer | observation, raw row | What one try returned |
+| Check | evaluator, score | What decides passed or failed |
+| Passed | quality, pass rate | "9 of 9": tries passed of tries decided |
+| Typical time | p50 latency | Half the tries were faster |
+| Slow end | p95 latency | 1 try in 20 was slower (Details only) |
+| API price | notional cost | What the calls would cost at list price; not billed |
+| Fair test / Mixed test | controlled / descriptive | One axis differs / more than one axis differs |
+| Gave no answer | error | The call failed or timed out |
+| Not checked | unscored | No check decided this answer; it counts neither way |
 
-- Search by model, harness, provider or effort. Filter chips by harness and provider, with counts.
-- Grouped by provider. Each row shows the display name and harness, version and effort. A dot marks rows in the lineup.
-- Add and Remove buttons. Drag-and-drop is an enhancement, never the only path.
+Experiment, run and harness keep their names.
 
-### 6.4 Lineup
+### 6.2 Results page
 
-- Up to eight configurations. Each one gets a letter, A–H, by its place in the lineup.
-- The letter marks that configuration everywhere: tiles, leaderboard rows, answers headers, chart labels and the inspector title. Colour never identifies a configuration.
-- Drag to reorder, or use the up and down buttons. Remove with ×. A live region announces each change.
-- The lineup is the single source of truth for every view and export.
+One column, up to 1120px, read top to bottom. At 1440 × 900 the head, the answer and the setups table fit above the fold.
 
-### 6.5 Views
+1. **Head.** The test name and one line under it: "3 cases · 3 tries each · 2 setups · 5 Nov 2026". One case is named instead of counted ("1 case: Csv quotes"). Tries count what is stored, so two runs of one test read "2 tries each". The parts of this line never break inside. On the right: Change test and Share.
+2. **Answer.** One sentence in large type (§6.3), then smaller sentences for errors and unchecked answers, then the fairness line.
+3. **Setups.** One row per setup, best first: passed share, then typical time. Columns: Setup (name, harness under it), Passed (a bar and "9 of 9"), Typical time, API price (only when a price exists), Errors (only when one exists). The best value in a column carries the accent and a dot, and a foot note explains the dot; when every row ties, nothing is marked. Details adds Slow end, Pass range (Wilson 95%), Price per pass and Tokens per try. Choose setups picks up to 8 of the test's setups; by default the 8 best are shown.
+4. **Case by case.** One row per case, named in words. One mark per try: passed (✓), failed (×), gave no answer (!), not checked (○). Marks differ by shape, not only by colour, and each has a full name for a screen reader. A mark opens the side panel (§6.4). The switch "Only where setups differ" hides the cases every shown setup agrees on; it is on by default from 5 cases.
+5. **Charts.** A chart shows only when it carries a result (§6.5). The others wait under "More charts"; when none is shown first, the fold reads "All charts".
+6. **Your ratings.** Only when the test has ratings: every saved rating, newest first, with when, the case and try, the setup, the rating ("4 of 5"), the choice from the row's setup ("Better than …", "… was better", "Same as …") and the notes.
+7. **Runs.** The runs the test is built from, newest first: started, experiment and harness, answers stored of expected, errors, and status (Finished, Incomplete, Stopped, Failed, Running). Score again checks one run's answers again and calls no model. A run the guard stopped shows why ("the agent wrote outside its folder") and needs Score anyway, then Confirm: score it. While any job runs, these buttons wait. Run ids fold under "Run ids".
 
-**Overview**
+A thin bar on top shows a running job ("Run of agentic-sweep · 4 of 36 answers") and links to its output. When a run or score job ends, the page reads the data again.
 
-- KPI band: Best quality, Fastest p50, Lowest cost per pass, Error rate. Each tile shows the value, the winner's letter and name, and `n`. A tie shows every tied letter and "N-way tie". A missing count prints nothing, never NaN.
-- Leaderboard: one row per lineup entry. Quality with its 95% interval, pass rate, errors, p50, p95, cost, cost per pass, tokens. Numeric headers and values align right. Best cells are marked, with a visible green-value key; a findings box above states the winners and says when intervals overlap. On narrow workspaces each configuration becomes a labeled block with all eight metrics and the same sort control.
-- The quality-against-cost and latency charts.
+States:
 
-**Answers**
+- **No results:** "No results yet", with a link to Run.
+- **One setup:** a run report ("Beam (free) passed 1 of 1 case in 22 s.") and a link to run another setup on the test. No fairness line.
+- **Pictures, or answers no check decided:** the answer says "Not scored automatically" and offers Rate answers (§6.6).
+- **Phone (720px and below):** the setups, cases, ratings and runs tables become one card per row with labels; nothing scrolls sideways.
 
-- Rows: cases (id, question, expected). Columns: lineup entries.
-- Each cell shows one chip per repeat (pass, fail, error or unscored glyph plus `rN`) and the response text of the open or first repeat, clamped to four lines. Missing cells are hatched.
-- Filters: only disagreements, only failures, one repeat. A chip opens the inspector.
+### 6.3 The answer
 
-**Charts**
+`js/verdict.js` builds the answer by fixed rules; `tests/verdict.test.mjs` pins every sentence.
 
-1. Quality against cost: one point per configuration, 95% whiskers when `n >= 3`, log cost scale when the spread is wide. Letter callouts avoid points and confidence whiskers; a full-name legend sits below the plot and is included in SVG exports. Row charts wrap model and harness onto separate lines rather than truncating identities.
-2. Latency: p50 dot and p95 ring per configuration; toggle harness end-to-end or model request. Successful calls only.
-3. Tokens per call: input, cache read and output as small multiples, each on its own scale.
-4. Reliability: agreement across repeats of the same case.
-5. Errors: scored, error and unscored attempts per configuration; the denominator is every attempt.
+- A setup counts its decided tries: checked, plus gave no answer. Below 3 decided tries per setup the answer names no winner and the best-value marks are off. With fewer than 3 tries it says "Too few tries to name a winner." and asks for 3 tries per case; with enough tries but too few checked ones it says "Too few checked tries to name a winner." A setup "passed every try" only when no try of the test went unchecked; otherwise the words are "every checked try".
+- Passed shares are compared with a two-sided mid-p Fisher exact test at 0.05, between every leader and every other setup. A gap is clear only when every pair is: "A passed more: 9 of 9, against 5 of 9." Otherwise the answer names the setups within chance: "Echo, with 2 of 3, is close enough that the gap may be chance.", two by name, three or more by count ("The other 4 setups are close enough that the gaps may be chance.").
+- The best-value marks say "best in this column", as "passed the most" does, whether the gap is clear or within chance.
+- When passes tie, the faster setup is named only when each has 3 or more timed tries and the slower typical time is at least 10% above the faster one. Otherwise the answer says the times were level. When no setup passed a try, the answer says so ("Neither setup passed a try.") and names no faster one.
+- Errors add a sentence ("GPT-5 mini gave no answer in 1 of 12 tries (time-out)."). Unchecked answers add "1 answer was not checked, so it counts neither way."
+- The fairness line reads "Fair test: only the model differs." when one axis differs among the shown setups, and otherwise "Mixed test: … differ. Read differences as hints, not causes."
 
-Every chart card shows its `n`, a caption, and SVG and CSV exports.
+### 6.4 Side panel
 
-**Runs**
+A try mark opens the side panel: 460px on the right. From 1280px the page makes room for it; below that it covers the page. The open mark keeps a halo. Two tabs:
 
-- One row per run: start time, experiment, harness, models, rows, errors, status. Each experiment has an expandable Run details section containing the full run id, harness and models. Below 1000px of workspace, harness and models move into these details so status and counts remain visible; below 640px the rows stack with labels. Status filter. A line states whether every record validates.
+- **Answer:** the error first when there is one, then the check (for an agent task, each probe), the files the agent changed, and the answer text or the picture. Buttons move to the next try of the case and to the next setup. Rate this answer opens the rating dialog.
+- **Evidence:** run, setup, model id, harness and version, effort, settings applied, prompt, case, try, and start and finish times.
 
-**Review**
+Escape closes the panel, and focus returns to the mark.
 
-- Pick a case and start a blind review (§6.7). With no ratings, the start controls and actionable empty state sit side by side on wide workspaces, stacked on narrow ones.
+### 6.5 Charts
 
-### 6.6 Inspector
+Hand-drawn SVG in `js/charts.js`. Setups are told apart by their letter (A–H, in table order) and name, never by colour. Marks are ink; the accent marks the best value; the danger colour marks no answer.
 
-Tabs: Answer, Metrics, Provenance. The title carries the configuration's letter; the sub line shows harness, version and case.
+| Chart | Shown first when |
+|---|---|
+| Time per try (typical time dot, slow end ring) | 2 or more setups have timed tries |
+| Passed against price | 2 or more setups have a price and a passed share |
+| Consistency (how often the tries of one case agreed) | 2 or more tries per case, and the setups differ |
+| Tokens per try | Never: under More charts |
+| Outcomes (every try: passed, failed, no answer, not checked) | Never: under More charts |
 
-- **Answer:** the full response text or the error, the artifact when there is one, each evaluator's score, the human rating, and the request that was sent.
-- **Metrics:** quality, passed, format check, both latencies, cost, input, cache and output tokens, and the other usage counts.
-- **Provenance:** run, configuration, model and model key, provider, harness and entrypoint, access method, effort, params applied, prompt, case, repeat, start and finish times, session id.
+Ticks use one unit per axis and are fitted to their labels: no two labels come closer than 6px, and the last tick leaves at most a third of the axis empty. A price axis turns to a log scale when the dearest price is more than 10 times the cheapest; the caption then says so. Below 440px of chart width (a phone) a chart is drawn 1.35 times narrower and shown at full width, so its smallest text (12px) reads at 16.2px.
 
-Not built yet: zoom, fullscreen and download on the stage, next and previous observation, and a link to the raw row.
+### 6.6 Rate answers
 
-### 6.7 Review mode
+A dialog shows one case's task, then two answers side by side as Answer A and Answer B, from two setups, with the names hidden. A coin flip picks the sides. Rate A from 1 to 5, choose A is better, B is better or Same, and add notes. Save reveals the names, appends one annotation and adds a row under Your ratings; Rate another moves to the next case. Cancel or Escape writes nothing. A rating sits beside the automatic check, never in place of it. The action shows on tests with pictures or unchecked answers, and on tests that already have ratings.
 
-- A dialog for one case shows two answers side by side as Answer A and Answer B: one from a lineup entry and one from the next lineup entry that has an answer for that case. A coin flip picks which side is A. Names are hidden until save.
-- Absolute rating of Answer A: 1-5, plus notes. Pairwise: A better, B better or tie.
-- Save reveals the names and appends one annotation. Escape or Cancel writes nothing.
+### 6.7 Change test and saved views
 
-Not built yet: more than two answers at once, random pairs across the whole lineup, progress and skip, correcting a rating with `supersedes`, and highlighting the case on exit.
+Change test lists the saved views first, then the tests grouped by suite, newest first. Each entry shows its meta line and the first sentence of its answer, so a test can be found by what happened in it. The open test is marked. Older suite versions fold under "Earlier versions"; the fold opens by itself when the open test is in it.
 
-### 6.8 Boards
+Share › Save view stores the test and the setups shown as a board (§4.3). Saving under the same title updates that view. A saved view is removed in two steps (Remove, then Confirm remove); removing a view deletes the choice only, never a run. The URL hash holds the test, the chosen setups and the switch (`#ctx=…&cfg=a,b&only=1`), so every view is also a link.
 
-- The Boards section of the rail: a select of saved boards, "Save current" and Delete.
-- A board stores the context, the lineup and the view.
-- Saving a new board never replaces another: when two titles map to the same id, the second gets a numbered suffix.
-- The URL hash holds the view, context and lineup, so every comparison is bookmarkable; it does not name the board.
-- Loading a board whose configurations are no longer in the context skips them and says how many were skipped. There is no repair action.
+### 6.8 Share
 
-### 6.9 Export and sharing
+One menu holds every export of the whole result:
 
-Per-widget menu:
+- **Link:** Copy link, Save view.
+- **Table:** Copy as Markdown, Download CSV, Download JSON. They carry what the page says: the title, the meta line, the answer, the fairness line, and one row per setup with the best values marked.
+- **Picture:** Wide (16:9, 1600 × 900) and Square (1:1, 1080 × 1080), drawn in the fixed light palette whatever the theme.
 
-- Chart PNG at 2x.
-- Chart SVG.
-- Data CSV, Markdown table, and JSON.
-- Artifact download in its original format.
+### 6.9 Accessibility
 
-Share card composer:
-
-- Title and optional subtitle.
-- Select one or two charts, or one artifact.
-- Model/harness labels on or off.
-- Provenance footer on or off: run ids, date, context, notional-cost note.
-- Theme: light publication or dark.
-- Aspect: 16:9 at 1600×900, or 1:1 at 1080×1080. Export at 2x.
-- Copy Markdown caption with the same metric table and provenance.
-
-### 6.10 States
-
-Every surface ships with:
-
-- **Loading:** skeletons with stable geometry; no layout shift.
-- **Empty:** what belongs here, why, and the next action.
-- **Error:** what failed, the file or endpoint, and a recovery action.
-- **No results:** charts explain the missing sample and offer to widen the context.
-- **Partial data:** explicit "not run", "unscored", and "failed" marks.
-- **Overflow:** long model names wrap with harness/version on a separate line; numbers use tabular figures and never truncate. Tables reflow as described in §6.1; wider comparisons scroll inside their own frame.
-- **Disabled:** incompatible configurations explain why on focus and hover.
-
-### 6.11 Accessibility
-
-- Every drag-and-drop action has a keyboard and button equivalent.
-- Focus rings: 2px, offset, high contrast, visible on both themes.
-- Minimum target 44×44px under a coarse pointer. With a mouse, dense controls are 24-32px.
-- Color never carries meaning alone; every series has a label and a pattern or shape in dense charts.
-- Tables use real table semantics, column headers, and row headers.
-- Live regions announce lineup changes, index refreshes, and rating submissions.
-- The app survives 200% zoom and reflows at 320px.
-- `prefers-reduced-motion` is honored.
+- Every action works from the keyboard. Dialogs trap Tab and return focus to the control that opened them.
+- Focus rings: 2px, offset, visible in both themes.
+- Colour never carries meaning alone: try marks differ by shape, best values carry a dot as well as the accent.
+- Tables use real table semantics, with column and row headers.
+- One live region announces loads, saves and job results.
+- No text under 12px. `prefers-reduced-motion` and the Motion setting are honoured.
 
 ## 7. Visual system
 
-Only two things come from the owner's house style (`~/.claude/design/DESIGN.md`): the fonts and the colour tokens. Layout, components and charts are the app's own design and do not follow the rest of DESIGN.md.
+Both pages use one visual system: the owner's Odicto design system, with a light mode derived from it. `dashboard/public/theme.css` holds the tokens and the shared components (rail, run card, nav, buttons, wells, segmented control, status marks, chips, count pills, the fold marker, toasts). `dashboard/public/shell.js` draws the app rail on both pages. Page rules live in `control.css` (Home, Run, Lab) and `results.css` (Results).
 
 ### 7.1 Themes and tokens
 
-Light and dark, one set of token names. The theme follows `prefers-color-scheme` until the user picks one with the theme button; `[data-theme]` on the root then wins.
-
-| Token | Light | Dark | Use |
-|---|---|---|---|
-| `--paper` | `#F6F7F4` | `#0E1412` | Rail, table heads |
-| `--paper-raised` | `#FFFFFF` | `#151D1A` | Page and cards |
-| `--sage` | `#E2EDE6` | `#17261F` | Letter badges, hover |
-| `--ink` | `#14201C` | `#ECEFEA` | Text |
-| `--ink-2` | `#53615B` | `#A3B0AA` | Secondary text |
-| `--rule` | `#DDE2DC` | `#26302C` | Borders and grid lines |
-| `--forest` | `#1E5B49` | `#ECEFEA` | Primary action, active tab |
-| `--leaf` / `--leaf-ink` | `#10B981` / `#0B7A55` | `#10B981` / `#3DDC9F` | Best values, pass marks |
-| `--clay` | `#B4472F` | `#E5866B` | Errors and failures |
-
-App-only tokens built from these: `--hover`, `--best-bg`, `--shadow`, `--backdrop`.
+- Colours are OKLCH, built from the theme hue `--h` and chroma scale `--k` (Appearance: Forest, Ocean, Plum, Ember, Graphite). Lightness is fixed per mode.
+- Dark is Odicto as written. Light keeps the same token names: canvas 0.972, near-white glass, text 0.235, accent 0.48. The light accent was chosen so accent text passes 4.5:1 on every surface for all five theme colours.
+- Mode: `theme` in `localStorage` (`light` or `dark`); no value follows `prefers-color-scheme`. `[data-theme]` on the root wins. `boot.js` applies it before the first paint, and both pages listen for the change.
 
 ### 7.2 Identity in charts
 
-Configurations are told apart by their letter, not by colour. Charts draw in ink and rule tones; leaf marks the best value and clay marks errors. A chart is readable in greyscale.
+Setups are told apart by their letter and name, not by colour. Charts draw in ink and line tones; the accent marks the best value and the danger colour marks no answer. A chart is readable in greyscale.
 
 ### 7.3 Typography
 
-- UI and body: Instrument Sans, 14px base. Numbers, ids, versions and response text: IBM Plex Mono. Both are served locally from `public/fonts/`.
-- KPI values: Plex Mono 26px. Section titles 15-16px, weight 600. Micro labels 11-12px.
-- Tabular figures for every metric.
+- One font for words and numbers: Instrument Sans with tabular figures (measured: "1111" and "0000" are the same width). IBM Plex Mono only for code, ids and model answers. Both are served locally from `public/fonts/`.
+- Odicto's type scale: page title 34px (28 under 900px), answer sentence 18-22px, row titles 15px, body 14px, row text 12.5-13.5px, section labels 11.5px uppercase. No other text under 12px.
+- A meta line ("3 cases · 3 tries each · …") breaks only between its parts.
 
 ### 7.4 Space, shape, motion
 
-- Controls 30-32px high; every control and chip is at least 44px under `(pointer: coarse)`.
-- Dropdowns: every `<select>` gets a themed button and listbox (`js/select.js`), because the operating system draws a native select's open list outside the theme. The native select stays in the DOM as the source of truth for value and `change` events. The list opens below the button, or above it when less than 200px is free below and more is free above. Keyboard: arrows, Home, End, Page Up and Down, Enter or Space to choose, Escape to close, type to jump. A keyboard open is instant; a pointer open eases in over 150ms. Cards and tables have a 14px radius and a 1px rule border.
-- Motion: drawer and dialog enter with a strong ease-out under 300ms; buttons scale to 0.97 on press. `prefers-reduced-motion` removes all of it.
+- Controls 32-44px high; every control and chip is at least 44px under `(pointer: coarse)`.
+- Panels (tables, charts, groups) are glass: radius 18, a top rim and a soft lift shadow. Fields are wells (inset). Menus, the side panel and dialogs float above the glass.
+- Every fold (`<details>`) uses one marker: a chevron that turns when it opens (`summary.disclose`). A closed fold takes its content out of layout.
+- Motion: one easing curve and three durations (120, 180, 320ms). The current item carries the glowing 2px stem: the nav pill and the segmented knob slide to it. The Motion setting (Full, Reduced, Off) and `prefers-reduced-motion` reduce or remove it.
 
-### 7.5 Share cards
+### 7.5 Pictures
 
-- Title, the chart, the lineup letters with names, and a provenance footer.
-- Export at 2x. Text at least 16px at card scale.
-- The Markdown caption mirrors the card: context, configurations, metric table, provenance, notional-cost caveat.
+- Share › Wide picture (1600 × 900) or Square picture (1080 × 1080): the test name, the meta line, the answer, and the setups table with the best values underlined.
+- Drawn on a canvas in the fixed light palette, whatever the page theme. Text at least 16px at picture scale.
 
 ## 8. Metrics
 
@@ -552,6 +511,7 @@ Deferred until the SVG suite runs. The artifact contract already supports HTML/J
 | 4 | Blind review, annotations, boards | Ratings append to JSONL; reveal works; boards save and restore | Done |
 | 5 | Share card composer and light theme | 16:9 and 1:1 exports include provenance and a Markdown caption | Partial: PNG cards, no composer |
 | 6 | three.js viewer and suite | Sandboxed scene renders; screenshot/video capture works; rubric is documented | Not started |
+| 7 | Redesign: Results replaces Compare and Runs; Home, Run, Lab | The answer sentence follows §6.3; every page passes the layout check at 360-1440px in light and dark | Done |
 
 The UI shell may start after Phase 0. Phase 1 must land before chart polish, so the gallery is designed against real artifacts.
 
@@ -560,11 +520,11 @@ The UI shell may start after Phase 0. Phase 1 must land before chart polish, so 
 - One command starts the dashboard; it binds to `127.0.0.1` and makes no external requests.
 - Existing results load without migration; missing artifacts and annotations default to empty.
 - Context is enforced. Controlled and descriptive comparisons are labeled correctly.
-- Eight configurations can be compared; drag-and-drop and keyboard paths both work.
-- All five charts show `n` and handle missing, failed, and unscored observations honestly.
-- SVG artifacts render in the gallery; video and audio play with native controls; HTML and three.js run sandboxed.
+- Up to eight setups are compared at once; every action works from the keyboard.
+- Charts handle missing, failed and unscored tries honestly; a chart with nothing to show is not drawn.
+- SVG artifacts render in the side panel; video and audio play with native controls; HTML and three.js run sandboxed.
 - Human review is blind, append-only, and never mutates machine scores.
-- Chart PNG/SVG, CSV/Markdown/JSON, and share-card exports work.
+- Markdown, CSV, JSON and picture exports work.
 - Keyboard-only users can complete the core flow; focus states are visible; the layout reflows at 320px.
 - Every stored record validates against its schema.
 
@@ -581,22 +541,17 @@ The UI shell may start after Phase 0. Phase 1 must land before chart polish, so 
 
 ## 13. Control page
 
-`/` is the control page: the owner runs the lab from it. `/compare.html` is the comparison workspace of sections 6 and 7; the control page shows it inside its Compare page.
+`/` is the control page: the owner runs the lab from it. The rail has four items: Home, Run, Results, Lab. Results is its own page (§6). Old control page links (`#runs`, `#harnesses`, `#checks`, `#activity`, `#appearance`) open Lab; `#compare` opens Results. The run card at the top of the rail shows the current or last job and opens its output from any page.
 
 ### 13.1 Pages
 
 | Page | What it does |
 |---|---|
-| Home | One meter row per page (experiments, runs, harnesses, checks, activity), and the three steps of a first test |
-| Run | Experiment, harness, models, cases and repeats; the call count; Preview (`--dry-run`) and Start; the live output |
-| Runs | Every stored run; Score again per run (`--force`, with a confirm step, for a run the guard stopped); Score all again |
-| Compare | `/compare.html` in a frame; it reloads after a run or score job |
-| Harnesses | `node lab doctor`, parsed into one row per harness |
-| Checks | `node lab validate`, `report`, `runs` |
-| Activity | Every job since the server started, with its output |
-| Appearance | Theme colour (Forest, Ocean, Plum, Ember, Graphite) and motion (Full, Reduced, Off), saved in `localStorage` |
+| Home | While a job runs, a card with its progress, Stop and Open. Latest results: the three newest tests, each with its meta line and the first sentence of its answer, linked to Results. Needs attention, only when something is wrong: a record that fails its schema, a failed or stopped last run of a test, a failed Validate, no harness ready. First test: three steps, only when there are no results. One main button: New run |
+| Run | Experiment (description first, file name second), then "Narrow it down", folded: harness (only with 2 or more), models, cases by name, and tries per case. The plan: Setups × Cases × Tries = calls. Preview (`--dry-run`) and Start run. Progress: a bar (answers of calls), the current case, errors so far, the log under "Show the log", and See results when the run ends |
+| Lab | Harnesses (`node lab doctor`, one row per harness, Check harnesses). Records: when a stored record fails its schema, a first row lists the file and the reason (the first 8; Validate prints every one); then Validate, Score all, Report, each with its last result. Recent jobs: every job since the server started; a click shows its output. Appearance: theme colour, mode (System, Light, Dark) and motion (Full, Reduced, Off), saved in `localStorage` for both pages |
 
-Start asks once: the first press shows `Start N calls?` for 5 seconds, and only a second press starts the run. A live run costs quota; a preview costs nothing.
+Start asks once: the first press shows "Start N calls?" for 5 seconds, and only a second press starts the run. A live run costs quota; a preview costs nothing. Job names read the same everywhere: "agentic-sweep run" inside a sentence, "Run of agentic-sweep" at the start of a line; an experiment id keeps its own spelling.
 
 ### 13.2 Jobs
 
@@ -609,4 +564,10 @@ Start asks once: the first press shows `Start N calls?` for 5 seconds, and only 
 
 ### 13.3 Visual system
 
-The control page follows the owner's Odicto design system (dark only): Instrument Sans; OKLCH tokens from `--h`/`--k`; a 248px rail with the run card (five pixel bars: idle, running, stopping, server stopped) and one sliding nav pill with a glowing stem; an 800px main column; glass groups (radius 18, top rim, grain) with hairline rows; wells for inputs; a custom select with a fixed menu; status marks by shape (dot, hollow ring, diamond); toasts that last 7 seconds; an offline banner after two failed polls. The comparison page keeps its own layout, and its dark colours match the Forest theme.
+Both pages follow the owner's Odicto design system (§7), in light and dark:
+
+- App rail (248px; 64px icons below 900px): the brand, the run card (five pixel bars: idle, running, stopping, server stopped), one sliding nav pill with a glowing stem, and the light/dark switch at the foot.
+- Main column up to 1120px. From 1180px, Run puts the plan in a sticky side column, and Lab puts the job output beside its lists.
+- Glass groups (radius 18, top rim, grain in dark) with hairline rows; wells for inputs; a custom select with a fixed menu; one accent.
+- Status marks by shape (dot, hollow ring, diamond), so colour is never the only signal.
+- Toasts that last 7 seconds; an offline banner after two failed polls.

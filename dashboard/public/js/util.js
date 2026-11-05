@@ -12,6 +12,8 @@ class Safe {
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
 export const raw = (text) => new Safe(String(text ?? ''));
+// A "·" list as HTML that breaks only between its parts; a long part (a case name) may still wrap.
+export const keepParts = (text) => String(text).split(' · ').map((p) => (p.length <= 24 ? `<span class="keep">${esc(p)}</span>` : esc(p))).join(' · ');
 
 function part(value) {
   if (value instanceof Safe) return value.text;
@@ -31,33 +33,10 @@ export function html(strings, ...values) {
 }
 
 export const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
-export const NA = 'n/a';
+const NA = 'n/a';
 
 export function setHtml(el, content) {
   if (el) el.innerHTML = String(content);
-}
-
-// A number in mono with its unit in sans.
-export const num = (text) => html`<span class="num">${text}</span>`;
-export const withUnit = (value, unit) => html`<span class="num">${value}</span><span class="unit"> ${unit}</span>`;
-
-export function fixed(v, digits = 2) {
-  return isNum(v) ? v.toFixed(digits) : null;
-}
-
-export function msParts(ms) {
-  if (!isNum(ms)) return null;
-  if (ms < 1000) return { value: String(Math.round(ms)), unit: 'ms' };
-  const s = ms / 1000;
-  return { value: s >= 100 ? s.toFixed(0) : s >= 10 ? s.toFixed(1) : s.toFixed(2), unit: 's' };
-}
-export function msHtml(ms, fallback = NA) {
-  const p = msParts(ms);
-  return p ? withUnit(p.value, p.unit) : html`<span class="muted">${fallback}</span>`;
-}
-export function msText(ms, fallback = NA) {
-  const p = msParts(ms);
-  return p ? `${p.value} ${p.unit}` : fallback;
 }
 
 export function usdText(v, fallback = NA) {
@@ -67,11 +46,6 @@ export function usdText(v, fallback = NA) {
   const digits = v >= 1 ? 2 : v >= 0.1 ? 3 : v >= 0.001 ? 4 : Math.min(8, 1 - Math.floor(Math.log10(Math.abs(v))));
   return `$${v.toFixed(digits)}`;
 }
-export function usdHtml(v, fallback = NA) {
-  if (!isNum(v)) return html`<span class="muted">${fallback}</span>`;
-  return html`<span class="unit">$</span><span class="num">${usdText(v).slice(1)}</span>`;
-}
-
 export function tokText(v, fallback = NA) {
   if (!isNum(v)) return fallback;
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
@@ -80,16 +54,11 @@ export function tokText(v, fallback = NA) {
   return Number.isInteger(v) ? String(v) : v.toFixed(1);
 }
 
-export function pctText(v, digits = 0, fallback = NA) {
-  return isNum(v) ? `${(v * 100).toFixed(digits)}%` : fallback;
-}
-
 export function dateTime(iso) {
   if (!iso) return NA;
   const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(iso);
   return m ? `${m[1]} ${m[2]}Z` : String(iso);
 }
-export const dateOnly = (iso) => (iso ? String(iso).slice(0, 10) : NA);
 
 export function slug(text) {
   return String(text).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'model-lab';
@@ -128,7 +97,7 @@ export async function copyText(text) {
   }
 }
 
-export function csvCell(v) {
+function csvCell(v) {
   if (v === null || v === undefined) return '';
   const s = String(v);
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;

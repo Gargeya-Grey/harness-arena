@@ -1,31 +1,19 @@
-// UI state and derived data. No DOM here.
+// Results page state and derived data. No DOM here.
+import { facts, rankSetups, errorReason } from './verdict.js';
 
-export const MAX_SELECTED = 8;
-export const DEFAULT_SELECTED = 4;
+export const MAX_SHOWN = 8;
 
 export const S = {
   data: null,
-  loading: true,
   error: null,
   ctxKey: null,
-  sel: [],
-  sort: { key: null, dir: 'desc' },
-  view: 'overview',
-  only: false,
-  fails: false,
-  runStatus: 'all',
-  revCase: '',
-  fHarness: [],
-  fProvider: [],
-  rep: 'all',
-  lat: 'harness',
-  cfgQuery: '',
-  cfgOpen: false,
+  sel: [], // the setups shown, in table order
+  custom: false, // true when the owner chose the setups; the link then carries them
+  only: null, // "Only where setups differ": null follows the default for the test
+  details: false,
   insp: null, // { obsId, tab }
   review: null,
   boardId: '',
-  boardForm: false,
-  boardConfirm: false,
 };
 
 let index = new Map();
@@ -36,12 +24,14 @@ export function setData(data) {
   for (const o of data.observations || []) {
     let ctxIndex = index.get(o.context_key);
     if (!ctxIndex) {
-      ctxIndex = { cells: new Map(), byId: new Map(), list: [] };
+      ctxIndex = { cells: new Map(), byId: new Map(), byCfg: new Map(), list: [] };
       index.set(o.context_key, ctxIndex);
     }
     const key = `${o.case_id}\u0000${o.config_id}`;
     if (!ctxIndex.cells.has(key)) ctxIndex.cells.set(key, []);
     ctxIndex.cells.get(key).push(o);
+    if (!ctxIndex.byCfg.has(o.config_id)) ctxIndex.byCfg.set(o.config_id, []);
+    ctxIndex.byCfg.get(o.config_id).push(o);
     ctxIndex.byId.set(o.id, o);
     ctxIndex.list.push(o);
   }
@@ -54,7 +44,7 @@ export const contexts = () => (S.data ? S.data.contexts : []);
 export const ctx = () => contexts().find((c) => c.key === S.ctxKey) || null;
 export const cfgOf = (id) => (S.data && S.data.configs ? S.data.configs[id] : null) || null;
 export const selectedCfgs = () => S.sel.map(cfgOf).filter(Boolean);
-// The lineup letter: A for the first selected configuration, B for the second. Empty when not selected.
+// The short letter of a shown setup: A for the first row of the table. Empty when not shown.
 export const letterOf = (id) => {
   const i = S.sel.indexOf(id);
   return i < 0 ? '' : String.fromCharCode(65 + i);
@@ -71,60 +61,31 @@ export function obsById(id) {
   for (const other of index.values()) if (other.byId.has(id)) return other.byId.get(id);
   return null;
 }
-export function ctxObservations() {
-  const i = index.get(S.ctxKey);
+export function ctxObservations(key = S.ctxKey) {
+  const i = index.get(key);
   return i ? i.list : [];
 }
-export const aggOf = (cfgId) => {
-  const c = ctx();
+export function aggOf(cfgId, c = ctx()) {
   return (c && c.aggregates && c.aggregates[cfgId]) || null;
-};
+}
 
 export function repeatsOf(c = ctx()) {
   if (!c) return 1;
   let max = Number(c.repeats) || 1;
-  for (const o of ctxObservations()) if (o.repeat + 1 > max) max = o.repeat + 1;
+  for (const o of ctxObservations(c.key)) if (o.repeat + 1 > max) max = o.repeat + 1;
   return max;
 }
 
-// Two lines for the context picker. The first names suite and prompt; the second
-// holds what tells two contexts apart: cases, repeats, evaluators, runs, date.
-// When two contexts still read the same, the case ids are added.
-export function ctxParts(c, all = [c]) {
-  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-  const mainOf = (x) => `${x.suite.id} ${x.suite.version} · ${x.prompt.id} v${x.prompt.version}`;
-  const subOf = (x, ids) => [
-    plural(x.cases.length, 'case') + (ids ? ` (${x.cases.join(', ')})` : ''),
-    plural(x.repeats, 'repeat'),
-    (x.evaluators || []).map((e) => `${e.id} v${e.version}`).sort().join(' + '),
-    x.partial ? 'subset' : '',
-    plural(x.runs.length, 'run'),
-    x.latest_run_at ? `latest ${String(x.latest_run_at).slice(0, 10)}` : '',
-  ].filter(Boolean).join(' · ');
-  const main = mainOf(c);
-  const plain = subOf(c, false);
-  const twin = all.some((o) => o !== c && mainOf(o) === main && subOf(o, false) === plain);
-  return { main, sub: twin ? subOf(c, true) : plain };
-}
-
-export function ctxLabel(c, withDate = false) {
-  const base = `${c.suite.id} ${c.suite.version} · ${c.prompt.id} v${c.prompt.version} · ${c.cases.length} case${c.cases.length === 1 ? '' : 's'} · ${c.repeats} repeat${c.repeats === 1 ? '' : 's'}`;
-  const tail = [];
-  if (c.partial) tail.push('subset');
-  if (withDate && c.latest_run_at) tail.push(String(c.latest_run_at).slice(0, 10));
-  return tail.length ? `${base} · ${tail.join(' · ')}` : base;
-}
-
-// Outcome of one observation: a word, never colour alone.
+// Outcome of one try: a word and a shape, never colour alone.
 export function outcome(o) {
   if (!o) return { kind: 'none', text: 'not run', glyph: '–' };
-  if (o.status === 'error') return { kind: 'error', text: 'error', glyph: '!' };
-  if (o.status === 'unscored' || o.passed === null || o.passed === undefined) return { kind: 'unscored', text: 'unscored', glyph: '○' };
-  if (o.passed) return { kind: 'pass', text: 'pass', glyph: '✓' };
-  return { kind: 'fail', text: 'fail', glyph: '✕' };
+  if (o.status === 'error') return { kind: 'error', text: 'no answer', glyph: '!' };
+  if (o.status === 'unscored' || o.passed === null || o.passed === undefined) return { kind: 'unscored', text: 'not checked', glyph: '○' };
+  if (o.passed) return { kind: 'pass', text: 'passed', glyph: '✓' };
+  return { kind: 'fail', text: 'failed', glyph: '✕' };
 }
 
-// A short unique name per configuration for direct labels in charts.
+// A short unique name per setup: the model, then the harness, version and effort only when needed.
 export function chartNames(cfgs) {
   const base = (c) => c.display_name || c.model_key || c.id;
   const steps = [
@@ -155,9 +116,10 @@ export function chartNames(cfgs) {
 
 const decodingOf = (c) => JSON.stringify([c.params ? c.params.temperature ?? null : null, c.params ? c.params.max_tokens ?? null : null]);
 
+// What differs between the shown setups: one axis is a fair test, several a mixed one.
 export function comparison(cfgs) {
-  if (cfgs.length === 0) return { mode: 'empty', axes: [], text: '', note: '' };
-  if (cfgs.length === 1) return { mode: 'single', axes: [], text: 'Single configuration', note: 'Nothing to compare yet. Add a second configuration.' };
+  if (cfgs.length === 0) return { mode: 'empty', axes: [] };
+  if (cfgs.length === 1) return { mode: 'single', axes: [] };
   const differs = (fn) => new Set(cfgs.map(fn)).size > 1;
   const axes = [];
   if (differs((c) => c.model_key)) axes.push('model');
@@ -165,22 +127,29 @@ export function comparison(cfgs) {
   if (differs((c) => c.effort ?? '')) axes.push('effort');
   if (differs(decodingOf)) axes.push('decoding');
   if (differs((c) => c.user_config || 'loaded')) axes.push('setup');
-  if (axes.length === 0) return { mode: 'replicate', axes, text: 'Replicate', note: 'Same model, harness, effort, decoding and user setup.' };
-  if (axes.length === 1) return { mode: 'controlled', axes, text: `Controlled: ${axes[0]}`, note: 'One axis differs. Other axes are held constant.' };
-  return { mode: 'descriptive', axes, text: `Descriptive: ${axes.join(', ')}`, note: 'Causal claims are not supported.' };
+  if (axes.length === 0) return { mode: 'replicate', axes };
+  if (axes.length === 1) return { mode: 'controlled', axes };
+  return { mode: 'descriptive', axes };
 }
 
-export const VIEWS = ['overview', 'answers', 'charts', 'runs', 'review'];
+// Every setup of a test with what it did, named uniquely among the given list.
+export function setupsOf(ids, c = ctx()) {
+  const cfgs = ids.map(cfgOf).filter(Boolean);
+  const names = chartNames(cfgs);
+  const byCfg = (index.get(c && c.key) || { byCfg: new Map() }).byCfg;
+  return cfgs.map((cfg) => ({ id: cfg.id, cfg, name: names.get(cfg.id), facts: facts(aggOf(cfg.id, c)), errorReason: errorReason(byCfg.get(cfg.id) || []) }));
+}
+export const shownSetups = () => setupsOf(S.sel);
 
-// URL hash: #view=<name>&ctx=<encoded key>&cfg=<id,id>. A bare #answers also works.
-export function readHash() {
-  const out = { view: null, ctx: null, cfg: null };
-  const h = location.hash.replace(/^#/, '');
-  if (!h) return out;
-  if (!h.includes('=')) {
-    if (VIEWS.includes(h)) out.view = h;
-    return out;
-  }
+// The default set: every setup of the test, best first, up to MAX_SHOWN.
+export function defaultSel(c) {
+  return rankSetups(setupsOf(c.config_ids, c)).map((s) => s.id).slice(0, MAX_SHOWN);
+}
+
+// URL hash: #ctx=<key>&cfg=<id,id>&only=0|1. The Compare page's #view=… links still open.
+export function readHash(hash = location.hash) {
+  const out = { ctx: null, cfg: null, only: null };
+  const h = String(hash).replace(/^#/, '');
   for (const piece of h.split('&')) {
     const eq = piece.indexOf('=');
     if (eq < 0) continue;
@@ -191,37 +160,46 @@ export function readHash() {
     } catch {
       continue;
     }
-    if (k === 'view' && VIEWS.includes(v)) out.view = v;
     if (k === 'ctx') out.ctx = v;
     if (k === 'cfg') out.cfg = v ? v.split(',').filter(Boolean) : [];
+    if (k === 'only' && (v === '0' || v === '1')) out.only = v === '1';
   }
   return out;
 }
+export function hashFor() {
+  if (!S.ctxKey) return '';
+  let h = `#ctx=${encodeURIComponent(S.ctxKey)}`;
+  if (S.custom) h += `&cfg=${S.sel.map(encodeURIComponent).join(',')}`;
+  if (S.only !== null) h += `&only=${S.only ? 1 : 0}`;
+  return h;
+}
 export function writeHash() {
-  if (!S.ctxKey) return;
-  const next = `#view=${S.view}&ctx=${encodeURIComponent(S.ctxKey)}&cfg=${S.sel.map(encodeURIComponent).join(',')}`;
-  if (location.hash !== next) {
-    try {
-      history.replaceState(null, '', next);
-    } catch {
-      /* the URL stays as it was */
-    }
+  const next = hashFor();
+  if (!next || location.hash === next) return;
+  try {
+    history.replaceState(null, '', next);
+  } catch {
+    /* the address stays as it was */
   }
 }
 
-// Choose the context and a valid, ordered selection of configurations.
-export function chooseContext(key, wanted) {
-  const c = contexts().find((x) => x.key === key) || contexts()[0] || null;
+// Open a test. A list of setups from a link or a saved view is kept; otherwise every setup shows.
+export function chooseContext(key, wanted = null) {
+  const c = contexts().find((x) => x.key === key) || newestContext();
   S.ctxKey = c ? c.key : null;
   if (!c) {
     S.sel = [];
+    S.custom = false;
     return;
   }
   const valid = new Set(c.config_ids);
-  let sel = (wanted || []).filter((id, i, arr) => valid.has(id) && arr.indexOf(id) === i);
-  if (!wanted || sel.length === 0) sel = c.config_ids.slice(0, DEFAULT_SELECTED);
-  S.sel = sel.slice(0, MAX_SELECTED);
-  if (S.rep !== 'all' && Number(S.rep.slice(1)) >= repeatsOf(c)) S.rep = 'all';
+  const sel = (wanted || []).filter((id, i, arr) => valid.has(id) && arr.indexOf(id) === i).slice(0, MAX_SHOWN);
+  S.custom = sel.length > 0;
+  S.sel = S.custom ? sel : defaultSel(c);
+}
+
+function newestContext() {
+  return [...contexts()].sort((a, b) => String(b.latest_run_at || '').localeCompare(String(a.latest_run_at || '')))[0] || null;
 }
 
 export function findContextForBoard(board) {
@@ -229,3 +207,7 @@ export function findContextForBoard(board) {
   const want = [...b.cases].sort().join('|');
   return contexts().find((c) => c.suite.id === b.suite && c.prompt.id === b.prompt && c.repeats === b.repeats && [...c.cases].sort().join('|') === want) || null;
 }
+
+// "Only where setups differ" is on by default from 5 cases up.
+const onlyDefault = (c = ctx()) => Boolean(c && c.cases.length >= 5);
+export const onlyOn = () => (S.only === null ? onlyDefault() : S.only);

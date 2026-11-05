@@ -1,6 +1,8 @@
-// Blind review: answers A and B with names hidden and sides randomised. Names appear after the save.
-import { S, obsById, cellObs, cfgOf, caseOf, outcome } from './model.js';
-import { html, raw, setHtml, uuid } from './util.js';
+// Rate answers: two answers, A and B, with the setup names hidden and the sides chosen at random.
+// The names show after the save. A rating is a human note beside the automatic check, never in place of it.
+import { S, obsById, cellObs, cfgOf, caseOf, ctx } from './model.js';
+import { caseName } from './words.js';
+import { html, setHtml, uuid } from './util.js';
 import { visualArtifacts, artifactHtml } from './artifacts.js';
 import { postAnnotation } from './api.js';
 import { trapTab } from './ui.js';
@@ -16,76 +18,102 @@ function coin() {
   return (a[0] & 1) === 1;
 }
 
+// Where "Rate answers" starts: the first case with an answer no check decided, else the first answered case.
+export function reviewStartObs() {
+  const c = ctx();
+  if (!c) return null;
+  let first = null;
+  for (const caseId of c.cases) {
+    for (const id of S.sel) {
+      for (const o of cellObs(caseId, id)) {
+        if (o.status === 'error') continue;
+        if (o.passed === null || o.passed === undefined) return o;
+        if (!first) first = o;
+      }
+    }
+  }
+  return first;
+}
+
 function pickOther(chosen) {
   for (const id of S.sel) {
     if (id === chosen.config_id) continue;
-    const list = cellObs(chosen.case_id, id);
+    const list = cellObs(chosen.case_id, id).filter((x) => x.status !== 'error');
     const hit = list.find((x) => x.repeat === chosen.repeat) || list[0];
     if (hit) return hit;
   }
   return null;
 }
 
+const whoText = (o) => {
+  const c = cfgOf(o.config_id);
+  return c ? `${c.display_name} · ${c.harness.name} ${c.harness.version}${c.effort ? ` · ${c.effort} effort` : ''} · try ${o.repeat + 1}` : o.config_id;
+};
+
 function sideHtml(o, letter, reveal) {
   const arts = o.status === 'error' ? [] : visualArtifacts(o);
-  const cfg = cfgOf(o.config_id);
   let body;
-  if (o.status === 'error') body = html`<div class="muted">This call failed, so there is no answer to read.</div>`;
+  if (o.status === 'error') body = html`<p class="quiet-line">This try gave no answer.</p>`;
   else if (arts.length) body = html`${arts.map((a) => artifactHtml(a, `Answer ${letter}`, true))}`;
-  else body = html`<div class="pre mono">${o.response && o.response.text ? o.response.text : 'No response text.'}</div>`;
-  return html`<section class="side" aria-label="Answer ${letter}">
-    <div class="side-title"><h3>Answer ${letter}</h3>${reveal ? html`<span class="side-reveal">${cfg ? cfg.display_name : o.config_id} · ${cfg ? cfg.harness.name : ''} <span class="mono">${cfg ? cfg.harness.version : ''}</span> · r${o.repeat}</span>` : ''}</div>
+  else body = html`<div class="answer-text">${o.response && o.response.text ? o.response.text : 'The answer has no text.'}</div>`;
+  return html`<section class="side" aria-labelledby="side-${letter}">
+    <div class="side-title"><h3 id="side-${letter}">Answer ${letter}</h3>${reveal ? html`<span class="side-reveal">${whoText(o)}</span>` : ''}</div>
     <div class="side-body">${body}</div>
   </section>`;
 }
 
-export function renderReview() {
+const inputText = (v) => (typeof v === 'string' ? v : JSON.stringify(v, null, 2));
+
+function renderReview() {
   const r = S.review;
   const el = dlg();
   if (!r) return;
+  const c = ctx();
   const k = caseOf(r.a.case_id);
-  const saved = !!r.saved;
-  const rating = [1, 2, 3, 4, 5].map((n) => html`<button type="button" class="ctl choice" data-act="rate-value" data-value="${n}" data-fk="review:rate:${n}" aria-pressed="${String(r.value === n)}"${saved ? raw(' disabled') : ''}>${n}</button>`);
-  const pairs = r.b ? [['A', 'A better'], ['B', 'B better'], ['tie', 'Tie']].map(([v, label]) => html`<button type="button" class="ctl" data-act="rate-pair" data-pair="${v}" data-fk="review:pair:${v}" aria-pressed="${String(r.pair === v)}"${saved ? raw(' disabled') : ''}>${label}</button>`) : '';
-  const nameOf = (c, o) => (c ? `${c.display_name} (${c.harness.name} ${c.harness.version}, ${c.effort || 'default'} effort)` : o.config_id);
-  const cfgA = nameOf(cfgOf(r.a.config_id), r.a);
-  const cfgB = r.b ? nameOf(cfgOf(r.b.config_id), r.b) : null;
+  const saved = Boolean(r.saved);
+  const off = saved ? html` disabled` : '';
+  const rating = [1, 2, 3, 4, 5].map((n) => html`<button type="button" class="rate-btn" data-act="rate-value" data-value="${n}" data-fk="review:rate:${n}" aria-pressed="${String(r.value === n)}"${off}>${n}</button>`);
+  const pairs = r.b ? [['A', 'A is better'], ['B', 'B is better'], ['tie', 'Same']].map(([v, label]) => html`<button type="button" class="rate-btn" data-act="rate-pair" data-pair="${v}" data-fk="review:pair:${v}" aria-pressed="${String(r.pair === v)}"${off}>${label}</button>`) : '';
   const status = r.error
-    ? html`<span class="dlg-status label is-error" role="status">${r.error}</span>`
+    ? html`<p class="dlg-status is-error" role="status">${r.error}</p>`
     : saved
-      ? html`<span class="dlg-status label" role="status">Saved. Answer A was ${cfgA}${cfgB ? html`; answer B was ${cfgB}` : ''}.</span>`
-      : html`<span class="dlg-status label" role="status">${r.saving ? 'Saving' : ''}</span>`;
+      ? html`<p class="dlg-status" role="status">Saved. Answer A was ${whoText(r.a)}${r.b ? `; answer B was ${whoText(r.b)}` : ''}.</p>`
+      : html`<p class="dlg-status" role="status">${r.saving ? 'Saving…' : ''}</p>`;
+  const name = c ? caseName(r.a.case_id, c.suite.id, k && k.input) : r.a.case_id;
   setHtml(
     el,
     html`<div class="dlg-head">
-      <div><h2 id="review-title">Blind review</h2>
-        <div class="label">Case <span class="mono">${r.a.case_id}</span>. ${saved ? 'Names are now shown.' : 'Names are hidden until you save.'}</div></div>
-      <button type="button" class="icon-ctl" data-act="review-close" data-fk="review:x" aria-label="Close review">×</button>
+      <div><h2 id="review-title">Rate answers</h2>
+        <p class="dlg-sub">${name}. ${saved ? 'The names now show.' : 'The names stay hidden until you save.'}</p></div>
+      <button type="button" class="icon-btn" data-act="review-close" data-fk="review:x" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button>
     </div>
     <div class="dlg-body">
-      ${k ? html`<div><div class="sec-title">Brief</div>${Object.keys(k.input || {}).map((key) => html`<div class="msg"><span class="msg-role label">${key}</span><div class="pre mono">${typeof k.input[key] === 'string' ? k.input[key] : JSON.stringify(k.input[key])}</div></div>`)}
-        <details class="detail-box"><summary>Expected answer</summary><div class="pre mono">${k.expected === null || k.expected === undefined ? 'none declared' : typeof k.expected === 'string' ? k.expected : JSON.stringify(k.expected)}</div></details></div>` : ''}
+      ${k ? html`<details class="fold"><summary class="disclose">${k.input && k.input.task ? 'The task' : 'The question'}</summary>${Object.keys(k.input || {}).filter((key) => key !== 'workspace').map((key) => html`<div class="answer-text">${inputText(k.input[key])}</div>`)}
+        ${k.expected !== null && k.expected !== undefined && typeof k.expected !== 'object' ? html`<p class="dlg-sub">Expected: ${String(k.expected)}</p>` : ''}</details>` : ''}
       <div class="sides">${sideHtml(r.a, 'A', saved)}${r.b ? sideHtml(r.b, 'B', saved) : ''}</div>
-      ${r.b ? '' : html`<div class="label">No other selected configuration has an answer for this case, so only a rating is possible.</div>`}
-      <div class="rate-group"><div class="sec-title">Rate answer A, from 1 (poor) to 5 (excellent)</div><div class="rate-row" role="group" aria-label="Rating for answer A">${rating}</div></div>
-      ${r.b ? html`<div class="rate-group"><div class="sec-title">Which answer is better?</div><div class="rate-row" role="group" aria-label="Pairwise choice">${pairs}</div></div>` : ''}
-      <div class="rate-group"><label class="sec-title" for="review-notes">Notes</label><textarea id="review-notes" rows="3" ${saved ? raw('disabled') : ''}>${r.notes}</textarea></div>
+      ${r.b ? '' : html`<p class="dlg-sub">No other shown setup answered this case, so you can rate this answer only.</p>`}
+      <div class="rate-group"><p class="rate-h" id="rate-a-h">Rate answer A, from 1 (poor) to 5 (excellent)</p><div class="rate-row" role="group" aria-labelledby="rate-a-h">${rating}</div></div>
+      ${r.b ? html`<div class="rate-group"><p class="rate-h" id="rate-pair-h">Which answer is better?</p><div class="rate-row" role="group" aria-labelledby="rate-pair-h">${pairs}</div></div>` : ''}
+      <div class="rate-group"><label class="rate-h" for="review-notes">Notes</label><textarea id="review-notes" rows="3"${off}>${r.notes}</textarea></div>
     </div>
     <div class="dlg-foot">
-      ${saved ? html`<button type="button" class="btn" data-act="review-close" data-fk="review:done">Done</button>` : html`<button type="button" class="btn" data-act="review-save" data-fk="review:save"${r.saving ? raw(' disabled') : ''}>Save rating</button><button type="button" class="ctl" data-act="review-close" data-fk="review:cancel">Cancel</button>`}
+      ${saved
+        ? html`<button type="button" class="btn primary" data-act="review-close" data-fk="review:done">Done</button><button type="button" class="btn secondary" data-act="rate-next" data-fk="review:next">Rate another</button>`
+        : html`<button type="button" class="btn primary" data-act="review-save" data-fk="review:save"${r.saving ? html` disabled` : ''}>Save rating</button><button type="button" class="btn secondary" data-act="review-close" data-fk="review:cancel">Cancel</button>`}
       ${status}
     </div>`,
   );
 }
 
-export function openReview(obsId, { instant = false, openerFk = null, saved = () => {} } = {}) {
+// openerFk: the control that gets focus back on close. Left out, the earlier opener stays.
+export function openReview(obsId, { instant = false, openerFk, saved = () => {} } = {}) {
   const chosen = obsById(obsId);
   if (!chosen) return false;
   const other = pickOther(chosen);
   const flip = other ? coin() : false;
   S.review = { a: flip ? other : chosen, b: other ? (flip ? chosen : other) : null, value: null, pair: null, notes: '', saving: false, error: '', saved: null, pairId: other ? uuid() : null };
   onSaved = saved;
-  openerKey = openerFk;
+  if (openerFk !== undefined) openerKey = openerFk;
   clearTimeout(closeTimer);
   renderReview();
   const el = dlg();
@@ -97,6 +125,18 @@ export function openReview(obsId, { instant = false, openerFk = null, saved = ()
   const first = el.querySelector('[data-fk="review:rate:3"]') || el.querySelector('button');
   if (first) first.focus({ preventScroll: true });
   return true;
+}
+
+// The next try to rate after a save: the next answered try in case order, after the one just rated.
+export function nextReviewObs() {
+  const c = ctx();
+  const r = S.review;
+  if (!c || !r) return null;
+  const order = [];
+  for (const caseId of c.cases) for (const id of S.sel) for (const o of cellObs(caseId, id)) if (o.status !== 'error') order.push(o);
+  const rated = new Set([r.a.id, r.b && r.b.id].filter(Boolean));
+  const at = Math.max(...order.map((o, i) => (rated.has(o.id) ? i : -1)));
+  return order.slice(at + 1).find((o) => o.case_id !== r.a.case_id) || order.find((o) => !rated.has(o.id) && o.case_id !== r.a.case_id) || null;
 }
 
 export function closeReview({ instant = false } = {}) {
@@ -140,7 +180,7 @@ export async function saveReview() {
   const r = S.review;
   if (!r || r.saving || r.saved) return;
   if (r.value === null && r.pair === null) {
-    setReview({ error: 'Choose a rating or a pairwise answer first.' });
+    setReview({ error: 'Choose a rating or the better answer first.' });
     return;
   }
   setReview({ saving: true, error: '' });
@@ -160,12 +200,8 @@ export async function saveReview() {
     setReview({ saving: false, saved: record, error: '' });
     onSaved(record);
   } catch (error) {
-    setReview({ saving: false, error: `Could not save. Try again. (${error.message})` });
+    setReview({ saving: false, error: `Not saved. Try again. (${error.message})` });
   }
-}
-
-export function reviewKeydown(event) {
-  trapTab(event, dlg());
 }
 
 export function wireReview() {
@@ -177,7 +213,7 @@ export function wireReview() {
   el.addEventListener('input', (event) => {
     if (event.target && event.target.id === 'review-notes' && S.review) S.review.notes = event.target.value;
   });
-  el.addEventListener('keydown', reviewKeydown);
+  el.addEventListener('keydown', (event) => trapTab(event, el));
   el.addEventListener('click', (event) => {
     if (event.target === el) closeReview();
   });

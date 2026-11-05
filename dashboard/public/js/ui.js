@@ -35,8 +35,6 @@ export function setStatus(message, kind = '') {
   }
 }
 
-export const reducedMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
 // Keep focus on the same control across a re-render. Controls carry data-fk.
 export function captureFocus() {
   const a = document.activeElement;
@@ -59,7 +57,7 @@ export function restoreFocus(saved, fallbacks = []) {
   }
 }
 
-export function focusableIn(root) {
+function focusableIn(root) {
   return [...root.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])')].filter((el) => el.offsetParent !== null || el === document.activeElement);
 }
 
