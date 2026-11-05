@@ -1,0 +1,33 @@
+{
+  "probes": {
+    "keeps toMinor and format for positive amounts": [1234,5,1500,"1234.56 USD","5000 JPY","1.500 KWD","0.00 EUR","threw","threw","threw"],
+    "format keeps the sign of amounts under one major unit": ["-0.05 USD","-0.005 KWD","-0.99 EUR","-12345.67 USD","-1.00 USD","-250 JPY"],
+    "convert uses the exponent of each currency for yen": [1503,38,1000,1],
+    "convert uses the exponent of each currency for three-digit currencies": [30750,10000,2047],
+    "convert rounds halves away from zero": [3,-3,-2,1,-1,0],
+    "convert does not lose exact halves to binary floating point": [15,1005,10],
+    "a derived inverse rate is exact": [10000,2000,100000000,123],
+    "a conversion through the pivot rounds once": [87,99,543,101],
+    "keeps rate() as a plain number": [1.085,1,"number",150.25],
+    "keeps a missing rate an error": ["threw","threw",100],
+    "the percentage fee rounds half away from zero": [1,5,6,0,8],
+    "keeps flat and percentage fees adding up": [55,10,0,0],
+    "a transfer into yen with a fee": {"result":{"fee":200,"received":30050},"alice":79800,"jun":30050,"trial":{"USD":0,"JPY":0}},
+    "a transfer into a three-digit currency": {"khalid":17422,"back":{"fee":0,"received":2047},"trial":{"USD":0,"KWD":0,"JPY":0}},
+    "split gives away every unit": {"shares":[34,33,33],"balances":[900,34,33,33]},
+    "split to payees in other currencies": {"shares":[167,333,500],"e":154,"j":500,"u":500,"payer":4000,"trial":{"USD":0,"EUR":0,"JPY":0}},
+    "allocate hands leftover units to the largest remainders": [[34,33,33],[4,3],[2,4,4],[167,333,500],[1,1,0,0],[1,0,0]],
+    "allocate with zero weights, zero totals and negative totals": [[0,0,5],[0,0],[-34,-33,-33],[10],[0,5,0],[-1,0]],
+    "allocate refuses weights that cannot be used": ["threw","threw","threw"],
+    "keeps allocate on weights that divide evenly": [[50,50],[30,60],[25,75],[0]],
+    "net worth converts each currency total once": [1584,972,1054],
+    "keeps net worth free of the ledger accounts": [4975,3975,1000],
+    "a statement keeps the sign of small negative amounts": [["deposit","50.00","USD","50.00","USD"],["transfer","-0.05","USD","49.95","USD"]],
+    "keeps the trial balance at zero after mixed postings": {"USD":0,"EUR":0,"JPY":0,"KWD":0},
+    "keeps the public exports": []
+  },
+  "files": {
+    "test/money.test.mjs": {"same_as_starter":true},
+    "test/ledger.test.mjs": {"same_as_starter":true}
+  }
+}

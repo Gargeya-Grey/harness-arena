@@ -1,0 +1,14 @@
+id: agentic-hard
+version: "1.0.0"
+description: >
+  Hard agent tasks. Each case copies a real multi-file starter project (7 to 10
+  source files, plain Node ESM, visible tests) into the run's isolated workdir.
+  The task reads like a user's issue: symptoms and the rules the owner agreed
+  on, never the cause or the file. The agent has to diagnose across files and
+  handle the edge cases a careful engineer would. The runner stores the final
+  workspace, and the workspace-tests evaluator runs a hidden check of 20 to 25
+  probes and file rules against it in a sandboxed Node process. Score is the
+  share of hidden tests passed. The suite exists because the easy tasks of the
+  agentic suite pass for every strong agent, so they cannot separate them.
+defaults:
+  repeats: 3
