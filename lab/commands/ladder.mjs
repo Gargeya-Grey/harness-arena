@@ -7,8 +7,11 @@
 //   formatLadder()   the text tables
 //   ladderCommand()  loads, filters, prints (or prints JSON)
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { ladderStatus } from '../lib/ladder.mjs';
 import { mean } from '../lib/metrics.mjs';
+import { loadYamlFile, paths } from '../lib/repo.mjs';
 import { buildState, countedRows } from '../lib/state.mjs';
 
 const EPS = 1e-9;
@@ -71,7 +74,8 @@ export function compareVersions(a, b) {
  * Keep, per suite, only the counted runs of one suite version: the newest that has counted runs,
  * or the version named in `chosen` (Map suite id -> version). Runs of other versions are left out,
  * because a task reworked under the same case_id in a new version is a different measurement.
- * One suite version that mixes prompt versions is refused: the scores would not be comparable.
+ * One suite version that mixes prompt versions, or quality evaluator versions, is refused: the scores
+ * would not be comparable (AGENTS.md invariant 4).
  * Returns { rows, versions }; versions lists the suite, version, prompt, run count and runs left out.
  */
 function selectVersions(observations, contextOf, chosen) {
@@ -79,7 +83,8 @@ function selectVersions(observations, contextOf, chosen) {
   for (const row of observations) {
     if (!runs.has(row.run_id)) {
       const ctx = contextOf.get(row.context_key);
-      runs.set(row.run_id, { run_id: row.run_id, suite: ctx.suite.id, version: String(ctx.suite.version), prompt: `${ctx.prompt.id}@${ctx.prompt.version}`, rows: [] });
+      const evaluators = (ctx.evaluators || []).filter((item) => item.dimension === 'quality').map((item) => `${item.id}@${item.version}`).sort().join(' + ');
+      runs.set(row.run_id, { run_id: row.run_id, suite: ctx.suite.id, version: String(ctx.suite.version), prompt: `${ctx.prompt.id}@${ctx.prompt.version}`, evaluators, rows: [] });
     }
     runs.get(row.run_id).rows.push(row);
   }
@@ -96,6 +101,10 @@ function selectVersions(observations, contextOf, chosen) {
     if (prompts.length > 1) {
       throw new Error(`${suiteId}@${version} has counted runs with different prompt versions (${prompts.join(', ')}); scores of different prompts are not comparable. Choose the runs with --runs.`);
     }
+    const evaluators = [...new Set(used.map((run) => run.evaluators))].sort();
+    if (evaluators.length > 1) {
+      throw new Error(`${suiteId}@${version} has counted runs scored with different quality evaluator versions (${evaluators.join(', ')}); scores of different evaluator versions are not comparable. Choose the runs with --runs.`);
+    }
     used.forEach((run) => keep.add(run.run_id));
     const other = own.filter((run) => run.version !== version);
     versions.push({ suite: suiteId, version: version ?? null, prompt: prompts[0] ?? null, runs: used.length, left_out_runs: other.length, left_out_versions: [...new Set(other.map((run) => run.version))].sort(compareVersions) });
@@ -110,6 +119,10 @@ function selectVersions(observations, contextOf, chosen) {
  *   ladderCases   [{ kind, suite, item }] as ladderStatus(root).cases returns them
  *   suite, runs   optional filters: a ladder suite id (or kind), and run ids
  *   suiteVersions optional ['<suite>@<version>', ...]: use that version of a suite instead of its newest
+ *   diskVersions  optional Map suite id -> the suite version on disk (suite.yaml). Tiers, tier sizes and the case
+ *                 set always come from the suite on disk. A run stores no case metadata, so the tier a task had in
+ *                 an older suite version cannot be recovered; when the scored version is not the version on disk,
+ *                 `warnings` says so, one entry per suite.
  *
  * A task is solved by a configuration when its mean score over the configuration's counted
  * repeats is 1. A tier cell holds solved / counted tasks and the mean of those tasks' means.
@@ -123,7 +136,7 @@ function selectVersions(observations, contextOf, chosen) {
  * their abilities are their means over the other tasks both ran. The case is flagged when the pair's
  * higher-ability configuration scored under 0.5 on every repeat of the case and the other scored 1 on every repeat.
  */
-export function ladderReport({ state, ladder, ladderCases, suite = null, runs = null, suiteVersions = null }) {
+export function ladderReport({ state, ladder, ladderCases, suite = null, runs = null, suiteVersions = null, diskVersions = null }) {
   const inScope = ladderCases.filter((entry) => !suite || entry.suite === suite || entry.kind === suite);
   const caseIds = new Set(inScope.map((entry) => entry.item.case_id));
   const withQuality = new Set((state.contexts || []).filter((ctx) => (ctx.evaluators || []).some((item) => item.dimension === 'quality')).map((ctx) => ctx.key));
@@ -213,7 +226,20 @@ export function ladderReport({ state, ladder, ladderCases, suite = null, runs = 
     })
     .sort((a, b) => (a.tier ?? 99) - (b.tier ?? 99) || a.case_id.localeCompare(b.case_id));
 
-  return { configs, tiers, cases, versions };
+  const warnings = [];
+  for (const item of versions) {
+    const onDisk = diskVersions?.get(item.suite);
+    if (!item.runs || item.version == null || onDisk == null || String(onDisk) === item.version) continue;
+    warnings.push({
+      suite: item.suite,
+      scored_version: item.version,
+      disk_version: String(onDisk),
+      tier_source: 'disk',
+      message: `${item.suite}: scores are from suite version ${item.version}, but the suite on disk is ${onDisk}. Tiers, tier sizes and the case set are those of ${onDisk}; the tiers of ${item.version} are not stored in a run, so a task that changed tier between them is judged against its new tier.`,
+    });
+  }
+
+  return { configs, tiers, cases, versions, warnings };
 }
 
 const fixed = (value) => (value == null ? 'n/a' : value.toFixed(2));
@@ -239,6 +265,7 @@ export function formatLadder(report, { calibrate = false } = {}) {
     const detail = report.versions.filter((item) => item.left_out_runs).map((item) => `${item.suite} ${item.left_out_versions.join(', ')}`).join('; ');
     lines.push(`Suite versions used: ${used}. Left out: ${left} counted run${left === 1 ? '' : 's'} of other versions${left ? ` (${detail})` : ''}.`);
   }
+  for (const warning of report.warnings || []) lines.push(`Warning: ${warning.message}`);
   if (!rows.length) lines.push('No counted ladder runs yet. Run an experiment from experiments/ladder-*.yaml, or see node lab runs.');
   if (rows.some((row) => row.some((text) => String(text).includes('*')))) lines.push('* the configuration has counted results for fewer tasks than the tier holds.');
   if (calibrate) {
@@ -285,6 +312,7 @@ export function ladderCommand(root, { calibrate = false, json = false, suite = n
     if (at < 1 || at === ref.length - 1 || !known.includes(id)) throw new Error(`--suite-version must be <suite>@<version> with a suite from ${known.join(', ')}; got "${ref}"`);
     const version = ref.slice(at + 1);
     if (picked.has(id) && picked.get(id) !== version) throw new Error(`--suite-version names two versions of ${id}: ${picked.get(id)} and ${version}`);
+    if (chosen && id !== chosen) throw new Error(`--suite-version ${ref} is for a suite that --suite ${suite} leaves out; drop one of them`);
     picked.set(id, version);
   }
   const versionRefs = [...picked].map(([id, version]) => `${id}@${version}`);
@@ -300,7 +328,13 @@ export function ladderCommand(root, { calibrate = false, json = false, suite = n
       runIds.push(...(exact.length ? exact : matches));
     }
   }
-  const report = ladderReport({ state, ladder: status.ladder, ladderCases: status.cases, suite: chosen, runs: runIds, suiteVersions: versionRefs });
+  const diskVersions = new Map();
+  for (const id of known) {
+    const file = path.join(paths(root).datasets, id, 'suite.yaml');
+    const version = fs.existsSync(file) ? loadYamlFile(file)?.version : null;
+    if (version != null) diskVersions.set(id, String(version));
+  }
+  const report = ladderReport({ state, ladder: status.ladder, ladderCases: status.cases, suite: chosen, runs: runIds, suiteVersions: versionRefs, diskVersions });
   if (json) {
     log(JSON.stringify({ problems: status.problems, filters: { suite: chosen, runs: runIds, suite_versions: versionRefs.length ? versionRefs : null }, ...report }, null, 2));
     return report;

@@ -11,8 +11,12 @@
 //
 // The solutions live in tests/fixtures/ladder-code-solutions/supreme/:
 //   <case_id>.mjs         reference
-//   <case_id>.naive.mjs   correct on small inputs, too slow on huge ones (efficiency cases only)
+//   <case_id>.naive.mjs   correct on small inputs, too slow on huge ones (efficiency cases; parse-counter holds an enumerator)
 //   <case_id>.wrong.mjs   plausible mistake
+//
+// Time budget: a naive or brute-force answer times out on some tests, and each one costs 2 s of the
+// 30 s the sandbox process gets. Every case, spec cases included, keeps those tests inside a share of the
+// process limit (BUDGET_FRACTION), so a slow answer scores the same on an idle and on a busy machine.
 //
 // The reference solution is not the only judge of the expected values. Every case also carries
 // hand-derived tests: tests whose `returns` stands in the definition (worked out from the task text,
@@ -40,6 +44,15 @@ const PROCESS_LIMIT_MS = 30000;
 // The reference solutions of one case together, and the best score a correct but slow solution may reach.
 const CASE_REFERENCE_LIMIT_MS = 12000;
 const NAIVE_SCORE_LIMIT = 0.35;
+// A case may hold tests that cost a slow answer the full 2 s each. A spec case keeps them within half of the
+// process limit (7 tests). An efficiency case keeps its old limit of three quarters (11 tests): its huge
+// tests are the point of the case, and every efficiency case holds 10 of them (a slow answer loses them by design).
+const BUDGET_FRACTION = { spec: 0.5, efficiency: 0.75 };
+// Enumeration speed: an enumerator visits about 1.5e7 steps per second in the sandbox (measured on the
+// parse-counter enumerator). A test that needs more than ENUMERATION_STEPS is counted as unfinished. The
+// layout rule uses the number of layouts the same way, with a margin: above 3e7 no enumeration finishes in 2 s.
+const ENUMERATION_STEPS = 1e7;
+const LAYOUT_LIMIT = 3e7;
 
 const slugs = fs.readdirSync(DEFS).filter((name) => name.endsWith('.mjs') && !name.startsWith('_')).map((name) => name.slice(0, -4)).sort();
 const ids = new Set(slugs.map((slug) => `ladder-code-${slug}`));
@@ -113,6 +126,71 @@ async function pool(jobs, size) {
     }
   }));
   return results;
+}
+
+// How many tests of a case a naive or brute-force answer cannot finish, by a rule that does not depend on
+// the speed of the machine (a count of labels, steps or layouts, never a clock).
+//
+// - efficiency case: the tests labelled huge (the naive fixture is run for real by another test).
+// - parse-counter: the enumerator fixture counts its steps; a test that needs more than ENUMERATION_STEPS
+//   is unfinished. It stops at the limit, so a test with 2^58 derivations costs about 0.7 s here, not hours.
+// - balanced-layout: the number of ways to cut the items of the text into lines that fit. An answer that
+//   tries every layout (or a recursion without a memo) has to visit them all; above LAYOUT_LIMIT it cannot.
+// - lumen-interpreter, sheet-engine: no search space; the expected value follows from one pass over the input.
+const NOTHING_TO_ENUMERATE = new Set(['ladder-code-lumen-interpreter', 'ladder-code-sheet-engine']);
+
+function enumeratorSteps(item) {
+  const source = solutionText(item.case_id, '.naive');
+  return item.expected.tests.map((one, index) => {
+    const context = vm.createContext({ __STEP_LIMIT: ENUMERATION_STEPS });
+    vm.runInContext(source, context);
+    try {
+      const value = vm.runInContext(`${item.input.name}(...${JSON.stringify(one.args)})`, context);
+      assert.equal(value, one.returns, `${item.case_id}: the enumerator disagrees with the stored value of test #${index}`);
+      return false;
+    } catch (error) {
+      if (error?.message === 'step limit') return true;
+      throw error;
+    }
+  });
+}
+
+// The items of a text as the task text defines them, and the number of ways to put them into lines of at most width.
+function layoutCount(text, width) {
+  const alnum = (c) => /[A-Za-z0-9]/.test(c ?? '');
+  const items = [];
+  text.split(' ').filter(Boolean).forEach((word, wordIndex) => {
+    const fragments = [];
+    let current = '';
+    for (let i = 0; i < word.length; i += 1) {
+      current += word[i];
+      if (word[i] === '-' && alnum(word[i - 1]) && alnum(word[i + 1])) {
+        fragments.push(current);
+        current = '';
+      }
+    }
+    if (current) fragments.push(current);
+    for (const fragment of fragments) for (let at = 0; at < fragment.length; at += width) items.push({ length: Math.min(width, fragment.length - at), word: wordIndex });
+  });
+  const ways = new Array(items.length + 1).fill(0);
+  ways[items.length] = 1;
+  for (let from = items.length - 1; from >= 0; from -= 1) {
+    let length = 0;
+    for (let to = from; to < items.length; to += 1) {
+      length += items[to].length + (to > from && items[to].word !== items[to - 1].word ? 1 : 0);
+      if (length > width) break;
+      ways[from] += ways[to + 1];
+    }
+  }
+  return ways[0];
+}
+
+function unfinishedTests(item) {
+  if (item.tags.includes('efficiency')) return item.metadata.test_edges.filter((label) => label.startsWith('huge')).length;
+  if (item.case_id === 'ladder-code-parse-counter') return enumeratorSteps(item).filter(Boolean).length;
+  if (item.case_id === 'ladder-code-balanced-layout') return item.expected.tests.filter((one) => layoutCount(one.args[0], one.args[1]) > LAYOUT_LIMIT).length;
+  assert.ok(NOTHING_TO_ENUMERATE.has(item.case_id), `${item.case_id}: state how a naive answer is counted`);
+  return 0;
 }
 
 const failing = (score) => score.details.results.map((item, index) => ({ index, item })).filter(({ item }) => !item.ok).map(({ index, item }) => `#${index} ${JSON.stringify(item).slice(0, 300)}`);
@@ -203,8 +281,62 @@ test('most tests of an efficiency case are huge, and the first three are small',
     const huge = labels.filter((label) => label.startsWith('huge')).length;
     assert.ok(huge / labels.length >= 0.65, `${item.case_id}: only ${huge} of ${labels.length} tests are huge`);
     assert.ok(labels.slice(0, 3).every((label) => !label.startsWith('huge')), `${item.case_id}: the first three tests must be small`);
-    // The sandbox stops a process after 30 s, and a timed-out test costs 2 s: leave room for all of them.
-    assert.ok(huge * TEST_LIMIT_MS <= PROCESS_LIMIT_MS * 0.75, `${item.case_id}: ${huge} huge tests could time the whole sandbox process out`);
+  }
+});
+
+test('a naive or brute-force answer times out on tests worth only part of the 30 s process limit, in every case', () => {
+  for (const item of cases) {
+    const unfinished = unfinishedTests(item);
+    // The sandbox stops a process after 30 s, and a timed-out test costs 2 s: leave room for the rest of the work.
+    const share = BUDGET_FRACTION[item.tags.includes('efficiency') ? 'efficiency' : 'spec'];
+    assert.ok(unfinished * TEST_LIMIT_MS <= PROCESS_LIMIT_MS * share, `${item.case_id}: ${unfinished} tests a slow answer cannot finish, ${unfinished * TEST_LIMIT_MS / 1000} s of ${PROCESS_LIMIT_MS / 1000} s (limit ${share})`);
+    console.log(`# ${item.case_id}: ${unfinished} unfinished tests, ${unfinished * TEST_LIMIT_MS / 1000} s of timeouts`);
+  }
+});
+
+test('the parse-counter enumerator is correct on every test it can finish, and it cannot finish the six huge ones', () => {
+  const item = cases.find((one) => one.case_id === 'ladder-code-parse-counter');
+  const unfinished = enumeratorSteps(item);
+  assert.equal(unfinished.filter(Boolean).length, 6);
+  assert.ok(unfinished.filter((flag) => !flag).length > 100, 'the enumerator should finish the ordinary tests');
+});
+
+// Every layout of a text without hyphens, as lists of line ends, with its cost (the last line is free).
+function layouts(text, width) {
+  const words = text.split(' ').filter(Boolean);
+  const found = [];
+  const walk = (from, ends, cost) => {
+    if (from === words.length) {
+      found.push({ ends, cost });
+      return;
+    }
+    let length = 0;
+    for (let to = from; to < words.length; to += 1) {
+      length += words[to].length + (to > from ? 1 : 0);
+      if (length > width) break;
+      walk(to + 1, [...ends, to + 1], cost + (to + 1 === words.length ? 0 : (width - length) ** 2));
+    }
+  };
+  walk(0, [], 0);
+  return found;
+}
+
+test('every tie-later row of balanced-layout has two optimal layouts, and the stored answer is the one with the latest breaks', () => {
+  const def = defs.get('ladder-code-balanced-layout');
+  const rows = def.tests.filter((one) => one.edge === 'tie-later' && 'returns' in one);
+  assert.ok(rows.length >= 4);
+  for (const row of rows) {
+    const [text, width] = row.args;
+    assert.ok(!text.includes('-'), 'the oracle does not split hyphens');
+    const all = layouts(text, width);
+    const best = Math.min(...all.map((one) => one.cost));
+    const optimal = all.filter((one) => one.cost === best);
+    assert.ok(optimal.length >= 2, `${JSON.stringify(row.args)}: only ${optimal.length} optimal layout`);
+    // The later break wins: compare the line ends from the first line on, the larger end is better.
+    const winner = optimal.reduce((a, b) => (a.ends.some((end, i) => end !== b.ends[i] && end < b.ends[i] && a.ends.slice(0, i).every((e, j) => e === b.ends[j])) ? b : a));
+    const words = text.split(' ');
+    const lines = winner.ends.map((end, i) => words.slice(i === 0 ? 0 : winner.ends[i - 1], end).join(' '));
+    assert.deepEqual(row.returns.map((line) => line.split(/ +/).join(' ')), lines, `${JSON.stringify(row.args)}`);
   }
 });
 

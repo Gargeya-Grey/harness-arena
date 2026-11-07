@@ -53,7 +53,7 @@ function parse(lines, refs) {
   };
   const flush = () => {
     if (!para) return;
-    blocks = [...blocks, { type: 'p', text: para.lines.join('\n'), blank: para.blank }];
+    blocks.push({ type: 'p', text: para.lines.join('\n'), blank: para.blank });
     para = null;
   };
 
@@ -69,7 +69,7 @@ function parse(lines, refs) {
     if (para) {
       const under = SETEXT.exec(line);
       if (under) {
-        blocks = [...blocks, { type: 'h', level: under[1][0] === '=' ? 1 : 2, text: para.lines.join('\n'), blank: para.blank }];
+        blocks.push({ type: 'h', level: under[1][0] === '=' ? 1 : 2, text: para.lines.join('\n'), blank: para.blank });
         para = null;
         i += 1;
         continue;
@@ -139,7 +139,7 @@ function parse(lines, refs) {
 
     const first = listMarker(line);
     if (first) {
-      let items = [];
+      const items = [];
       let j = i;
       let blankBefore = false;
       for (;;) {
@@ -162,7 +162,7 @@ function parse(lines, refs) {
           body.push(lines[k].slice(marker.contentCol));
           k += 1;
         }
-        items = [...items, { blocks: parse(body, refs), blank: blankBefore }];
+        items.push({ blocks: parse(body, refs), blank: blankBefore });
         let p = k;
         while (p < lines.length && isBlank(lines[p])) p += 1;
         const next = p < lines.length ? listMarker(lines[p]) : null;

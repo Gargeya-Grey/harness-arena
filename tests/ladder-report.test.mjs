@@ -50,7 +50,7 @@ const SCORES = {
   'model-c': { c1: [1, 1], c2: [0, 0], c3: [0, 0], c4: [1, 1], c5: [0, 0], c6: [0, 1] },
 };
 
-function manifest(runId, modelKey, { status = 'completed', suiteVersion = '1.0.0', promptVersion = '1' } = {}) {
+function manifest(runId, modelKey, { status = 'completed', suiteVersion = '1.0.0', promptVersion = '1', evaluatorVersion = '1' } = {}) {
   return {
     run_id: runId,
     created_at: '2026-11-01T10:00:00.000Z',
@@ -61,7 +61,7 @@ function manifest(runId, modelKey, { status = 'completed', suiteVersion = '1.0.0
     experiment: { id: 'ladder-code', suite: 'ladder-code', prompt: 'js-function', repeats: 2 },
     models: [{ model_key: modelKey, provider: 'fake', model: modelKey, params: {} }],
     repeats: 2,
-    evaluators: [QUALITY],
+    evaluators: [{ ...QUALITY, version: evaluatorVersion }],
     harness: { name: 'fake', version: '1.0.0', entrypoint: 'headless', access_method: 'subscription', platform: 'win32', session_id: null, settings: {} },
     ...(status === 'running' ? { runner: { pid: 1, heartbeat_at: '2026-11-01T10:00:00.000Z' } } : {}),
   };
@@ -69,6 +69,7 @@ function manifest(runId, modelKey, { status = 'completed', suiteVersion = '1.0.0
 
 // One run: rows = [{ slug, repeat, value }] or [{ slug, repeat, error: { type } }].
 function writeRun(root, rand, modelKey, rows, options = {}) {
+  const evaluatorVersion = options.evaluatorVersion ?? '1';
   const runId = `20261101T100000Z__ladder-code__ladder-code__${rand}`;
   const dir = path.join(root, 'results', runId);
   write(path.join(dir, 'run.json'), `${JSON.stringify(manifest(runId, modelKey, options), null, 2)}\n`);
@@ -90,9 +91,9 @@ function writeRun(root, rand, modelKey, rows, options = {}) {
   }));
   const scores = rows
     .filter(({ error }) => !error)
-    .map(({ slug, repeat, value }) => ({ run_id: runId, case_id: `ladder-code-${slug}`, model_key: modelKey, repeat, evaluator_id: 'workspace-tests', evaluator_version: '1', dimension: 'quality', value, passed: value === 1, details: {} }));
+    .map(({ slug, repeat, value }) => ({ run_id: runId, case_id: `ladder-code-${slug}`, model_key: modelKey, repeat, evaluator_id: 'workspace-tests', evaluator_version: evaluatorVersion, dimension: 'quality', value, passed: value === 1, details: {} }));
   write(path.join(dir, 'raw.jsonl'), jsonl(raw));
-  write(path.join(dir, 'scores', 'workspace-tests@1.jsonl'), jsonl(scores));
+  write(path.join(dir, 'scores', `workspace-tests@${evaluatorVersion}.jsonl`), jsonl(scores));
   return { runId, dir };
 }
 
@@ -245,9 +246,10 @@ test('--json prints the same data, with the problems and the filters', (t) => {
   const report = ladderCommand(root, { json: true, suite: 'code', log: (line) => lines.push(line) });
   const parsed = JSON.parse(lines.join('\n'));
   assert.deepEqual(parsed.configs, JSON.parse(JSON.stringify(report.configs)));
-  assert.deepEqual(Object.keys(parsed).sort(), ['cases', 'configs', 'filters', 'problems', 'tiers', 'versions']);
+  assert.deepEqual(Object.keys(parsed).sort(), ['cases', 'configs', 'filters', 'problems', 'tiers', 'versions', 'warnings']);
   assert.deepEqual(parsed.filters, { suite: 'ladder-code', runs: null, suite_versions: null });
   assert.deepEqual(parsed.versions, [{ suite: 'ladder-code', version: '1.0.0', prompt: 'js-function@1', runs: 3, left_out_runs: 0, left_out_versions: [] }]);
+  assert.deepEqual(parsed.warnings, []);
   assert.ok(parsed.problems.length > 0);
   assert.throws(() => ladderCommand(root, { suite: 'nope', log: () => {} }), /--suite must be one of ladder-answer, ladder-code, ladder-agent/);
   assert.throws(() => ladderCommand(root, { runs: ['no-such-run'], log: () => {} }), /no run matches/);
@@ -347,4 +349,54 @@ test('negative discrimination: no other shared task, no flag; failed means under
   assert.deepEqual(flagsOf(report), [['model-w', 'model-q', 1, 0, 1]], '0.95 and 0.95 is a near miss, and 0.4 with 0.9 is not a failure on every repeat');
   const perConfig = Object.fromEntries(report.cases.find((entry) => entry.case_id === 'ladder-code-c3').per_config.map((entry) => [entry.config_id.split('__')[0], [entry.solved, entry.failed]]));
   assert.deepEqual(perConfig, { 'model-w': [true, false], 'model-x': [false, true], 'model-p': [false, false], 'model-q': [false, true], 'model-r': [false, false] });
+});
+
+test('suite versions: a suite version that mixes quality evaluator versions is refused, naming both; --runs keeps one', (t) => {
+  const root = makeRoot(t);
+  writeRun(root, 'g00001', 'model-a', rowsOf({ c1: [1, 1] }), { evaluatorVersion: '1' });
+  const second = writeRun(root, 'g00002', 'model-b', rowsOf({ c1: [1, 1] }), { evaluatorVersion: '2' });
+  ensureLedger(root);
+  assert.throws(() => reportOf(root), /ladder-code@1\.0\.0 has counted runs scored with different quality evaluator versions \(workspace-tests@1, workspace-tests@2\).*--runs/);
+  assert.throws(() => ladderCommand(root, { log: () => {} }), /workspace-tests@1, workspace-tests@2/);
+  assert.equal(reportOf(root, { runs: [second.runId] }).configs.length, 1, '--runs keeps one evaluator version');
+  // Another suite version with the newer evaluator is a different suite version: no mix, no refusal.
+  const other = makeRoot(t);
+  writeRun(other, 'g00003', 'model-a', rowsOf({ c1: [1, 1] }), { suiteVersion: '1.0.0', evaluatorVersion: '1' });
+  writeRun(other, 'g00004', 'model-a', rowsOf({ c1: [1, 1] }), { suiteVersion: '1.1.0', evaluatorVersion: '2' });
+  ensureLedger(other);
+  assert.equal(reportOf(other).versions[0].version, '1.1.0');
+});
+
+test('a scored suite version that is not the version on disk: one warning line per suite, in the text and in the JSON; the disk tiers are used', (t) => {
+  const root = versionedRoot(t);
+  write(path.join(root, 'datasets', 'ladder-code', 'suite.yaml'), 'id: ladder-code\nversion: "1.2.0"\n');
+  const lines = [];
+  const report = ladderCommand(root, { calibrate: true, log: (line) => lines.push(line) });
+  const warnings = lines.filter((line) => line.startsWith('Warning:'));
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /^Warning: ladder-code: scores are from suite version 1\.1\.0, but the suite on disk is 1\.2\.0\. Tiers, tier sizes and the case set are those of 1\.2\.0; the tiers of 1\.1\.0 are not stored in a run/);
+  assert.deepEqual(report.warnings.map(({ suite, scored_version, disk_version, tier_source }) => [suite, scored_version, disk_version, tier_source]), [['ladder-code', '1.1.0', '1.2.0', 'disk']]);
+  // --suite-version picks the older version: the warning names that one.
+  const old = ladderCommand(root, { suiteVersions: ['ladder-code@1.0.0'], json: true, log: () => {} });
+  assert.deepEqual(old.warnings.map((entry) => [entry.scored_version, entry.disk_version]), [['1.0.0', '1.2.0']]);
+  const json = [];
+  ladderCommand(root, { json: true, log: (line) => json.push(line) });
+  assert.equal(JSON.parse(json.join('\n')).warnings.length, 1);
+  // Scores of the version on disk: no warning. A chosen version with no counted run: nothing was scored, no warning.
+  const same = versionedRoot(t);
+  write(path.join(same, 'datasets', 'ladder-code', 'suite.yaml'), 'id: ladder-code\nversion: "1.1.0"\n');
+  assert.deepEqual(ladderCommand(same, { json: true, log: () => {} }).warnings, []);
+  assert.deepEqual(ladderCommand(root, { suiteVersions: ['ladder-code@9.9.9'], json: true, log: () => {} }).warnings, []);
+  // A suite that --suite leaves out gets no warning.
+  assert.deepEqual(ladderCommand(root, { suite: 'ladder-answer', json: true, log: () => {} }).warnings, []);
+});
+
+test('--suite-version for a suite that --suite leaves out is refused, not ignored', (t) => {
+  const root = versionedRoot(t);
+  assert.throws(() => ladderCommand(root, { suite: 'code', suiteVersions: ['ladder-agent@1.0.0'], log: () => {} }), /--suite-version ladder-agent@1\.0\.0 is for a suite that --suite code leaves out/);
+  const same = ladderCommand(root, { suite: 'ladder-code', suiteVersions: ['code@1.0.0'], json: true, log: () => {} });
+  assert.equal(same.versions[0].version, '1.0.0', 'the same suite, by alias, is fine');
+  const lines = [];
+  ladderCommand(root, { suite: 'ladder-code', suiteVersions: ['ladder-code@1.0.0'], json: true, log: (line) => lines.push(line) });
+  assert.deepEqual(JSON.parse(lines.join('\n')).filters.suite_versions, ['ladder-code@1.0.0']);
 });

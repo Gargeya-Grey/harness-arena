@@ -192,7 +192,10 @@ test('no starter file contains a probe name or an expected value, and the task n
 
 test('the starters, checks and solutions leak no home path, tool setup or old suite name', () => {
   const bad = /Users[\\/]|AppData|\.claude|C:\\|\/home\//;
-  const roots = SLUGS.flatMap((slug) => [fixtureOf(slug), path.join(SUITE, 'checks', slug), path.join(SOLUTIONS, slug), path.join(SOLUTIONS, `${slug}--partial`)]);
+  // Every overlay folder of a task: the reference, the partial one and the slow ones (<slug>--partial, <slug>--slow, ...).
+  const overlays = (slug) => fs.readdirSync(SOLUTIONS).filter((name) => name === slug || name.startsWith(`${slug}--`)).map((name) => path.join(SOLUTIONS, name));
+  const roots = SLUGS.flatMap((slug) => [fixtureOf(slug), path.join(SUITE, 'checks', slug), ...overlays(slug)]);
+  assert.ok(roots.some((root) => root.endsWith('--slow')), 'the scan sees no slow overlay');
   for (const root of roots) {
     for (const file of listFiles(root)) {
       const text = fs.readFileSync(file, 'utf8');

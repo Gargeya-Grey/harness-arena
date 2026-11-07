@@ -28,8 +28,8 @@ export class Sequence {
     const node = this.byId.get(id);
     if (node.deleted) return;
     node.deleted = true;
-    this.visible = this.nodes.filter((n) => !n.deleted).length;
-    this.tombstones = this.nodes.filter((n) => n.deleted).length;
+    this.visible -= 1;
+    this.tombstones += 1;
   }
 
   /** The ids of `count` visible elements from visible index `index`. */

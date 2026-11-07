@@ -8,6 +8,12 @@ const attempt = (fn) => {
     return 'threw';
   }
 };
+// Speed verdicts use the CPU time of this process (user + system, ms), never the wall clock:
+// a busy machine slows the clock but not the CPU time that the code itself needs.
+const cpuMs = () => {
+  const { user, system } = process.cpuUsage();
+  return (user + system) / 1000;
+};
 const round = (value) => (typeof value === 'number' ? Number(value.toFixed(9)) : value);
 const clean = (summary) => ({
   rows: summary.rows,
@@ -208,7 +214,29 @@ export const probes = [
       for (let i = 0; i < 20000; i += 1) text += `R${i % 7},${(i % 100) + 0.25},"note ""${i}"", ok"\r\n`;
       const chunks = [];
       for (let i = 0; i < text.length; i += 512) chunks.push(text.slice(i, i + 512));
-      const s = summarizeChunks(chunks, OPTIONS);
+      // Speed verdict by CPU time, as in the other checks. The wall-clock timer of the runner cannot stop
+      // synchronous code, so the chunks themselves stop coming once the limit is passed: a solution that parses
+      // the whole text again for every chunk ends early, and the probe then reports "too slow".
+      const limit = 2000;
+      let cut = false;
+      const t0 = cpuMs();
+      const fed = chunks.slice();
+      fed[Symbol.iterator] = function* () {
+        for (let i = 0; i < chunks.length; i += 1) {
+          if (cpuMs() - t0 > limit) {
+            cut = true;
+            return;
+          }
+          yield chunks[i];
+        }
+      };
+      let s = null;
+      try {
+        s = summarizeChunks(fed, OPTIONS);
+      } catch (error) {
+        if (!cut) throw error; // the cut text ends inside a quoted field: that is not the fault
+      }
+      if (cut || cpuMs() - t0 >= limit) return 'too slow';
       return [s.rows, s.groups.length, s.total.sum];
     },
   },

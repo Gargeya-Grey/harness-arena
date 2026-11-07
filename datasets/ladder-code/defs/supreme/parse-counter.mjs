@@ -28,7 +28,9 @@ const spec = [
 const a = (k) => 'a'.repeat(k);
 
 // Hand-derived tests: the count of each was worked out from the task text alone, before the reference solution was
-// run on it, and is stored here as written. The modulus rows use closed forms: 2^58, 2^50, 2^40, C(30,15), C(69,9), F(46), C(31,6).
+// run on it, and is stored here as written. The modulus rows use closed forms: 2^58, 2^50, 2^40, C(30,15), C(69,9), F(46), C(31,5).
+// Six of them have more derivations than any enumeration can visit; the seventh (C(31,5) = 169911) is small enough to enumerate.
+// They stand in place of computed modulus rows: a case holds at most 6 tests that a brute-force answer cannot finish.
 const hand = [
   t('alt-twice', ['a|a|a', 'a'], 3),
   t('alt-twice', ['(a|b)(a|b)', 'ab'], 1),
@@ -140,7 +142,7 @@ const hand = [
   t('modulus', ['(a?){30}', 'aaaaaaaaaaaaaaa'], 20899802),
   t('modulus', ['(.*){10}', 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWX'], 32197892),
   t('modulus', ['(a|aa)*', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'], 24372710),
-  t('modulus', ['(a?){0,30}', 'aaaaa'], 736281),
+  t('modulus', ['(a?){0,30}', 'aaaa'], 169911),
 ];
 
 // Tests whose expected value is computed from the reference solution when generate.mjs runs.
@@ -193,12 +195,10 @@ const computed = [
     t('invalid', ['a}', 'a']),
     t('invalid-first', ['(a))', '']),
     t('invalid-first', ['a**+?{1}{x}', 'aaaa']),
-    t('modulus', ['(a*)*', a(59)]),
-    t('modulus', ['(a|aa)*', a(60)]),
     t('modulus', ['(.*)(.*)(.*)(.*)', 'abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmn']),
-    t('modulus', ['((a|b)*c?){14,16}', 'abcabcabcabcabcabcabcabcabcabcabcabcabcabc']),
-    t('modulus', ['(a?){30}(a|b){10,20}b*', a(40) + 'b'.repeat(10)]),
-    t('modulus', ['((a+)+)+(b|c)*', a(35) + 'bcbcb']),
+    t('modulus', ['((a|b)*c?){14,16}', 'abc']),
+    t('modulus', ['(a?){8}(a|b){3,5}b*', 'aaabbb']),
+    t('modulus', ['((a+)+)+(b|c)*', a(8) + 'bcb']),
 ];
 const argsKey = (test) => JSON.stringify(test.args);
 const handKeys = new Set(hand.map(argsKey));

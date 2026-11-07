@@ -17,8 +17,8 @@ function inRanges(ranges, code) {
 export function search(program, text, from) {
   const { ops, slots, ignoreCase, multiline, dotAll } = program;
   const len = text.length;
-  const units = []; // the text as an array of code units, built for every search
-  for (let i = 0; i < len; i += 1) units.push(text.charCodeAt(i));
+  const units = new Array(len); // the text as an array of code units, built for every search
+  for (let i = 0; i < len; i += 1) units[i] = text.charCodeAt(i);
   const mark = new Int32Array(ops.length).fill(-1);
   const stack = [];
   const blank = new Array(slots).fill(-1);

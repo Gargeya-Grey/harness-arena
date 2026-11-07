@@ -53,7 +53,17 @@ The panel is the targets of the ladder experiments. Each task runs once per targ
 4. A task is checked for a defect before anything else when, for two configurations that both ran it, the one with the higher mean on the other tasks both ran scores under 0.5 on every repeat of it while the other scores 1 on every repeat (`node lab ladder --calibrate` flags it). Item response theory work on public benchmarks finds that such negative discrimination usually means an error in the item (ATLAS, 2025).
 5. Moving a task keeps its `case_id`. Its tier changes in a new suite version.
 
-Timing limits. Agent probes and the ladder's own tests judge speed by CPU time, so a busy machine does not change their verdict. The `js-function@1` evaluator still gives each code test 2 s of wall time. Ladder references need at most about 0.5 s of CPU per test, a margin of 4x or more, but a correct answer close to the limit can time out on a busy machine. Score code runs on an idle machine. Scores are derived, so `node lab score` can recompute a doubtful one without new model calls.
+Timing limits. A speed probe in an agent check, and the speed checks in the ladder's own tests, judge by CPU time. The evaluators around them still have wall-clock limits, and a busy machine can reach those:
+
+| Evaluator | Wall-clock limit | What happens past it |
+|---|---|---|
+| `js-function@1` | 2 s per test | That test fails. |
+| `js-function@1` | 30 s for all tests of a case | Every test of the case fails. |
+| `workspace-tests@1` | 60 s for a whole check | Every probe has no result; only the file rules count. |
+
+Ladder references stay at least 3x inside each limit (`tests/ladder-code-*.test.mjs` asserts under 0.667 s of CPU per test). A correct but slow answer near a limit can still time out on a busy machine. Score on an idle machine. Scores are derived, so `node lab score` can recompute a doubtful one without new model calls.
+
+Speed probes proved to fail a natural slow solution (tests under `tests/fixtures/ladder-agent-solutions/*/<slug>--slow*/`): build-scheduler, http1-parser (3 of 4), regex-engine (many matches), markdown-renderer (md35, md37), rrule-expander (rr40 to rr44), rga-text-crdt (rg33, rg36), spreadsheet-engine (sp33, sp34). Not proved, because every natural slow method either stays under the threshold or never ends: sql-engine (LIKE), regex-engine (exponential patterns), rga-text-crdt (rg34, rg35), bytecode-vm (vm23), diff-patch (3 probes), log-kv-store (2 probes), http1-parser (long headers). These still check the result at size; a method that never ends meets the 60 s limit.
 
 Four targets are a small panel. The bands are wide on purpose, and a tier needs both its expert-time prior and its measured mean to agree before a task is settled. A frontier configuration in the panel is the next step: without one, the top tier's headroom above the strongest models is not measured.
 

@@ -21,7 +21,8 @@ const P2 = 'In a village of La Mancha, the name of which I have no desire to cal
 const P3 = 'Pneumonoultramicroscopicsilicovolcanoconiosis is a word, as is supercalifragilisticexpialidocious, and so is antidisestablishmentarianism; but a-b-c-d-e-f-g is not, and neither is 1-2-3-4-5-6-7-8-9-10-11-12.';
 
 // Hand-derived tests: the lines of each were worked out from the task text alone, before the reference solution was
-// run on it, and are stored here as written (generate.mjs does not compute them). The tie-later rows each have two optimal breaks.
+// run on it, and are stored here as written (generate.mjs does not compute them). The tie-later rows each have two optimal layouts (tests/ladder-code-supreme.test.mjs enumerates every layout of them to prove it).
+// Of the computed rows, seven use a paragraph with too many layouts for any enumeration to visit (the same test counts them).
 const hand = [
   t('words', ['  hello   world  ', 20, false], ['hello world']),
   t('empty', ['', 5, true], []),
@@ -82,14 +83,12 @@ const computed = [
     t('justify-off', ['aa bb cc dd ee ff gg hh ii jj', 17, false]),
     t('justify-off', ['one two three four five six seven eight nine ten', 14, false]),
     t('optimal', [P1, 20, true]),
-    t('optimal', [P1, 30, false]),
     t('optimal', [P1, 41, true]),
     t('optimal', [P2, 40, true]),
     t('optimal', [P2, 60, false]),
     t('optimal', [P2, 27, true]),
     t('optimal', [P2, 8, true]),
     t('optimal', [P3, 16, true]),
-    t('optimal', [P3, 25, false]),
     t('optimal', [P3, 1, false]),
     t('optimal', ['a b c', 1, true]),
     t('last-line-free', ['short text', 80, true]),

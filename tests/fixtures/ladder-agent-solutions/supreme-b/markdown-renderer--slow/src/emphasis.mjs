@@ -28,8 +28,7 @@ export function processEmphasis(bottom) {
     let opener = closer.prev;
     let found = false;
     while (opener && opener !== bottom) {
-      const odd = (closer.canOpen || opener.canClose) && closer.orig % 3 !== 0 && (opener.orig + closer.orig) % 3 === 0;
-      if (opener.ch === closer.ch && opener.canOpen && !odd) {
+      if (opener.ch === closer.ch && opener.canOpen && !((closer.canOpen || opener.canClose) && closer.orig % 3 !== 0 && (opener.orig + closer.orig) % 3 === 0)) {
         found = true;
         break;
       }

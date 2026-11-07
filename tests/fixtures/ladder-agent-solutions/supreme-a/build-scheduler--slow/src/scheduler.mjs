@@ -18,12 +18,12 @@ function attemptOf(run, node, outputs, attempt) {
   return { ok: false, error: 'bad result' };
 }
 
-// The hash of a finished target: everything above it is checked against its recorded hash again, then hashed afresh.
+// The hash of a finished target: everything above it is checked against its recorded hash again.
 function upstreamHash(name, nodes, outputs) {
   for (const dep of nodes.get(name).deps) upstreamHash(dep, nodes, outputs);
   const { output, hash } = outputs.get(name);
   if (contentHash(output) !== hash) throw new Error(`${name}: its output changed`);
-  return contentHash(output);
+  return hash;
 }
 
 export function simulate(model, { slots, run, cache, keepGoing }) {

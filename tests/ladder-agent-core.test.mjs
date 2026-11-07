@@ -77,7 +77,10 @@ function workspaceWith(slug, overlay) {
 
 /** The real evaluator over one workspace, through the same snapshot and rebuild as a run. */
 function check(slug, overlay) {
-  const work = workspaceWith(slug, overlay);
+  return checkWork(slug, workspaceWith(slug, overlay));
+}
+
+function checkWork(slug, work) {
   const runDir = tempDir('core-run-');
   const artifact = snapshotWorkspace({ fixtureDir: fixtureOf(slug), workDir: work, runDir, base: 'w', artifactId: 'x', createdAt: '2026-11-07T00:00:00Z' });
   const run = runWorkspaceCheck({ fixtureDir: fixtureOf(slug), check: loadCheck(path.join(SUITE, 'checks'), slug), runDir, manifestPath: artifact.path });
@@ -234,4 +237,21 @@ test('the starters, checks and solutions leak no home path or tool setup, and no
       assert.ok(!/datasets[\\/]agentic/.test(text), `${path.relative(REPO, file)} points at an old suite`);
     }
   }
+});
+
+// A correct solution that is only slow: the reference plus one natural slow method (the whole text parsed
+// again for every chunk). The speed probe must fail, and every other probe and file rule must still pass.
+test('a slow csv-report solution fails the speed probe and passes the rest', () => {
+  const slug = 'csv-report';
+  const overlay = path.join(SOLUTIONS, 'csv-report--slow');
+  for (const file of listFiles(overlay)) assert.equal(path.relative(overlay, file).split(path.sep)[0], 'src', `${file} is outside src`);
+  const work = workspaceWith(slug, slug); // the reference ...
+  fs.cpSync(overlay, work, { recursive: true }); // ... with its slow file on top
+  const results = checkWork(slug, work);
+  const probe = 'keeps a big export fast in small chunks';
+  assert.ok(Object.hasOwn(loadCheck(path.join(SUITE, 'checks'), slug).probes, probe), `"${probe}" is not a probe of ${slug}`);
+  const bad = failed(results);
+  assert.deepEqual(bad.map((item) => item.name), [probe], 'the probes that fail');
+  assert.match(bad[0].error, /too slow/, 'it must fail because it is slow');
+  assert.equal(passedCount(results), results.length - 1);
 });

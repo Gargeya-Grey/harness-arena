@@ -18,4 +18,5 @@ const run = (names, extra) => spawnSync(process.execPath, ['--test', ...extra, .
 
 const first = run(main, []);
 const second = run(heavy, ['--test-concurrency=2']);
-process.exit(first || second ? 1 : 0);
+// A null status (spawn error, killed) is a failure, never a pass.
+process.exit(first === 0 && second === 0 ? 0 : 1);
