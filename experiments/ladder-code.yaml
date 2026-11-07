@@ -27,5 +27,5 @@ timeout_s: 900
 
 evaluators:
   - id: js-function
-    version: "1"
+    version: "2"
     dimension: quality

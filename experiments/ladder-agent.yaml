@@ -28,5 +28,5 @@ timeout_s: 3600
 
 evaluators:
   - id: workspace-tests
-    version: "1"
+    version: "2"
     dimension: quality

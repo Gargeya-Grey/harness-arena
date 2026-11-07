@@ -19,8 +19,8 @@ A run uses one suite and one prompt, so the ladder is three suites that share th
 | Suite | Prompt | Evaluator | Task |
 |---|---|---|---|
 | `ladder-answer` | `reasoning-final-answer` | `final-answer@1` | A problem with one exact answer. |
-| `ladder-code` | `js-function` | `js-function@1` | One JavaScript function, run against hidden tests. |
-| `ladder-agent` | `agent-task` | `workspace-tests@1` | Change a starter project; a hidden check scores the result. |
+| `ladder-code` | `js-function` | `js-function@2` | One JavaScript function, run against hidden tests. |
+| `ladder-agent` | `agent-task` | `workspace-tests@2` | Change a starter project; a hidden check scores the result. |
 
 Agent tasks take the largest share of the top tiers, because long tasks are where configurations differ most (METR).
 
@@ -53,17 +53,21 @@ The panel is the targets of the ladder experiments. Each task runs once per targ
 4. A task is checked for a defect before anything else when, for two configurations that both ran it, the one with the higher mean on the other tasks both ran scores under 0.5 on every repeat of it while the other scores 1 on every repeat (`node lab ladder --calibrate` flags it). Item response theory work on public benchmarks finds that such negative discrimination usually means an error in the item (ATLAS, 2025).
 5. Moving a task keeps its `case_id`. Its tier changes in a new suite version.
 
-Timing limits. A speed probe in an agent check, and the speed checks in the ladder's own tests, judge by CPU time. The evaluators around them still have wall-clock limits, and a busy machine can reach those:
+Timing limits. Every verdict limit of the ladder is CPU time of the process that runs the answer, so a busy machine does not change a verdict. The speed probes in agent checks and the speed checks in the ladder's own tests judge by CPU time too. The ladder experiments use `js-function@2` and `workspace-tests@2`:
 
-| Evaluator | Wall-clock limit | What happens past it |
+| Evaluator | CPU limit | What happens past it |
 |---|---|---|
-| `js-function@1` | 2 s per test | That test fails. |
-| `js-function@1` | 30 s for all tests of a case | Every test of the case fails. |
-| `workspace-tests@1` | 60 s for a whole check | Every probe has no result; only the file rules count. |
+| `js-function@2` | 2000 ms per test | That test fails. |
+| `js-function@2` | 30000 ms for all tests of a case | The tests that have not started fail, with the reason in their result. |
+| `workspace-tests@2` | 60000 ms for a whole check, tested between probes | The probes that have not started have no result and say why; the file rules and the probes that ran still count. |
 
-Ladder references stay at least 3x inside each limit (`tests/ladder-code-*.test.mjs` asserts under 0.667 s of CPU per test). A correct but slow answer near a limit can still time out on a busy machine. Score on an idle machine. Scores are derived, so `node lab score` can recompute a doubtful one without new model calls.
+Each evaluator also has a wall-clock backstop that only stops code that never ends. It follows the load: the backstop of a test is 2000 ms times the wall/CPU ratio the sandbox process has seen (1 on an idle machine, at most 10; 25% more when the ratio is over 1.1). A test that the backstop stops after it used less than 95% of its CPU limit runs again with the longer backstop, so the wall clock never decides a test that the CPU clock would pass. A test that is still stopped fails. The per-probe timer of a check (5 s) works the same way, The wall limit of a code sandbox process is 30 s times the cap (300 s), because the sandbox always ends by itself and only a hang meets it. The wall limit of a check process is 2x its CPU budget (120 s), longer on a busy machine (10x at most), because one probe that never returns cannot be interrupted. When a check process is stopped by its backstop, the probes that had finished keep their results.
 
-Speed probes proved to fail a natural slow solution (tests under `tests/fixtures/ladder-agent-solutions/*/<slug>--slow*/`): build-scheduler, http1-parser (3 of 4), regex-engine (many matches), markdown-renderer (md35, md37), rrule-expander (rr40 to rr44), rga-text-crdt (rg33, rg36), spreadsheet-engine (sp33, sp34). Not proved, because every natural slow method either stays under the threshold or never ends: sql-engine (LIKE), regex-engine (exponential patterns), rga-text-crdt (rg34, rg35), bytecode-vm (vm23), diff-patch (3 probes), log-kv-store (2 probes), http1-parser (long headers). These still check the result at size; a method that never ends meets the 60 s limit.
+`js-function@1` (2 s per test, 30 s per process) and `workspace-tests@1` (60 s per check) judge by wall clock and stay for old runs, which must reproduce their scores. Scores of different evaluator versions are never compared: `node lab ladder` refuses to mix them. A run scored with version 1 stays at version 1. Scores are derived, so `node lab score` can recompute a doubtful one without new model calls.
+
+Ladder references stay at least 3x inside each limit (`tests/ladder-code-*.test.mjs` asserts under 0.667 s of CPU per test).
+
+Speed probes proved to fail a natural slow solution (tests under `tests/fixtures/ladder-agent-solutions/*/<slug>--slow*/`): build-scheduler, http1-parser (3 of 4), regex-engine (many matches), markdown-renderer (md35, md37), rrule-expander (rr40 to rr44), rga-text-crdt (rg33, rg36), spreadsheet-engine (sp33, sp34). Not proved, because every natural slow method either stays under the threshold or never ends: sql-engine (LIKE), regex-engine (exponential patterns), rga-text-crdt (rg34, rg35), bytecode-vm (vm23), diff-patch (3 probes), log-kv-store (2 probes), http1-parser (long headers). These still check the result at size; a method that never ends meets the CPU limit of the evaluator.
 
 Four targets are a small panel. The bands are wide on purpose, and a tier needs both its expert-time prior and its measured mean to agree before a task is settled. A frontier configuration in the panel is the next step: without one, the top tier's headroom above the strongest models is not measured.
 

@@ -1,6 +1,6 @@
 // The supreme tier of the ladder-code suite (tier 5) proves itself without a model call.
 //
-// - Every reference solution passes its hidden tests through the real js-function
+// - Every reference solution passes its hidden tests through the real js-function@2
 //   evaluator, and the efficiency cases stay far inside the sandbox time limits.
 // - Every efficiency case is mostly huge tests, so a naive solution that agrees with
 //   the reference on small inputs but times out on the huge ones scores at most 0.35.
@@ -38,7 +38,7 @@ const DEFS = path.join(HERE, '..', 'datasets', 'ladder-code', 'defs', 'supreme')
 const SOLUTIONS = path.join(HERE, 'fixtures', 'ladder-code-solutions', 'supreme');
 const EVALUATOR_URL = pathToFileURL(path.join(HERE, '..', 'lab', 'evaluators', 'index.mjs')).href;
 
-// The sandbox gives each test 2 s and the whole process 30 s (lab/evaluators).
+// js-function@2 (lab/evaluators) gives each test 2 s of CPU time and all tests of a case 30 s of CPU time.
 const TEST_LIMIT_MS = 2000;
 const PROCESS_LIMIT_MS = 30000;
 // The reference solutions of one case together, and the best score a correct but slow solution may reach.
@@ -60,7 +60,7 @@ const cases = (await buildCases()).filter((item) => ids.has(item.case_id));
 const efficiency = cases.filter((item) => item.tags.includes('efficiency'));
 const specs = cases.filter((item) => item.tags.includes('spec'));
 const defs = new Map((await loadDefinitions(DEFS)).map((def) => [`ladder-code-${def.slug}`, def]));
-const jsFunction = getEvaluator('js-function', '1');
+const jsFunction = getEvaluator('js-function', '2');
 const solutionText = (id, kind = '') => fs.readFileSync(path.join(SOLUTIONS, `${id}${kind}.mjs`), 'utf8');
 const wrap = (code) => '```js\n' + code + '\n```';
 const scoreHere = (testCase, code) => jsFunction.score({ raw: { response: { text: wrap(code) } }, testCase });
@@ -96,7 +96,7 @@ function scoreInChild(testCase, code) {
     let input = '';
     for await (const chunk of process.stdin) input += chunk;
     const { testCase, text } = JSON.parse(input);
-    const score = getEvaluator('js-function', '1').score({ raw: { response: { text } }, testCase });
+    const score = getEvaluator('js-function', '2').score({ raw: { response: { text } }, testCase });
     process.stdout.write(JSON.stringify(score));
   `;
   return new Promise((resolve, reject) => {

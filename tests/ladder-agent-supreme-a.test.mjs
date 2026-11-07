@@ -2,7 +2,7 @@
 // every starter fails its hidden check, every reference solution passes it, a plausible
 // partial solution lands between 40% and 80%, the visible tests fail on the starter and pass
 // on every overlay, and no starter file leaks a probe name or an expected value.
-// All through the real workspace-tests evaluator. No model calls.
+// All through the real workspace-tests@2 evaluator. No model calls.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { loadCheck, runWorkspaceCheck } from '../lab/evaluators/index.mjs';
+import { loadCheck, runWorkspaceCheckV2 } from '../lab/evaluators/index.mjs';
 import { copyTree, snapshotWorkspace } from '../lab/lib/workspace.mjs';
 import { buildCases } from '../datasets/ladder-agent/generate.mjs';
 
@@ -52,7 +52,7 @@ function check(slug, overlay) {
   const work = workspaceWith(slug, overlay);
   const runDir = tempDir('supreme-a-run-');
   const artifact = snapshotWorkspace({ fixtureDir: fixtureOf(slug), workDir: work, runDir, base: 'w', artifactId: 'x', createdAt: '2026-11-07T00:00:00Z' });
-  const run = runWorkspaceCheck({ fixtureDir: fixtureOf(slug), check: checkOf(slug), runDir, manifestPath: artifact.path });
+  const run = runWorkspaceCheckV2({ fixtureDir: fixtureOf(slug), check: checkOf(slug), runDir, manifestPath: artifact.path });
   assert.equal(run.error, undefined, `${slug}: the check itself broke: ${run.error}`);
   return run.results;
 }
@@ -226,7 +226,7 @@ test('a slow solution fails the speed probes and passes the rest', () => {
     for (const file of listFiles(path.join(SOLUTIONS, overlay))) assert.equal(path.relative(path.join(SOLUTIONS, overlay), file).split(path.sep)[0], 'src', `${overlay}: ${file} is outside src`);
     const runDir = tempDir('supreme-a-slow-run-');
     const artifact = snapshotWorkspace({ fixtureDir: fixtureOf(slug), workDir: work, runDir, base: 'w', artifactId: 'x', createdAt: '2026-11-07T00:00:00Z' });
-    const run = runWorkspaceCheck({ fixtureDir: fixtureOf(slug), check: checkOf(slug), runDir, manifestPath: artifact.path });
+    const run = runWorkspaceCheckV2({ fixtureDir: fixtureOf(slug), check: checkOf(slug), runDir, manifestPath: artifact.path });
     assert.equal(run.error, undefined, `${overlay}: the check itself broke: ${run.error}`);
     assert.deepEqual(failed(run.results).map((item) => item.name), fails, `${overlay}: the probes that fail`);
     assert.equal(passedCount(run.results), run.results.length - fails.length, overlay);
