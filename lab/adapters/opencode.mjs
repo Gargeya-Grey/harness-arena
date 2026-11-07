@@ -24,6 +24,14 @@ export default defineCli({
   bin: BIN,
   supportsEffort: true,
   edit: { args: ['--auto'], note: 'Auto-approves permissions that are not explicitly denied.' },
+  // Without --auto, OpenCode 2.2.6 still runs shell, write and edit tools in `run` mode
+  // (seen in the ladder-answer pilot). Config from OPENCODE_CONFIG_CONTENT has the last
+  // word over the user's files; OpenCode reads `"*": "deny"` as one rule that denies
+  // every action (`opencode debug config` shows it, checked on 2.2.6).
+  answer: {
+    env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: { '*': 'deny' } }) },
+    note: 'OPENCODE_CONFIG_CONTENT denies every permission, so the model replies in text only.',
+  },
   // `opencode debug paths` shows the config, data, state and cache folders; XDG_* and the
   // home folder move all of them (checked on 2.2.5). The temp home holds the provider
   // sign-ins only (OAuth and keys): the rows of the database's credential table. opencode.json,

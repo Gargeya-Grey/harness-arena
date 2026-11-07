@@ -387,6 +387,7 @@ async function openRun(root, plan, harnessName, modelKeys, { log, resume = null,
         // answer: the harness replies in text. edit: it may edit files and run commands in its folder.
         access: plan.access,
         ...(plan.access === 'edit' ? { access_flags: adapter.edit?.args || [], access_note: adapter.edit?.note || 'This harness has no edit flags; it runs with its defaults.' } : {}),
+        ...(plan.access !== 'edit' && adapter.answer ? { access_flags: Object.entries(adapter.answer.env).map(([key, value]) => `${key}=${value}`), access_note: adapter.answer.note } : {}),
         // Did the harness load the user's own setup (instructions, skills, MCP servers)?
         // "isolated" lists the exact flags that kept it out; no flags means it loaded.
         user_config: isolationArgs.length ? 'isolated' : 'loaded',

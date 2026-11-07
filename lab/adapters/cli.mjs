@@ -26,6 +26,9 @@ import { cliVersion, flattenMessages, runProcess } from './process.mjs';
  *     note: string,
  *   },
  *   after?(parsed, ctx) -> Promise, // cleanup after a call, e.g. delete a stored session
+ *   edit?: { args, note },          // flags for access: edit (agent tasks)
+ *   answer?: { env, note },         // env vars for access: answer, for a CLI whose tools are on
+ *                                   // unless config turns them off (text-only replies)
  * }
  */
 // Extra flags go before a "--" that ends the options (the prompt follows it) or a
@@ -43,6 +46,7 @@ export function defineCli(spec) {
   // HOME and USERPROFILE always point at the temp home, so the CLI finds no real home folder at all.
   const homeEnv = (dir) => ({ HOME: dir, USERPROFILE: dir, ...(isolation.home?.env ? isolation.home.env(dir) : {}) });
   const edit = spec.edit || null;
+  const answer = spec.answer ? { env: spec.answer.env || {}, note: spec.answer.note || '' } : null;
   return {
     name: spec.name,
     kind: 'cli',
@@ -57,6 +61,8 @@ export function defineCli(spec) {
     isolation: { args: [...flags, ...(home ? describeEnv(homeEnv) : [])], flags, env: isolation.env || {}, home, note: isolation.note },
     // access: edit (agent tasks) lets the harness edit files and run commands in its folder.
     edit: edit ? { args: edit.args || [], note: edit.note || '' } : null,
+    // access: answer (the default) turns the CLI's tools off where only config can do it.
+    answer,
     declared: Boolean(spec.declared),
 
     detect: async () => ({ version: await cliVersion(spec.bin, spec.versionArgs) }),
@@ -68,7 +74,7 @@ export function defineCli(spec) {
     async call({ model, messages, effort, cwd, timeoutMs, persist = false, maxTurns = null, isolated = false, access = 'answer', env: callEnv = {}, homeDir }) {
       const { prompt, system, user } = flattenMessages(messages);
       const extra = [...(isolated ? this.isolation.flags : []), ...(access === 'edit' && this.edit ? this.edit.args : [])];
-      const baseEnv = { ...callEnv, ...(isolated ? this.isolation.env : {}) };
+      const baseEnv = { ...callEnv, ...(isolated ? this.isolation.env : {}), ...(access !== 'edit' && this.answer ? this.answer.env : {}) };
 
       // One process call. `tempHome` is the temp home folder of an isolated call, else null.
       const execute = async (env, tempHome) => {

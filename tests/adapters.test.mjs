@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ADAPTERS, getAdapter } from '../lab/adapters/index.mjs';
 import { flattenMessages, stderrError } from '../lab/adapters/process.mjs';
+import { defineCli } from '../lab/adapters/cli.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = (name) => fs.readFileSync(path.join(here, 'fixtures', 'harness', name), 'utf8');
@@ -106,4 +107,25 @@ test('opencode: private server, provider/model#effort, prompt as one argument', 
   assert.deepEqual(args, ['run', '--standalone', '--format', 'json', '-m', 'openai/gpt-6-luna#low', '--', 'a "quoted"\nprompt']);
   assert.equal(getAdapter('opencode').args({ model: 'opencode/beam-free', prompt: '-x' })[5], 'opencode/beam-free');
   assert.deepEqual(getAdapter('opencode').args({ model: 'm', prompt: '-x' }).slice(-2), ['--', '-x'], 'a prompt that starts with a dash is never a flag');
+});
+
+// The ladder-answer pilot found OpenCode running shell, write and edit tools in answer mode.
+test('opencode: answer mode denies every permission through OPENCODE_CONFIG_CONTENT', () => {
+  const answer = getAdapter('opencode').answer;
+  assert.deepEqual(JSON.parse(answer.env.OPENCODE_CONFIG_CONTENT), { permission: { '*': 'deny' } });
+  assert.match(answer.note, /text only/);
+});
+
+test('defineCli: answer env reaches an answer call and stays out of an edit call', async () => {
+  const echoEnv = defineCli({
+    name: 'echo-env',
+    bin: 'node', // a bare name: the lab finds harness binaries on PATH
+    answer: { env: { LAB_TEST_ANSWER: 'deny' }, note: 'test' },
+    edit: { args: [] },
+    args: () => ['-e', 'process.stdout.write(process.env.LAB_TEST_ANSWER || "unset")'],
+    parse: ({ stdout }) => ({ text: stdout, error: null }),
+  });
+  const messages = [{ role: 'user', content: 'hi' }];
+  assert.equal((await echoEnv.call({ messages, timeoutMs: 30000 })).text, 'deny');
+  assert.equal((await echoEnv.call({ messages, timeoutMs: 30000, access: 'edit' })).text, 'unset');
 });
