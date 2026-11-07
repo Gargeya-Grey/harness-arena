@@ -129,3 +129,24 @@ test('defineCli: answer env reaches an answer call and stays out of an edit call
   assert.equal((await echoEnv.call({ messages, timeoutMs: 30000 })).text, 'deny');
   assert.equal((await echoEnv.call({ messages, timeoutMs: 30000, access: 'edit' })).text, 'unset');
 });
+
+// Review round 1 (Codex): an owner's own OPENCODE_CONFIG_CONTENT was replaced, not merged.
+test('answer env: a value the caller already set is merged by the harness, and OpenCode keeps every other setting', async () => {
+  const merged = defineCli({
+    name: 'merge-env',
+    bin: 'node',
+    answer: { env: { LAB_TEST_ANSWER: 'ours' }, note: 'test', merge: (key, current, ours) => `${current}+${ours}` },
+    args: () => ['-e', 'process.stdout.write(process.env.LAB_TEST_ANSWER || "unset")'],
+    parse: ({ stdout }) => ({ text: stdout, error: null }),
+  });
+  const messages = [{ role: 'user', content: 'hi' }];
+  assert.equal((await merged.call({ messages, timeoutMs: 30000, env: { LAB_TEST_ANSWER: 'theirs' } })).text, 'theirs+ours');
+  assert.equal((await merged.call({ messages, timeoutMs: 30000 })).text, 'ours', 'nothing to merge');
+
+  const opencode = getAdapter('opencode');
+  const own = JSON.stringify({ provider: { x: { name: 'X' } }, permission: { bash: 'allow' }, instructions: ['a.md'] });
+  const out = JSON.parse(opencode.answerEnv({ OPENCODE_CONFIG_CONTENT: own }).OPENCODE_CONFIG_CONTENT);
+  assert.deepEqual(out, { provider: { x: { name: 'X' } }, permission: { '*': 'deny' }, instructions: ['a.md'] }, 'only permission is replaced');
+  assert.deepEqual(JSON.parse(opencode.answerEnv({ OPENCODE_CONFIG_CONTENT: 'not json' }).OPENCODE_CONFIG_CONTENT), { permission: { '*': 'deny' } });
+  assert.deepEqual(JSON.parse(opencode.answerEnv({}).OPENCODE_CONFIG_CONTENT), { permission: { '*': 'deny' } });
+});

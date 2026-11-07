@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { getEvaluator, normalizeAnswer } from '../lab/evaluators/index.mjs';
 import { planExperiment } from '../lab/commands/run.mjs';
 import { validateRepo } from '../lab/commands/validate.mjs';
-import { buildState, comparisonMode, configId } from '../lab/lib/state.mjs';
+import { answerToolsOf, buildState, comparisonMode, configId } from '../lab/lib/state.mjs';
 import { REPO_ROOT } from '../lab/lib/repo.mjs';
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'repo');
@@ -43,6 +43,10 @@ test('evaluators: svg structure checks size, safety and balance', () => {
 
 test('configId and comparison mode', () => {
   assert.equal(configId('claude-haiku-5.5', { name: 'claude-code', version: '2.1.306' }, null), 'claude-haiku-5.5__claude-code-2.1.306__default');
+  assert.equal(configId('beam-free', { name: 'opencode', version: '2.2.6' }, null, 'isolated', 'off'), 'beam-free__opencode-2.2.6__default__isolated__no-tools');
+  assert.equal(answerToolsOf({ harness: { settings: { access: 'answer', access_flags: ['OPENCODE_CONFIG_CONTENT={}'] } } }), 'off');
+  assert.equal(answerToolsOf({ harness: { settings: { access: 'edit', access_flags: ['--auto'] } } }), 'default', 'edit flags are not an answer policy');
+  assert.equal(answerToolsOf({ harness: { settings: {} } }), 'default', 'older runs keep their configuration id');
   const a = { model_key: 'm1', harness: { name: 'h', version: '1' }, effort: null, params: {} };
   assert.deepEqual(comparisonMode([a, { ...a, model_key: 'm2' }]), { mode: 'controlled', axes: ['model'] });
   assert.deepEqual(comparisonMode([a, { ...a, harness: { name: 'h2', version: '1' } }]), { mode: 'controlled', axes: ['harness'] });

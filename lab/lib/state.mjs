@@ -24,20 +24,32 @@ export function humanizeModel(value) {
 
 /**
  * `<model_key>__<harness>-<version>__<effort or default>`, plus `__isolated` when the
- * harness ran without the user's own setup. Computed, never stored.
+ * harness ran without the user's own setup, plus `__no-tools` when an answer run turned the
+ * harness's tools off through its config. Computed, never stored.
  */
-export function configId(modelKey, harness, effort, userConfig = 'loaded') {
+export function configId(modelKey, harness, effort, userConfig = 'loaded', answerTools = 'default') {
   return [
     safeSegment(modelKey),
     `${safeSegment(harness?.name)}-${safeSegment(harness?.version)}`,
     safeSegment(effort || 'default'),
     ...(userConfig === 'isolated' ? ['isolated'] : []),
+    ...(answerTools === 'off' ? ['no-tools'] : []),
   ].join('__');
 }
 
 /** Runs written before the setting existed loaded the user's setup. */
 export function userConfigOf(manifest) {
   return manifest?.harness?.settings?.user_config === 'isolated' ? 'isolated' : 'loaded';
+}
+
+/**
+ * "off" when an answer run recorded access flags: the env vars that turn the harness's tools
+ * off (OpenCode). Such a run is not a repeat of an earlier run of the same harness that
+ * could use tools, so it gets its own configuration. Edit runs and older runs: "default".
+ */
+export function answerToolsOf(manifest) {
+  const settings = manifest?.harness?.settings || {};
+  return settings.access !== 'edit' && (settings.access_flags || []).length ? 'off' : 'default';
 }
 
 export function contextKey(manifest, caseIds) {
@@ -65,6 +77,7 @@ export function comparisonMode(configs) {
   if (varies((c) => c.effort || 'default')) axes.push('effort');
   if (varies((c) => `${c.params?.temperature ?? ''}|${c.params?.max_tokens ?? ''}`)) axes.push('decoding');
   if (varies((c) => c.user_config || 'loaded')) axes.push('setup');
+  if (varies((c) => c.answer_tools || 'default')) axes.push('answer tools');
   if (!axes.length) return { mode: 'replicate', axes };
   return { mode: axes.length === 1 ? 'controlled' : 'descriptive', axes };
 }
@@ -76,15 +89,17 @@ function buildConfig(manifest, modelKey, raw, registry) {
   const effort = entry.reasoning_effort || raw?.request?.params?.reasoning_effort || null;
   const displayName = registered.display_name || humanizeModel(entry.model || modelKey);
   const userConfig = userConfigOf(manifest);
-  const setup = userConfig === 'isolated' ? ' · isolated' : '';
+  const answerTools = answerToolsOf(manifest);
+  const setup = `${userConfig === 'isolated' ? ' · isolated' : ''}${answerTools === 'off' ? ' · no tools' : ''}`;
   return {
-    id: configId(modelKey, harness, effort, userConfig),
+    id: configId(modelKey, harness, effort, userConfig, answerTools),
     model_key: modelKey,
     display_name: displayName,
     short_label: `${displayName} · ${harness.name || 'unknown'}${effort ? ` · ${effort}` : ''}${setup}`,
     label: `${displayName} · ${harness.name || 'unknown'} ${harness.version || ''}${effort ? ` · ${effort}` : ''}${setup}`.replace(/\s+/g, ' ').trim(),
     user_config: userConfig,
     user_config_flags: harness.settings?.user_config_flags || [],
+    answer_tools: answerTools,
     provider: entry.provider || registered.provider || 'unknown',
     model: entry.model || registered.model || modelKey,
     harness: {

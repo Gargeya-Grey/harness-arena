@@ -27,8 +27,10 @@ import { cliVersion, flattenMessages, runProcess } from './process.mjs';
  *   },
  *   after?(parsed, ctx) -> Promise, // cleanup after a call, e.g. delete a stored session
  *   edit?: { args, note },          // flags for access: edit (agent tasks)
- *   answer?: { env, note },         // env vars for access: answer, for a CLI whose tools are on
- *                                   // unless config turns them off (text-only replies)
+ *   answer?: { env, note, merge? }, // env vars for access: answer, for a CLI whose tools are on
+ *                                   // unless config turns them off (text-only replies);
+ *                                   // merge(key, current, ours) combines a value the caller
+ *                                   // already set with ours (the run records only ours)
  * }
  */
 // Extra flags go before a "--" that ends the options (the prompt follows it) or a
@@ -46,7 +48,7 @@ export function defineCli(spec) {
   // HOME and USERPROFILE always point at the temp home, so the CLI finds no real home folder at all.
   const homeEnv = (dir) => ({ HOME: dir, USERPROFILE: dir, ...(isolation.home?.env ? isolation.home.env(dir) : {}) });
   const edit = spec.edit || null;
-  const answer = spec.answer ? { env: spec.answer.env || {}, note: spec.answer.note || '' } : null;
+  const answer = spec.answer ? { env: spec.answer.env || {}, note: spec.answer.note || '', merge: spec.answer.merge || null } : null;
   return {
     name: spec.name,
     kind: 'cli',
@@ -63,6 +65,14 @@ export function defineCli(spec) {
     edit: edit ? { args: edit.args || [], note: edit.note || '' } : null,
     // access: answer (the default) turns the CLI's tools off where only config can do it.
     answer,
+    // The answer env for one call: a value the caller's environment already holds is merged, not replaced.
+    answerEnv(current) {
+      const out = {};
+      for (const [key, ours] of Object.entries(answer?.env || {})) {
+        out[key] = answer.merge && current[key] !== undefined && current[key] !== '' ? answer.merge(key, current[key], ours) : ours;
+      }
+      return out;
+    },
     declared: Boolean(spec.declared),
 
     detect: async () => ({ version: await cliVersion(spec.bin, spec.versionArgs) }),
@@ -74,7 +84,8 @@ export function defineCli(spec) {
     async call({ model, messages, effort, cwd, timeoutMs, persist = false, maxTurns = null, isolated = false, access = 'answer', env: callEnv = {}, homeDir }) {
       const { prompt, system, user } = flattenMessages(messages);
       const extra = [...(isolated ? this.isolation.flags : []), ...(access === 'edit' && this.edit ? this.edit.args : [])];
-      const baseEnv = { ...callEnv, ...(isolated ? this.isolation.env : {}), ...(access !== 'edit' && this.answer ? this.answer.env : {}) };
+      const setupEnv = { ...callEnv, ...(isolated ? this.isolation.env : {}) };
+      const baseEnv = { ...setupEnv, ...(access !== 'edit' && this.answer ? this.answerEnv({ ...process.env, ...setupEnv }) : {}) };
 
       // One process call. `tempHome` is the temp home folder of an isolated call, else null.
       const execute = async (env, tempHome) => {

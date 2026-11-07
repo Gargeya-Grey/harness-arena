@@ -74,6 +74,16 @@ export function fenceWorkdir(dir) {
   return result.status === 0;
 }
 
+/**
+ * What a run records about its access: the edit flags of an `access: edit` run, or the env
+ * vars that turn a harness's tools off for an `access: answer` run. A resume compares it.
+ */
+export function accessSettings(adapter, access) {
+  if (access === 'edit') return { access_flags: adapter.edit?.args || [], access_note: adapter.edit?.note || 'This harness has no edit flags; it runs with its defaults.' };
+  if (adapter.answer) return { access_flags: Object.entries(adapter.answer.env).map(([key, value]) => `${key}=${value}`), access_note: adapter.answer.note };
+  return {};
+}
+
 export function runStamp(date = new Date()) {
   return date.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 }
@@ -386,8 +396,7 @@ async function openRun(root, plan, harnessName, modelKeys, { log, resume = null,
         persist_sessions: plan.persist,
         // answer: the harness replies in text. edit: it may edit files and run commands in its folder.
         access: plan.access,
-        ...(plan.access === 'edit' ? { access_flags: adapter.edit?.args || [], access_note: adapter.edit?.note || 'This harness has no edit flags; it runs with its defaults.' } : {}),
-        ...(plan.access !== 'edit' && adapter.answer ? { access_flags: Object.entries(adapter.answer.env).map(([key, value]) => `${key}=${value}`), access_note: adapter.answer.note } : {}),
+        ...accessSettings(adapter, plan.access),
         // Did the harness load the user's own setup (instructions, skills, MCP servers)?
         // "isolated" lists the exact flags that kept it out; no flags means it loaded.
         user_config: isolationArgs.length ? 'isolated' : 'loaded',
@@ -825,6 +834,11 @@ async function resumeRun(root, ref, { log, force, dryRun }) {
     const now = modelPlan(plan, adapter, item.model_key, group?.effort);
     if (now.harnessModel !== item.model || (now.effort ?? null) !== (item.reasoning_effort ?? null)) differs.push(`${item.model_key} is now "${now.harnessModel}" at effort ${now.effort ?? 'default'}`);
   }
+  // The rows of one run must share one access policy: a run made before a harness's tools
+  // were turned off for answers (or with other edit flags) cannot continue under the new one.
+  const accessNow = accessSettings(adapter, manifest.harness.settings?.access || 'answer').access_flags || [];
+  const accessThen = manifest.harness.settings?.access_flags || [];
+  if (JSON.stringify(accessNow) !== JSON.stringify(accessThen)) differs.push(`access flags are now [${accessNow.join(' ')}]; the run used [${accessThen.join(' ')}]`);
   if (differs.length) throw new Error(`Cannot resume ${manifest.run_id}; its inputs changed:\n  ${differs.join('\n  ')}\nStart a new run.`);
   // The same check openRun makes, so a dry run never promises a resume that is refused.
   const detected = await adapter.detect();

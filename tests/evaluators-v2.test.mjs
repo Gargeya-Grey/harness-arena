@@ -125,6 +125,53 @@ test('js-function@2: an endless loop fails its test, and the case still finishes
   assert.match(getter.details.results[0].error, /backstop/);
 });
 
+// Review round 1 (Codex): the sandbox read model values and called built-ins outside the vm
+// timeout, where a looping getter or a replaced built-in hung it until the process backstop.
+test('js-function@2: a thrown object with hostile getters fails its test, fast, and the other tests keep their results', () => {
+  const tests = [{ args: [1], returns: 1 }, { args: [2], returns: 2 }, { args: [3], returns: 3 }];
+  const limits = { testCpuMs: 2000, caseCpuMs: 30000, wallMs: 60000 };
+  for (const thrown of [
+    '{ get code() { while (true) {} } }',
+    '{ get message() { while (true) {} } }',
+    '{ get stack() { while (true) {} } }',
+    'new Proxy({}, { get() { while (true) {} }, getOwnPropertyDescriptor() { while (true) {} } })',
+    '{ toString() { while (true) {} } }',
+  ]) {
+    const started = Date.now();
+    const run = runJsTestsV2({ sources: [`function f(x) { if (x === 2) throw ${thrown}; return x; }`], name: 'f', tests, limits });
+    assert.deepEqual(run.results.map((item) => item.ok), [true, false, true], `${thrown}: ${JSON.stringify(run.results)}`);
+    assert.ok(Date.now() - started < 20000, `${thrown}: no getter ran outside the timeout`);
+  }
+});
+
+test('js-function@2: model code that replaces the sandbox\'s own built-ins cannot hang it or change other tests', () => {
+  const hooks = [
+    "g.Math.min = g.Math.max = g.Math.ceil = g.Math.round = () => { while (true) {} };",
+    "g.JSON.stringify = g.JSON.parse = () => { while (true) {} };",
+    "g.Array.prototype.push = () => { while (true) {} };",
+    "g.Object.defineProperty(g.Array.prototype, '1', { set() { while (true) {} }, configurable: true });",
+    "g.Object.defineProperty(g.Object.prototype, 'error', { set() { while (true) {} }, configurable: true });",
+    "g.String.prototype.slice = g.String.prototype.replace = () => { while (true) {} };",
+    "g.Array.prototype[g.Symbol.iterator] = function* () { while (true) {} };",
+    "const vm = g.process.mainModule.require('vm'); vm.runInContext = vm.createContext = () => { while (true) {} };",
+  ];
+  for (const hook of hooks) {
+    const started = Date.now();
+    const code = js(`function primesUpTo(n) {\n  if (n === 10) { const g = this.constructor.constructor('return this')(); ${hook} }\n  return n === 10 ? [2, 3, 5, 7] : n === 1 ? [] : [2];\n}`);
+    const result = score(jsV2, code);
+    assert.deepEqual(oks(result), [true, true, true], `${hook}: ${JSON.stringify(result.details)}`);
+    assert.ok(Date.now() - started < 20000, `${hook}: the sandbox did not call the replacement`);
+  }
+});
+
+test('js-function@2: loading the code and calling it share the one CPU limit of a test', () => {
+  // About 1.3 s of CPU in each phase: each is under the 2 s limit, together they are over it.
+  const count = loopCountFor(1300);
+  const run = runJsTestsV2({ sources: [`${burn(count)}\nfunction f(x) { ${burn(count)} return x; }`], name: 'f', tests: [{ args: [1], returns: 1 }], limits: { testCpuMs: 2000, caseCpuMs: 30000, wallMs: 60000 } });
+  assert.equal(run.results[0].ok, false, JSON.stringify(run.results));
+  assert.match(run.results[0].error, /loading/);
+});
+
 test('js-function@2: a test that uses over 2 s of CPU (sized to 3 s) fails, even on an idle machine', () => {
   const code = js(`function primesUpTo(n) { if (n === 1) { ${burn(loopCountFor(3000))} } return n === 10 ? [2, 3, 5, 7] : n === 1 ? [] : [2]; }`);
   const two = score(jsV2, code);
@@ -252,6 +299,36 @@ test('workspace-tests@2: a probe that never returns is stopped by the backstop; 
   assert.equal(byName.get('loop').ok, false);
   assert.equal(byName.get('after').ok, false);
   assert.equal(byName.get('file src/value.mjs').ok, true, 'file rules do not need the process');
+});
+
+test('workspace-tests@2: workspace code that replaces built-ins or throws hostile values cannot stop the later probes', () => {
+  const started = Date.now();
+  const loop = '() => { while (true) {} }';
+  const run = checkWith({
+    probeSource: `export const probes = [
+      { name: 'hooks', run() {
+        String.prototype.slice = String.prototype.startsWith = ${loop};
+        Math.min = Math.round = ${loop}; String = ${loop}; Error = ${loop};
+        Array.prototype.push = Array.prototype.join = ${loop};
+        Object.defineProperty(Array.prototype, '1', { set: ${loop}, configurable: true });
+        return 1;
+      } },
+      { name: 'getter', run() { throw { get message() { while (true) {} } }; } },
+      { name: 'proxy', run() { throw new Proxy({}, { get: ${loop}, getOwnPropertyDescriptor: ${loop} }); } },
+      { name: 'loads', async run({ load }) { return (await load('src/value.mjs')).value; } },
+      { name: 'after', run() { return 1; } },
+    ];\n`,
+    expectedProbes: { hooks: 1, getter: 1, proxy: 1, loads: 2, after: 1 },
+    limits: { wallMs: 60000 },
+  });
+  assert.ok(Date.now() - started < 30000, 'no replaced built-in or getter ran in the check process');
+  assert.equal(run.error, undefined, JSON.stringify(run));
+  const byName = new Map(run.results.map((item) => [item.name, item]));
+  assert.equal(byName.get('hooks').ok, true, JSON.stringify(run.results));
+  assert.equal(byName.get('getter').error, 'error');
+  assert.equal(byName.get('proxy').error, 'error');
+  assert.equal(byName.get('loads').ok, true, 'load() still works after the hooks');
+  assert.equal(byName.get('after').ok, true);
 });
 
 test('workspace-tests@2: a probe that waits too long fails by the timer, like @1', () => {

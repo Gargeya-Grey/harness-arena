@@ -57,7 +57,7 @@ Timing limits. Every verdict limit of the ladder is CPU time of the process that
 
 | Evaluator | CPU limit | What happens past it |
 |---|---|---|
-| `js-function@2` | 2000 ms per test | That test fails. |
+| `js-function@2` | 2000 ms per test: loading the code into the test's fresh context plus the call | That test fails. |
 | `js-function@2` | 30000 ms for all tests of a case | The tests that have not started fail, with the reason in their result. |
 | `workspace-tests@2` | 60000 ms for a whole check, tested between probes | The probes that have not started have no result and say why; the file rules and the probes that ran still count. |
 
