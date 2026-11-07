@@ -178,7 +178,9 @@ export function lastJsonObject(text) {
 }
 
 export async function cliVersion(name, args = ['--version']) {
-  const result = await runProcess(name, args, { timeoutMs: 30000 });
+  // 180 s: Command Code 1.88.5 took 15 to 125 s to print its version on a busy machine
+  // (2026-11-07), and a version check that gives up early reports an installed CLI as missing.
+  const result = await runProcess(name, args, { timeoutMs: 180000 });
   if (result.error || result.code !== 0) return null;
   const match = /\d+\.\d+\.\d+[\w.-]*/.exec(`${result.stdout}\n${result.stderr}`);
   return match ? match[0] : null;
