@@ -1,0 +1,30 @@
+{
+  "probes": {
+    "keeps a hold, a second buyer and the shape of the result": {"first":[true,false,["createdAt","expiresAt","id","lines","state"],[{"sku":"A","qty":3}],1000],"second":{"ok":false,"short":[{"sku":"A","wanted":3,"available":2}]},"snap":[5,3,2],"keys":["available","held","onHand"]},
+    "a hold ends exactly at its expiry time and not a moment later": {"before":[5,3,2],"at":[5,0,5],"commit":false,"next":true},
+    "an expired hold stops counting although nothing else was called since": {"snap":[5,0,5],"adjust":"ok","after":[0,0,0],"expiring":[]},
+    "commit, extend and release refuse a hold whose time is up": {"commit":false,"extend":false,"release":false,"later":[false,false],"state":[[5,0,5],[2,0,2]],"ledger":[["receive","A",5],["receive","B",2],["receive","C",10]]},
+    "extend adds to the current expiry and a hold never lives longer than the longest life": {"first":true,"expiry1":[{"id":"h1","expiresAt":1500}],"at1499":1,"at1500":0,"big":true,"expiry2":[{"id":"h1","expiresAt":3000}],"again":true,"expiry3":[{"id":"h1","expiresAt":3000}]},
+    "the first expiry is the time to live, but not beyond the longest life": [4000,4000,250],
+    "keeps extend, release and commit saying false for a hold that is not active": {"released":[false,false,false],"committed":[false,false,false],"unknown":[false,false,false],"bad":["RangeError","RangeError","RangeError","RangeError"],"active":true},
+    "keeps a hold taking all its lines or none of them": {"miss":{"ok":false,"short":[{"sku":"B","wanted":5,"available":2}]},"held":[[5,0,5],[2,0,2]],"after":true},
+    "lines with the same sku are added up before the stock is checked": {"miss":{"ok":false,"short":[{"sku":"A","wanted":6,"available":5}]},"ok":[true,[{"sku":"A","qty":5},{"sku":"B","qty":1}]],"held":[5,5,0]},
+    "every short line is reported, sorted by sku": {"ok":false,"short":[{"sku":"A","wanted":2,"available":1},{"sku":"B","wanted":2,"available":1},{"sku":"C","wanted":9,"available":5}]},
+    "the same id with the same lines is a replay that reserves nothing twice": {"first":false,"again":[true,true,1000,[{"sku":"A","qty":3},{"sku":"B","qty":1}]],"held":[[5,3,2],[2,1,1]],"afterExpiry":false},
+    "the same id with other lines or other quantities is a conflict": ["ConflictError","ConflictError","ConflictError","ConflictError"],
+    "a committed id is taken for good, a released or an expired id can be used again": {"committed":"ConflictError","released":[true,false],"expired":[true,false],"snap":[[4,2,2],[2,1,1]]},
+    "keeps release giving the stock back once": [[5,4,1],true,[5,0,5],false,true],
+    "keeps commit moving stock off the shelf and into the ledger": {"commit":true,"twice":false,"a":[2,0,2],"b":[1,0,1],"ledger":[["receive","A",5,0],["receive","B",2,0],["receive","C",10,0],["commit","A",-3,300],["commit","B",-1,300]]},
+    "adjust cannot take the shelf below the active holds, and expired holds do not count": {"low":"ConflictError","edge":"ok","up":"ok","bad":["RangeError","RangeError","RangeError"],"unknown":"UnknownSkuError","expired":"ok","state":[0,0,0]},
+    "safety stock is kept back from buyers and available is never negative": {"a":[5,0,0],"b":[2,0,1],"missA":{"ok":false,"short":[{"sku":"A","wanted":1,"available":0}]},"okB":true,"missB":false,"c":[10,0,10]},
+    "keeps bad input refused": ["RangeError","RangeError","RangeError","TypeError","UnknownSkuError","RangeError","RangeError","UnknownSkuError"],
+    "expiring lists the active holds that end within the time, soonest first and then by id": {"at0":[{"id":"h2","expiresAt":200},{"id":"h1","expiresAt":300},{"id":"h3","expiresAt":300}],"wide":["h2","h1","h3","h4"],"none":[],"at200":[{"id":"h1","expiresAt":300},{"id":"h3","expiresAt":300}]},
+    "keeps the copies that the inventory hands out separate from its books": {"replay":[true,[{"sku":"A","qty":2}],"active"],"onHand":5,"ledger":5},
+    "a long scripted run keeps the books straight": {"log":["held",false,"ConflictError","held",false,"held","ConflictError","held","ConflictError","held",true,true,false,"ConflictError","ConflictError",true,[[12,1,11],[5,2,3],[20,1,17]],[],true,"held","held",true,"held","ConflictError",false,false,"ConflictError","replay",true,false,true,true,"ConflictError",false,[[11,2,9],[3,0,3],[19,1,16]],[],true,"ConflictError",false,true,"held","ConflictError","ConflictError",false,"ConflictError",false,false,false,false,"held",false,false,[[9,1,8],[3,1,2],[18,0,16]],[],false,"held",false,"ConflictError",false,"ConflictError","ConflictError",false,"ConflictError","ConflictError","replay","held",false,"ConflictError",false,true,"ConflictError","ConflictError","ConflictError",[[9,1,8],[3,3,0],[18,3,13]],["h2@2956","h5@3144"],"ConflictError",true,true,false,"ConflictError",false,"ConflictError",false,false,"ConflictError",false,false,"held","ConflictError",[[9,1,8],[3,2,1],[18,2,14]],["h6@4376"],"ConflictError",false,true,"ConflictError",false,false,"ConflictError","held",false,"ConflictError","ConflictError",false,"held",false,[[8,3,5],[2,1,1],[17,1,14]],[],"ConflictError",false,false,"ConflictError",false,false,false,false,false,false,"ConflictError",false,false,[[8,0,8],[2,0,2],[17,0,15]],[],"held","held","ConflictError","ConflictError",true,true,"ConflictError","ConflictError","held",true,"ConflictError",false,false,false,"ConflictError",[[7,1,6],[2,1,1],[17,0,15]],[]],"onHand":[7,2,17],"sums":{"A":7,"B":2,"C":17}}
+  },
+  "files": {
+    "test/expiry.test.mjs": {"same_as_starter":true},
+    "test/hold.test.mjs": {"same_as_starter":true},
+    "test/stock.test.mjs": {"same_as_starter":true}
+  }
+}

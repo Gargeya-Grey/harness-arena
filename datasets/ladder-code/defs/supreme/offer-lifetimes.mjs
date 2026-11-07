@@ -1,0 +1,47 @@
+import { t } from './_util.mjs';
+
+export default {
+  slug: 'offer-lifetimes',
+  tier: {
+    level: 5,
+    human_minutes: 200,
+    basis: 'Offline processing: a segment tree over time holds each offer on O(log q) nodes, and a Li Chao tree with rollback answers the minimum line at a point during a depth-first walk. Two data structures that must be combined with exact rollback; about 3.5 h for an expert.',
+  },
+  tags: ['efficiency'],
+  name: 'offerChecksum',
+  signature: 'offerChecksum(n, q, horizon, maxLen, xRange, seed) -> number',
+  task: [
+    'A shop lists n offers. Offer i is active during a time interval and sells at a price that is a linear function of the amount x: price = slope * x + base. A list of q price queries is asked. Everything is built from a pseudo-random generator, so the input stays small.',
+    'The generator draws x_0 = seed and x_(i+1) = (x_i * 48271 + 11) mod 2147483647 for i = 0, 1, 2, ... (exact integer arithmetic; every product is below 2^47). Each draw returns the new x.',
+    'Step 1: for each offer i = 0..n-1 in order, draw four numbers a, b, c, d and set start = a mod horizon, length = 1 + (b mod maxLen), end = min(horizon, start + length), slope = (c mod 2001) - 1000, base = d mod 1000000001.',
+    'The offer is active at time t when start <= t and t < end. The end time itself is not included (a half-open interval). Slopes can be negative, so a price can be negative.',
+    'Step 2: for each query j = 0..q-1 in order, draw two numbers a, b and set time = a mod horizon and amount = b mod (xRange + 1).',
+    'The answer to a query is the smallest price slope * amount + base over all offers that are active at the query time. Several offers can be active at once, and many queries ask about the same time. When no offer is active at the query time, the answer is the number 4000000000 (no real price is that high).',
+    'Fold the answers, in the order of the queries, into a checksum: h starts at 0; for each answer a, set h = (h * 1000003 + ((a mod 1000000007) + 1000000007) mod 1000000007) mod 1000000007, where a mod 1000000007 keeps the sign of a, as the % operator does in JavaScript. Return h as a number.',
+    'Limits: 1 <= n, q <= 24000; 1 <= horizon <= 10^9; 1 <= maxLen <= 10^9; 0 <= xRange <= 10^6; 1 <= seed <= 2147483646. All prices fit exactly in a double.',
+    'The inputs are too large for checking every offer for every query.',
+  ].join(' '),
+  edges: {
+    'end-excluded': 'the end time itself is not included',
+    'none-active': 'when no offer is active',
+    'negative-price': 'a price can be negative',
+    'same-time': 'many queries ask about the same time',
+    huge: '24000',
+  },
+  tests: [
+    t('end-excluded', [15, 30, 10, 10, 50, 2]),
+    t('none-active', [20, 40, 1000, 30, 1000, 3]),
+    t('same-time', [30, 80, 5, 3, 100, 5]),
+    t('negative-price', [40, 100, 50, 20, 1000000, 6]),
+    t('huge', [24000, 24000, 1000000000, 300000000, 1000000, 20260101]),
+    t('huge', [24000, 24000, 100000, 50000, 1000000, 424242]),
+    t('huge', [24000, 24000, 1000, 1000, 1000000, 777]),
+    t('huge', [20000, 24000, 1000000000, 1000, 1000000, 31337]),
+    t('huge', [24000, 22000, 50, 20, 500000, 99]),
+    t('huge', [24000, 24000, 1000000, 1, 1000000, 5150]),
+    t('huge', [24000, 24000, 10, 10, 1000000, 2024]),
+    t('huge', [22000, 24000, 1000000000, 1000000000, 0, 61803]),
+    t('huge', [24000, 22000, 5000, 2500, 1000, 27182]),
+    t('huge', [24000, 24000, 1000000000, 50000000, 1000000, 14142]),
+  ],
+};

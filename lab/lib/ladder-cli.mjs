@@ -11,7 +11,7 @@ export async function generateMain(metaUrl, buildText) {
   if (!process.argv[1] || path.resolve(process.argv[1]) !== fileURLToPath(metaUrl)) return;
   const file = path.join(path.dirname(fileURLToPath(metaUrl)), 'cases.jsonl');
   const text = await buildText();
-  if (process.argv.includes('--write')) fs.writeFileSync(file, text);
+  if (process.argv.includes('--write')) fs.writeFileSync(file, text); // not a run folder: a suite's cases.jsonl
   else if (process.argv.includes('--check')) {
     const stored = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
     if (stored !== text) {

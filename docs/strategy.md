@@ -23,15 +23,25 @@ Non-goals until the basics work: local models, LLM-as-judge, databases.
 | `configs/models.yaml` | Registry of models: provider, exact snapshot, params, pricing | versioned in git |
 | `datasets/<suite>/suite.yaml` | Suite identity and defaults | bump `version` on change |
 | `datasets/<suite>/cases.jsonl` | Test cases, one JSON object per line | bump `version` on change |
+| `datasets/ladder-*/defs/`, `generate.mjs` | The ladder suites' definitions, and the generator that writes their `cases.jsonl` | edit a definition, run `generate.mjs --write`, bump `version` |
+| `datasets/archive/<suite>/` | A retired suite, with its cases, workspaces and checks | frozen; bytes never change; an id lives here or in `datasets/`, never both |
+| `configs/ladder.yaml` | The difficulty ladder: five tiers, expert-time ranges, target score bands, tasks per tier and kind | versioned in git (`docs/difficulty.md`) |
 | `prompts/<prompt>/prompt.yaml` | Prompt identity, current version, variables | metadata only |
 | `prompts/<prompt>/vN.yaml` | Frozen template for version N | never edited; add `vN+1` |
-| `experiments/<name>.yaml` | Declared matrix: suite, prompt, targets (model x harness), repeats, evaluators | new file for new comparison |
+| `experiments/<name>.yaml` | Declared matrix: suite, prompt, targets (model x harness), repeats, evaluators. The dashboard lists these | new file for new comparison |
+| `experiments/archive/<name>.yaml` | A retired experiment; it still runs by path | frozen |
 | `results/<run_id>/run.json` | Run manifest | written once; `status` updated |
 | `results/<run_id>/raw.jsonl` | Every response with latency, tokens, cost, errors | append-only; a resume appends the missing rows |
 | `results/<run_id>/harness-events.ndjson` | Optional raw harness event stream when the harness exposes one. Redacted, and kept out of git (`.gitignore`): it describes the machine | immutable local sidecar |
 | `results/<run_id>/scores/<evaluator>@<version>.jsonl` | Evaluator output per response | regenerable |
 | `reports/` | Comparison tables/charts | regenerable |
 | `schemas/` | JSON Schema contracts for all of the above | versioned in git |
+
+### The ladder and the archive
+
+The comparison suites are the difficulty ladder (`docs/difficulty.md`): 80 tasks in five tiers over three suites, `ladder-answer`, `ladder-code` and `ladder-agent`. Each ladder case records its tier and its expert time in `metadata.tier`; `configs/ladder.yaml` holds the tier table and `lab/lib/ladder.mjs` checks every case against it. `node lab ladder` reads the counted evidence and shows, per configuration, how many tasks of each tier it solved. A pilot (`--repeats 1`) with `node lab ladder --calibrate` shows which tasks stay in their tier, move or need rework. A task that moves keeps its `case_id`; its tier changes in a new suite version.
+
+The earlier suites (`reasoning`, `coding`, `agentic` and their `-hard` forms) are retired into `datasets/archive/`, and their experiments into `experiments/archive/`. A retired suite is unchanged: a run names its suite by id and hash, and the hash covers the suite's bytes, not its folder. So `loadSuite` looks in `datasets/<id>/`, then in `datasets/archive/<id>/`; old runs load, score, resume and show as before. `validate` still checks the archived suites and experiments, and refuses an id found in both places. An archived suite takes no new case. `smoke` stays active as the harness check.
 
 ## Identifiers
 
@@ -109,6 +119,8 @@ Quality and reliability are deliberately separate: a model can be right on avera
 ## Adding things
 
 - **New suite** - new folder with `suite.yaml` and `cases.jsonl`. Bump `version` whenever cases change.
+- **New ladder task** - a definition under `datasets/<suite>/defs/` with its tier, its expert time and a reference; run the suite's `generate.mjs --write` and bump `version` (see AGENTS.md).
+- **Retire a suite** - `git mv datasets/<id> datasets/archive/<id>` and its experiments to `experiments/archive/`. Change no byte inside the suite: its hash is in every old run.
 - **New model** - add a registry entry with exact snapshot and pricing. Pricing is required for cost metrics.
 - **New prompt version** - add `vN.yaml`, point `prompt.yaml` at it, and reference the new version in the next experiment. Old runs keep their version.
 - **New evaluator** - give it an `id`, `version`, and `dimension`; write scores to `scores/<id>@<version>.jsonl`. An evaluator that runs model-written code runs it through `runJsTests` (`lab/evaluators/index.mjs`): a separate Node process with the permission model, an empty environment and a time limit. Never `eval` model output in the lab process.

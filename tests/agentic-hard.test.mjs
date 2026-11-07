@@ -16,7 +16,7 @@ import { readJsonl } from '../lab/lib/fsutil.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, '..');
-const SUITE = path.join(REPO, 'datasets', 'agentic-hard');
+const SUITE = path.join(REPO, 'datasets', 'archive', 'agentic-hard');
 const SOLUTIONS = path.join(HERE, 'fixtures', 'agentic-hard-solutions');
 const { rows: CASES, problems } = readJsonl(path.join(SUITE, 'cases.jsonl'));
 assert.deepEqual(problems, []);

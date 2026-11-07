@@ -17,6 +17,9 @@ export function labRoot() {
 
 const LOCAL_CONFIG = 'lab.local.yaml';
 
+/** The folder name of retired suites (datasets/archive/<id>/) and experiments (experiments/archive/). It is never a suite id. */
+export const ARCHIVE = 'archive';
+
 /** The main checkout of a git worktree (its `.git` is a file that names the main repository), or null. */
 export function mainCheckout(root) {
   const gitFile = path.join(root, '.git');
@@ -135,8 +138,11 @@ export function paths(root = labRoot()) {
     resultsDirs: [...new Set([results, path.join(root, 'results')])],
     registry: path.join(root, 'configs', 'models.yaml'),
     datasets: path.join(root, 'datasets'),
+    // Retired suites: still loaded by id, so old runs stay readable and scorable.
+    datasetsArchive: path.join(root, 'datasets', ARCHIVE),
     prompts: path.join(root, 'prompts'),
     experiments: path.join(root, 'experiments'),
+    experimentsArchive: path.join(root, 'experiments', ARCHIVE),
     annotations: path.join(data ?? root, 'annotations'),
     boards: path.join(root, 'boards'),
     reports: path.join(root, 'reports'),
@@ -156,8 +162,35 @@ export function loadRegistry(root) {
   return loadYamlFile(file)?.models || {};
 }
 
+/**
+ * The folder of a suite: datasets/<id>/, else datasets/archive/<id>/ for a retired suite.
+ * An id must live in one place (validate reports a suite in both). Null: no such suite.
+ */
+export function suiteDir(root, suiteId) {
+  const p = paths(root);
+  if (typeof suiteId !== 'string' || !suiteId || suiteId === ARCHIVE) return null;
+  for (const base of [p.datasets, p.datasetsArchive]) {
+    const dir = path.join(base, suiteId);
+    if (fs.existsSync(path.join(dir, 'suite.yaml'))) return dir;
+  }
+  return null;
+}
+
+/** Every suite folder, active first: { id, dir, archived }. A suite id found in both places is listed twice. */
+export function suiteFolders(root) {
+  const p = paths(root);
+  const folders = [];
+  for (const [base, archived] of [[p.datasets, false], [p.datasetsArchive, true]]) {
+    if (!fs.existsSync(base)) continue;
+    for (const entry of fs.readdirSync(base, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.isDirectory() && !(entry.name === ARCHIVE && !archived)) folders.push({ id: entry.name, dir: path.join(base, entry.name), archived });
+    }
+  }
+  return folders;
+}
+
 export function loadSuite(root, suiteId) {
-  const dir = path.join(paths(root).datasets, suiteId);
+  const dir = suiteDir(root, suiteId) ?? path.join(paths(root).datasets, String(suiteId));
   const suiteFile = path.join(dir, 'suite.yaml');
   const casesFile = path.join(dir, 'cases.jsonl');
   if (!fs.existsSync(suiteFile)) throw new Error(`Suite "${suiteId}" not found: ${suiteFile}`);

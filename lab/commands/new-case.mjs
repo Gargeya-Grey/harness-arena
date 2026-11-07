@@ -5,7 +5,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadPrompt, loadSuite, paths } from '../lib/repo.mjs';
+import { loadPrompt, loadSuite, paths, suiteDir as findSuiteDir } from '../lib/repo.mjs';
 
 export const FILL_IN = '<<FILL IN>>';
 
@@ -29,8 +29,9 @@ function write(file, text) {
 export function newCase(root, suiteId, slug, { agent = false, prompt = null, log = console.log } = {}) {
   if (!suiteId || !slug) throw new Error('Usage: node lab new-case <suite> <slug> [--agent] [--prompt <id>]');
   if (!SLUG.test(slug)) throw new Error(`slug "${slug}" must be lowercase letters, digits and dashes`);
-  const suiteDir = path.join(paths(root).datasets, suiteId);
-  if (!fs.existsSync(path.join(suiteDir, 'suite.yaml'))) throw new Error(`No suite "${suiteId}": datasets/${suiteId}/suite.yaml does not exist`);
+  const suiteDir = findSuiteDir(root, suiteId);
+  if (!suiteDir) throw new Error(`No suite "${suiteId}": datasets/${suiteId}/suite.yaml does not exist`);
+  if (suiteDir.startsWith(paths(root).datasetsArchive + path.sep)) throw new Error(`Suite "${suiteId}" is archived (datasets/archive/${suiteId}); an archived suite takes no new case`);
   const suite = loadSuite(root, suiteId);
   const caseId = `${suiteId}-${slug}`;
   if (suite.cases.some((item) => item.case_id === caseId)) throw new Error(`${caseId} already exists in datasets/${suiteId}/cases.jsonl`);

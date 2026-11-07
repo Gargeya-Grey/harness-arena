@@ -10,6 +10,7 @@ import { validateCommand } from './commands/validate.mjs';
 import { newCase } from './commands/new-case.mjs';
 import { doctorCommand, reportCommand, runsCommand } from './commands/info.mjs';
 import { adoptCommand } from './commands/adopt.mjs';
+import { ladderCommand } from './commands/ladder.mjs';
 
 const HELP = `Model Lab: run the same suite through any CLI harness, then compare.
 
@@ -35,6 +36,12 @@ Commands
   doctor                  Show which harnesses are installed here (built-in and configs/harnesses.yaml)
   runs                    List runs, newest first
   report [--write]        Markdown comparison per context (to stdout, or reports/comparison.md)
+  ladder                  The difficulty ladder per configuration: solved / tasks and mean score per tier
+      --calibrate           Per task: panel mean, tier band, verdict (in band, move to <tier>, rework)
+                            and a flag for negative discrimination
+      --suite <id>          Only ladder-answer, ladder-code or ladder-agent
+      --runs <id,...>       Only these runs (a run id, or part of one)
+      --json                The same data as JSON
   dashboard [--port n]    Start the local dashboard (default http://127.0.0.1:4317)
 
 Environment
@@ -60,6 +67,10 @@ async function main(argv) {
       force: { type: 'boolean' },
       write: { type: 'boolean' },
       port: { type: 'string' },
+      calibrate: { type: 'boolean' },
+      json: { type: 'boolean' },
+      suite: { type: 'string' },
+      runs: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -105,6 +116,9 @@ async function main(argv) {
       return 0;
     case 'report':
       reportCommand(root, { write: values.write });
+      return 0;
+    case 'ladder':
+      ladderCommand(root, { calibrate: values.calibrate, json: values.json, suite: values.suite, runs: values.runs ? values.runs.split(',').map((item) => item.trim()).filter(Boolean) : null });
       return 0;
     case 'dashboard': {
       const { startServer } = await import('../dashboard/server.mjs');

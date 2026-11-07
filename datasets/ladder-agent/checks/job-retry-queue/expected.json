@@ -1,0 +1,32 @@
+{
+  "probes": {
+    "keeps priority order and the shape of a job": {"order":["b","c","a"],"keys":["attempts","createdAt","finishedAt","id","key","lastError","maxAttempts","name","payload","priority","result","runAt","seq","state"]},
+    "a job runs maxAttempts times in all, not one more": [{"waits":[10,20],"calls":3,"state":"dead","attempts":3},{"waits":[],"calls":1,"state":"dead","attempts":1},{"waits":[10],"calls":2,"state":"dead","attempts":2}],
+    "the first retry waits the base time and each next one the factor more": {"waits":[100,200,400,800],"calls":5,"state":"dead","attempts":5},
+    "the wait stops growing at the cap": {"waits":[100,300,500,500,500],"calls":6,"state":"dead","attempts":6},
+    "a fractional wait is rounded up to a whole millisecond": [[10,15,23,34],[7,8,9]],
+    "an error that is marked not retryable ends the job at once": [{"waits":[],"calls":1,"state":"dead","attempts":1},{"waits":[10],"calls":2,"state":"dead","attempts":2},{"waits":[10],"calls":2,"state":"dead","attempts":2}],
+    "retryAfterMs of the error replaces the backoff wait": {"fixed":{"waits":[5000,5000,5000],"calls":4,"state":"dead","attempts":4},"zero":{"waits":[0,0],"calls":3,"state":"dead","attempts":3}},
+    "an unusable retryAfterMs falls back to the backoff wait": [[100,200],[100,200],[100,200],[100,200],[100,200]],
+    "jobs of equal rank start in the order they were enqueued, also past ten jobs": {"order":[0,1,2,3,4,5,6,7,8,9,10,11],"seen":["prompt","late","low"],"clock":0},
+    "keeps a delayed job waiting until its time": [0,0,1],
+    "a failing job gives its slot back": [2,1,2,2],
+    "keeps the limit on jobs that run at the same moment": {"second":0,"open":2,"done":2,"started":2,"third":2},
+    "a job without a handler waits and does not take a slot": {"first":1,"x":["queued",0,"done","late"],"y":"done","second":1},
+    "the same key twice is one job, and a duplicate is not counted as a new job": {"same":[true,true,false],"payload":1,"priority":0,"enqueued":2,"duplicates":2},
+    "the same key under another job name is another job": [false,true,2],
+    "after success a key is held for the ttl, counted from the end of the job": [true,true,false],
+    "a dead job gives its key back at once, a job that is waiting to retry keeps it": {"sameWhileRetrying":true,"dead":"dead","fresh":[false,"queued",0],"duplicates":1},
+    "only a waiting job can be cancelled, and it gives its key back": {"cancelled":true,"newKey":false,"results":[false,false,false,false],"afterRun":[false,false,false],"states":["done","done","dead"],"waiting":"cancelled"},
+    "retryDead starts a dead job again with a fresh count of attempts": {"early":false,"dead":["dead",2,true],"again":true,"revived":["queued",0,null],"afterOneFailure":["queued",1],"others":[false,false,false]},
+    "callers and handlers get copies of the job, never the live record": {"payload":{"items":["a"]},"priority":0,"state":"done","result":{"n":1},"same":false},
+    "stats count each thing once": {"enqueued":3,"duplicates":1,"completed":1,"retried":1,"dead":1,"cancelled":1},
+    "keeps a maxAttempts that is not a whole number refused": ["RangeError","RangeError","RangeError","RangeError"],
+    "the events carry the wait of a retry, and a dead job is announced once": [["retry",50,1],["retry",100,2],["dead",3,"dead"]]
+  },
+  "files": {
+    "test/idempotency.test.mjs": {"same_as_starter":true},
+    "test/queue.test.mjs": {"same_as_starter":true},
+    "test/retry.test.mjs": {"same_as_starter":true}
+  }
+}

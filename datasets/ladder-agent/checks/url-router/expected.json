@@ -1,0 +1,31 @@
+{
+  "probes": {
+    "keeps static, parameter, any and rest routes matching": ["/","/a","/a/:x","/b/*/c","/d/**",{"x":"1"},{"**":"1/2"}],
+    "a static segment beats a parameter, that beats any, that beats rest, whatever the order of registration": ["/f/a","/f/:x","/f/**","/g/*","/g/**"],
+    "the leftmost segment decides, and a branch that fails falls back to a looser route": ["/a/b/c","/a/b/:y","/*/b/d","/a/:x/c",404,"/a/b/:y"],
+    "a typed parameter beats a plain one, and int means digits only": ["/n/:id<int>","/n/:id","/n/:id","/n/:id","/n/:id<int>","/s/:v<int>","/s/:v<slug>",404,404,"/s/:v<slug>",404],
+    "an optional parameter is missing from the params when it is not given, and a static sibling wins": [{"status":200,"route":"/u/:id?","params":{}},{"status":200,"route":"/u/:id?","params":{"id":"5"}},{"status":200,"route":"/u/:id?","params":{}},{"status":200,"route":"/u/list","params":{}}],
+    "a rest segment needs at least one segment and gives them decoded and joined": [{"status":404},{"status":404},{"status":200,"route":"/files/**","params":{"**":"a"}},{"status":200,"route":"/files/**","params":{"**":"a/b c/d"}},{"status":200,"route":"/files/**","params":{"**":"a/b/c"}}],
+    "an encoded slash stays inside its segment, and a percent sign is decoded once": [{"status":200,"route":"/tag/:name","params":{"name":"a/b"}},{"status":404},{"status":200,"route":"/tag/:name","params":{"name":"100%41"}},{"status":200,"route":"/tag/:name","params":{"name":"€5"}},{"status":200,"route":"/pair/:a/:b","params":{"a":"a/b","b":"c"}},{"status":200,"route":"/tag/:name","params":{"name":"a%2Fb"}}],
+    "a plus sign in the path is a plus sign": [{"name":"a+b"},{"name":"a+b"},{"name":"a b"}],
+    "dot segments are resolved and cannot climb above the root": ["/x/y","/x/y","/x/y","/x/y","/x/y","/","/"],
+    "a broken percent escape in the path is status 400": [[400,null],[400,null],[400,null],[200,{"x":"%zz"}],[400,null]],
+    "query strings: repeated keys, plus, equal signs, odd pairs and keys like __proto__": {"parsed":{"a":["1","2","3"],"b":"x y","c":"1=2","d":"","e":"","f":" ","g":"%zz","__proto__":"p","h i":"j"},"keys":["a","b","c","d","e","f","g","__proto__","h i"],"proto":true,"viaMatch":{"a":["1","2","3"],"b":"x y","c":"1=2","d":"","e":"","f":" ","g":"%zz","__proto__":"p","h i":"j"},"pair":{"a":["1",""]},"empty":[{},{},{"":"x"}]},
+    "keeps a strict trailing slash policy": ["/","/a",404,"/a/b",404,404,"/"],
+    "the redirect policy keeps the query and redirects only a path that exists": [{"status":308,"location":"/a"},{"status":308,"location":"/a?x=1&y=%20"},{"status":200,"route":"/a","params":{}},{"status":404},{"status":405,"allow":["GET","HEAD","OPTIONS"]},{"status":308,"location":"/x%20y"},{"status":200,"route":"/","params":{}},{"status":308,"location":"/a"},{"status":400}],
+    "a method falls back to a looser route that has it, and 405 lists every allowed method sorted": [{"status":200,"route":"/users/:id","params":{"id":"me"}},{"status":200,"route":"/users/me","params":{}},{"status":200,"route":"/users/*","params":{}},{"status":405,"allow":["DELETE","GET","HEAD","OPTIONS","POST"]},{"status":405,"allow":["DELETE","GET","HEAD","OPTIONS"]},{"status":404}],
+    "HEAD uses the GET route unless a route has its own HEAD, and OPTIONS answers 204 with the allowed methods": [{"status":200,"route":"/p","params":{}},{"status":200,"route":"/q","params":{}},{"status":405,"allow":["OPTIONS","POST"]},{"status":204,"allow":["GET","HEAD","OPTIONS"]},{"status":204,"allow":["GET","HEAD","OPTIONS"]},{"status":204,"allow":["OPTIONS","POST"]},{"status":200,"route":"/o","params":{}},{"status":404},{"status":200,"route":"/p","params":{}}],
+    "a method is case-insensitive when a route is added and when it is matched": {"listed":["GET","POST"],"results":[{"status":200,"route":"/x","params":{}},{"status":200,"route":"/x","params":{}},{"status":200,"route":"/x","params":{}},{"status":200,"route":"/x","params":{}},{"status":405,"allow":["GET","HEAD","OPTIONS","POST"]}],"twice":"PatternError"},
+    "two routes of the same shape are refused, whatever their parameters are called": [["ok","PatternError"],["ok","ok"],["ok","ok"],["ok","PatternError"],["ok","PatternError"],["ok","ok"],["ok","ok"],["ok","PatternError"]],
+    "a parameter name is used once, and an optional parameter comes last": ["PatternError","PatternError","PatternError","ok","ok","ok"],
+    "keeps bad patterns refused": ["PatternError","PatternError","PatternError","PatternError","PatternError","PatternError","PatternError","PatternError"],
+    "a mounted router keeps its root route, its parameters and the parameters of the prefix": {"views":[{"status":200,"route":"/api","params":{}},{"status":200,"route":"/api","params":{}},{"status":200,"route":"/api/ping","params":{}},{"status":200,"route":"/api/items/:id","params":{"id":"9"}},{"status":200,"route":"/","params":{}},{"status":200,"route":"/home","params":{}},{"status":200,"route":"/t/:tenant","params":{"tenant":"acme"}},{"status":200,"route":"/t/:tenant/stats","params":{"tenant":"acme"}}],"routes":["/api","/api/ping","/api/items/:id","/","/home","/t/:tenant","/t/:tenant/stats"],"taken":"PatternError"},
+    "case-insensitive routing keeps the case of the parameters": {"insensitive":[{"status":200,"route":"/Members/:id","params":{"id":"AbC"}},{"status":200,"route":"/Members/:id","params":{"id":"x"}},{"status":200,"route":"/Docs/Readme","params":{}},{"status":200,"route":"/Members/:id","params":{"id":"Q"}}],"sensitive":[404,"/Members/:id"]},
+    "keeps an any segment to exactly one segment": ["/w/*/z",404,404,404]
+  },
+  "files": {
+    "test/methods.test.mjs": {"same_as_starter":true},
+    "test/request.test.mjs": {"same_as_starter":true},
+    "test/routing.test.mjs": {"same_as_starter":true}
+  }
+}

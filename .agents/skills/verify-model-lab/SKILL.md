@@ -1,6 +1,6 @@
 ---
 name: verify-model-lab
-description: Launch, drive and prove Model Lab - the `node lab` CLI (run, validate, report) and the local comparison dashboard at http://127.0.0.1:<port>. Use before claiming any change to lab/, dashboard/, schemas/ or the stored-record format works, and to collect screenshot or transcript evidence.
+description: Launch, drive and prove Model Lab - the `node lab` CLI (run, validate, report, ladder) and the local comparison dashboard at http://127.0.0.1:<port>. Use before claiming any change to lab/, dashboard/, schemas/ or the stored-record format works, and to collect screenshot or transcript evidence.
 ---
 
 # Verify Model Lab
@@ -16,7 +16,7 @@ The feature map is in [features/README.md](features/README.md). Read it, then us
 
 ## Launch
 
-1. Make a disposable data root. It is a copy of `tests/fixtures/repo` (9 runs, 77 observations, 3 contexts) plus the real experiments, prompts and registry:
+1. Make a disposable data root. It is a copy of `tests/fixtures/repo` (9 runs, 77 observations, 3 contexts) plus the real experiments (retired ones in `experiments/archive/`), prompts, registry and ladder table, and every suite the fixtures lack (retired ones in `datasets/archive/`):
 
    ```bash
    ROOT=$(node .agents/skills/verify-model-lab/scripts/temp-root.mjs)

@@ -40,7 +40,7 @@ function setup(t, { agentic = false } = {}) {
   // These tests start from a store with no ledger: the first command creates it.
   fs.rmSync(path.join(root, 'lab.ledger.jsonl'), { force: true });
   if (agentic) {
-    fs.cpSync(path.join(REPO, 'datasets', 'agentic'), path.join(root, 'datasets', 'agentic'), { recursive: true });
+    fs.cpSync(path.join(REPO, 'datasets', 'archive', 'agentic'), path.join(root, 'datasets', 'agentic'), { recursive: true });
     fs.cpSync(path.join(REPO, 'prompts', 'agent-task'), path.join(root, 'prompts', 'agent-task'), { recursive: true });
   }
   fs.mkdirSync(path.join(root, 'experiments'), { recursive: true });

@@ -37,7 +37,7 @@ function tempRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-agentic-'));
   rootOf.current = root;
   fs.cpSync(FIXTURES, root, { recursive: true });
-  fs.cpSync(path.join(REPO, 'datasets', 'agentic'), path.join(root, 'datasets', 'agentic'), { recursive: true });
+  fs.cpSync(path.join(REPO, 'datasets', 'archive', 'agentic'), path.join(root, 'datasets', 'agentic'), { recursive: true });
   fs.cpSync(path.join(REPO, 'prompts', 'agent-task'), path.join(root, 'prompts', 'agent-task'), { recursive: true });
   fs.mkdirSync(path.join(root, 'experiments'), { recursive: true });
   return root;

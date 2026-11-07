@@ -262,7 +262,7 @@ The server never calls a model itself. The control page starts the CLI as a chil
 | DELETE | `/api/boards/:id` | Delete a board file |
 | GET | `/api/catalog` | Experiments (targets, case ids, access, user setup), harness names, model keys |
 | GET | `/api/jobs` | Jobs since the server started, newest first, and the running job id |
-| POST | `/api/jobs` | Start one job: `{command: run\|score\|validate\|doctor\|runs\|report, ...}`. 409 while another job runs |
+| POST | `/api/jobs` | Start one job: `{command: run\|score\|validate\|doctor\|runs\|report\|ladder, ...}`. 409 while another job runs |
 | GET | `/api/jobs/:id?since=n` | One job and its output lines from line `n` |
 | POST | `/api/jobs/:id/cancel` | Stop a job (section 13) |
 
@@ -556,9 +556,9 @@ Start asks once: the first press shows "Start N calls?" for 5 seconds, and only 
 
 ### 13.2 Jobs
 
-- Allowlist: `run`, `score`, `validate`, `doctor`, `runs`, `report`. Never `dashboard`.
+- Allowlist: `run`, `score`, `validate`, `doctor`, `runs`, `report`, `ladder` (the ladder report, no arguments). Never `dashboard`.
 - The server spawns `node lab/cli.mjs <args>` with an argument array, no shell, `cwd` and `LAB_ROOT` set to the data root.
-- An experiment is a file name in `<root>/experiments/`. A run id must have a `run.json` in `<root>/results/`. Harness names, model keys and case ids match `^[A-Za-z0-9][\w.:@/+-]*$`, so no value can start with `-` and become a flag. Repeats: 1 to 50.
+- An experiment is a file name in `<root>/experiments/` (not in `experiments/archive/`, which the Run page does not list). A run id must have a `run.json` in `<root>/results/`. Harness names, model keys and case ids match `^[A-Za-z0-9][\w.:@/+-]*$`, so no value can start with `-` and become a flag. Repeats: 1 to 50.
 - One job at a time. Output is kept in memory (the last 5,000 lines per job, the last 30 jobs) and lost when the server stops. The evidence is in `results/` as usual.
 - Stop: the first stop of a live run writes `cancel` to the child's stdin (`LAB_JOB=1`), which acts as Ctrl+C: the run finishes its current call, keeps what it wrote and is marked failed. A second stop, or a stop of any other command, ends the process tree (`taskkill /T /F` on Windows, the process group on other systems).
 - Known limit: when the server itself stops, it asks a running job to stop and exits; the job may then fail on a closed output pipe.

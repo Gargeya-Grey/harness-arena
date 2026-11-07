@@ -44,7 +44,7 @@ The panel is the targets of the ladder experiments. Each task runs once per targ
 
 1. Compute each task's mean score across the panel (a score is the share of hidden tests passed, so partial work counts).
 2. A task whose mean is inside its tier's target band stays.
-3. A task more than one band away from its target moves to the tier whose band holds its mean, as long as its expert time is within a factor of 4 of that tier's range. Otherwise the task is wrong for the scale (too easy for its length, or broken) and is reworked.
+3. A task outside its band moves to the nearest tier whose band holds its mean, as long as its expert time is within a factor of 4 of that tier's range. Otherwise the task is wrong for the scale (too easy for its length, or broken) and is reworked. `node lab ladder --calibrate` applies this rule and prints a verdict per task.
 4. A task that a weaker configuration passes and a stronger one fails on every repeat is checked for a defect before anything else. Item response theory work on public benchmarks finds that such negative discrimination usually means an error in the item (ATLAS, 2025).
 5. Moving a task keeps its `case_id`. Its tier changes in a new suite version.
 

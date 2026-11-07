@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { listDirs, listFiles, readJson, readJsonl } from '../lib/fsutil.mjs';
 import { SchemaSet } from '../lib/schema.mjs';
-import { targetProblems as checkTargets, loadPrompt, loadRegistry, loadSuite, loadYamlFile, paths, resolveExperiment, runDirs } from '../lib/repo.mjs';
+import { ARCHIVE, targetProblems as checkTargets, loadPrompt, loadRegistry, loadSuite, loadYamlFile, paths, resolveExperiment, runDirs, suiteFolders } from '../lib/repo.mjs';
 import { harnessesFile, loadAdapters, readDeclared } from '../adapters/index.mjs';
 import { getEvaluator } from '../evaluators/index.mjs';
 import { listTree } from '../lib/workspace.mjs';
@@ -51,13 +51,21 @@ export function validateRepo(root) {
   }
 
   const suites = new Map();
-  for (const name of listDirs(p.datasets)) {
+  // datasets/<id>/ holds the active suites; datasets/archive/<id>/ the retired ones, which old runs still name.
+  // An id lives in one place, and datasets/archive/ itself is a folder of suites, not a suite.
+  if (fs.existsSync(path.join(p.datasetsArchive, 'suite.yaml'))) report(p.datasetsArchive, `datasets/${ARCHIVE}/ is the folder of retired suites, not a suite; remove its suite.yaml`);
+  const folders = suiteFolders(root);
+  for (const { id, archived } of folders) {
+    if (archived && folders.some((other) => !other.archived && other.id === id)) report(path.join(p.datasetsArchive, id), `suite "${id}" is in datasets/${id} and in datasets/${ARCHIVE}/${id}; keep it in one place`);
+  }
+  for (const { id: name, dir: suiteFolder, archived } of folders) {
+    if (archived && suites.has(name)) continue;
     try {
       const suite = loadSuite(root, name);
       suites.set(name, suite);
       counts.suites += 1;
       const seen = new Set();
-      const file = path.join(p.datasets, name, 'cases.jsonl');
+      const file = path.join(suiteFolder, 'cases.jsonl');
       suite.cases.forEach((item, index) => {
         counts.cases += 1;
         schemas.validate('case.schema.json', item).forEach((error) => report(file, `line ${index + 1}: ${error}`));
@@ -97,7 +105,7 @@ export function validateRepo(root) {
       const scaffold = ['checks', 'workspaces'].flatMap((dir) => listTree(path.join(suite.dir, dir)).map((rel) => path.join(suite.dir, dir, ...rel.split('/'))));
       for (const hit of unfilled([file, ...scaffold])) report(hit.file, `line ${hit.line}: still holds ${FILL_IN}; write the real value`);
     } catch (error) {
-      report(path.join(p.datasets, name), error.message);
+      report(suiteFolder, error.message);
     }
   }
 
@@ -114,8 +122,8 @@ export function validateRepo(root) {
     }
   }
 
-  for (const file of listFiles(p.experiments, '.yaml')) {
-    const abs = path.join(p.experiments, file);
+  const experimentFiles = [...listFiles(p.experiments, '.yaml').map((file) => path.join(p.experiments, file)), ...listFiles(p.experimentsArchive, '.yaml').map((file) => path.join(p.experimentsArchive, file))];
+  for (const abs of experimentFiles) {
     counts.experiments += 1;
     try {
       const experiment = loadYamlFile(abs);

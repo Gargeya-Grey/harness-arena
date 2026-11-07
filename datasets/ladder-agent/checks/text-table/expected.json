@@ -1,0 +1,30 @@
+{
+  "probes": {
+    "keeps an ascii table and a unicode table with their header rule": [["+-------+-----+","| Name  | Qty |","+-------+-----+","| apple |   3 |","| fig   |  12 |","+-------+-----+"],["┌─────────┬───────┐","│  Name   │  Qty  │","├─────────┼───────┤","│  apple  │    3  │","│  fig    │   12  │","└─────────┴───────┘"],["+-------+-----+","| apple |   3 |","| fig   |  12 |","+-------+-----+"]],
+    "wide characters take two columns: Hangul, kana, Chinese, full-width forms and emoji": [6,8,8,6,10,2,2,4,3,4,2],
+    "a cluster takes the width of its widest part: marks, joiners, flags, skin tones and emoji style": [1,1,2,0,2,2,4,2,2,1,1,2,2,2],
+    "colour codes take no column and are never split": {"widths":[3,11,0,2],"cut":["\u001b[1;31mhello w…\u001b[0m","\u001b[1;31mhello world\u001b[0m","\u001b[32m日本…\u001b[0m","x\u001b[31ma.\u001b[0m\u001b[1m"]},
+    "truncate counts the ellipsis by its own width and leaves it out when it does not fit": ["abc...","...","ab","…","","abcde","日本…","日…","日…","日本語です","abcdef","abcde…","ab日"],
+    "truncate never cuts a cluster in two": ["é…","👨‍👩‍👧x…","🇯🇵🇺🇸…","a👍🏽b…","ñ̃ñ̃…"],
+    "a tab goes to the next multiple of 4 columns, counted from the start of the line": ["a   b","ab  c","abcd    e","    x","日  x","a       b","é   x"],
+    "empty and plain values: null, undefined, numbers, booleans, dates, objects, big integers": ["","","0","0","false","true","12","x","2024-01-02T03:04:05.000Z","{\"a\":1,\"b\":[2,null]}","[1,\"two\"]","NaN"],
+    "line breaks and control characters in a cell": ["a","b","a","b","a","b","c","bellhere","nulx","delx","c1x","strayx","\u001b[31mred\u001b[0m[2Kx","trail","","",""],
+    "numbers are rounded half away from zero on their decimal digits": ["1.01","3","-3","0.13","1.5","-1.01","8.35","1.26","1","2","0.5","10.08","1000000000000000000000","0.00000015","123456789.13","0.00000123","0.000001","0.30","100.00","1000","1.100","100","12345.7"],
+    "thousands separators go in the whole part only, and a zero result has no minus sign": ["1,234,567.89","-1,234.5","1 234.5678","123,456.789012","1,000,000.00","0.00","-1","0.00","0.000","1.000","100","NaN","Infinity","-Infinity","12","1,000,000,000,000,000,000,000"],
+    "decimals must be a whole number from 0 to 20": ["RangeError","RangeError","RangeError","RangeError","RangeError","1.50000000000000000000","2"],
+    "a number column is right-aligned, takes decimals and thousands, and leaves other values as text": ["┌──────────────┬──────┐","│       Amount │ Left │","├──────────────┼──────┤","│         3.00 │ 1    │","│ 1,234,567.89 │ 22   │","│           12 │      │","│         0.00 │ n/a  │","│              │ 5    │","└──────────────┴──────┘"],
+    "an odd gap in a centred column leaves the extra column on the right": ["+---------+--------+","| xxxxxxx | yyyyyy |","+---------+--------+","|   ab    |   c    |","|   abc   |   ab   |","|   日    |        |","| abcdefg | abcdef |","+---------+--------+"],
+    "wrapLine keeps the spaces inside a line and the indent, and drops the spaces at a break": [["  aa","bb cc"],["aa bb"],["aa","bb"],["aa   bb"],["aaaa","bbbb","bbbb","bb"],["日本","語で","す"],["ab","日本","cd"],["a b","c d","e"],[""],["abcdefgh"],["abcdefgh","i"],["hello","world"],["éé","é","x"]],
+    "a wrapping column wraps its title too, a truncating column cuts it": ["+----------+----------+","| Long     | Long he… |","| header   |          |","| text     |          |","+----------+----------+","| some     | some wo… |","| words    |          |","| that     |          |","| wrap     |          |","+----------+----------+"],
+    "a row is as tall as its tallest cell and the other cells are filled with blank lines": ["┌───┬────────┬───┐","│ A │ B      │ C │","├───┼────────┼───┤","│ x │ one    │ a │","│   │ two    │ b │","│   │ three  │   │","│   │ four   │   │","│ 1 │ z      │ q │","│ 2 │        │   │","│ 3 │        │   │","└───┴────────┴───┘"],
+    "a table wider than maxWidth shrinks its widest column first, never one with a fixed width": {"loose":["+------------+------------+-----+","| A          | B          | C   |","+------------+------------+-----+","| abcdefghij | abcdefghij | abc |","+------------+------------+-----+"],"tight":["+-------+------+-----+","| A     | B    | C   |","+-------+------+-----+","| abcd… | abc… | abc |","+-------+------+-----+"],"tighter":["+----+----+----+","| A  | B  | C  |","+----+----+----+","| a… | a… | a… |","+----+----+----+"],"fixed":["+------------+----+----+","| A          | B  | C  |","+------------+----+----+","| abcdefghij | a… | a… |","+------------+----+----+"],"none":[" A     B     C"," abc…  abc…  abc"]},
+    "minWidth, maxWidth and width hold a column, and a table that cannot fit is refused": {"min":["+--------+------+","| A      | B    |","+--------+------+","| ab     | abc… |","+--------+------+"],"fixed":["+-----+--------------+","| A   | B            |","+-----+--------------+","| ab  | abcdefghij   |","+-----+--------------+"],"shrinkMin":"RangeError","nofit":"RangeError","nofit2":"RangeError","exact":["+------------+","| B          |","+------------+","| abcdefghij |","+------------+"]},
+    "a table with wide and combined characters stays aligned": {"lines":["┌────────┬────────┬─────┐","│ Name   │ Note   │ Qty │","├────────┼────────┼─────┤","│ 한국어 │ ééééé… │   1 │","│ ASCII  │ 🇯🇵🇺🇸…  │  22 │","│ 日本語 │ \u001b[31mred r…\u001b[0m │ 333 │","│ x      │ 👨‍👩‍👧 fa… │   4 │","└────────┴────────┴─────┘"],"widths":[25,25,25,25,25,25,25,25]},
+    "padding, ellipsis and borders are options": {"zero":["+------+-+","|Alpha |B|","+------+-+","|abcde…|1|","+------+-+"],"two":["┌──────────┬─────┐","│  Alpha   │  B  │","├──────────┼─────┤","│  abc...  │  1  │","└──────────┴─────┘"],"none":["  Alpha     B","  abcde…    1"],"noEllipsis":[" Alpha   B"," abcdef  1"]},
+    "keeps bad options refused": ["RangeError","RangeError","RangeError","RangeError",["+---+","| A |","+---+","+---+"]]
+  },
+  "files": {
+    "test/render.test.mjs": {"same_as_starter":true},
+    "test/text.test.mjs": {"same_as_starter":true}
+  }
+}

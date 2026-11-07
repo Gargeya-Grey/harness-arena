@@ -30,7 +30,7 @@ function tempRoot(t, { agentic = false } = {}) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.cpSync(FIXTURES, root, { recursive: true });
   if (agentic) {
-    fs.cpSync(path.join(REPO, 'datasets', 'agentic'), path.join(root, 'datasets', 'agentic'), { recursive: true });
+    fs.cpSync(path.join(REPO, 'datasets', 'archive', 'agentic'), path.join(root, 'datasets', 'agentic'), { recursive: true });
     fs.cpSync(path.join(REPO, 'prompts', 'agent-task'), path.join(root, 'prompts', 'agent-task'), { recursive: true });
   }
   fs.mkdirSync(path.join(root, 'experiments'), { recursive: true });

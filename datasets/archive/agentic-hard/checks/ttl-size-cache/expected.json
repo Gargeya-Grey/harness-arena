@@ -1,0 +1,30 @@
+{
+  "probes": {
+    "keeps basic use and falsy values": [0,"",false,true,false,3,true,false,2],
+    "keeps least recently used eviction with maxEntries": [["d","c","e"],2],
+    "durations in text are converted to milliseconds": [500,30000,300000,7200000,86400000,1500,5400000,0,250,0,"Infinity"],
+    "keeps bad durations an error": ["threw","threw","threw","threw","threw","threw","threw","threw","threw"],
+    "a ttl written as text lasts that many seconds": [1,null,false],
+    "a ttl given per entry beats the default, in text or in milliseconds": [[true,true,true,true],[false,true],[false,true],false,true],
+    "an entry expires exactly when its time is up, for every reader": [[1,true,1],"undefined",false,"undefined","undefined",0],
+    "a ttl of zero expires at once and a bad ttl is refused": [true,"undefined",0,"threw","threw","threw"],
+    "ttlOf answers in milliseconds": [7500,"Infinity","undefined","undefined"],
+    "replacing a key replaces its size": [100,["b","a"],0],
+    "expired entries make room before live ones are evicted": {"keys":["live","new"],"bytes":80,"evictions":0,"expirations":1},
+    "a value bigger than maxBytes is refused and the old value goes": {"big":false,"replace":false,"exact":true,"keys":["keep","exact"],"bytes":100,"evictions":0},
+    "keeps maxBytes evicting the least recently used entries until the new one fits": {"keys":["a","d"],"bytes":90,"evictions":2},
+    "has and peek leave recency and statistics alone": {"keys":["b","c"],"hits":0,"misses":0},
+    "statistics count hits, misses, evictions and expirations": {"hits":1,"misses":3,"evictions":1,"expirations":2,"entries":0,"bytes":0},
+    "size and bytes never count expired entries": [[3,60],1,30,["c"]],
+    "purge removes the expired entries and reports how many": [2,1,0,["d"],3],
+    "the default size of a string is its UTF-8 length": [6,["b"],6,false],
+    "a loaded value is shared by concurrent callers and reloaded after it expires": {"together":["k#1","k#1","k#1"],"warm":"k#1","cold":"k#2","custom":"j#3","stillCustom":"j#3","reloaded":"j#4","calls":4},
+    "a failed load is not cached and waiting callers all see the failure": {"first":["rejected:boom","rejected:boom"],"second":"ok","third":"ok","calls":2,"has":true},
+    "keeps the default clock and the exports": ["x",true,[],3,3]
+  },
+  "files": {
+    "test/cache.test.mjs": {"same_as_starter":true},
+    "test/duration.test.mjs": {"same_as_starter":true},
+    "test/loader.test.mjs": {"same_as_starter":true}
+  }
+}

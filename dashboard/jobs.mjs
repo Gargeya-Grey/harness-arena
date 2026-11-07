@@ -20,7 +20,7 @@ const RUN_ID = /^[A-Za-z0-9][\w.-]*$/;
 // eslint-disable-next-line no-control-regex
 const ANSI = /\u001b\[[0-9;?]*[A-Za-z]/g;
 
-export const COMMANDS = ['run', 'score', 'validate', 'doctor', 'runs', 'report'];
+export const COMMANDS = ['run', 'score', 'validate', 'doctor', 'runs', 'report', 'ladder'];
 
 const bad = (message) => Object.assign(new Error(message), { status: 400 });
 

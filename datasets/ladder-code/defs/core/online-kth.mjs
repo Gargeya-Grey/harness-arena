@@ -1,0 +1,52 @@
+import { t } from './_util.mjs';
+
+const task = [
+  'values is an array of n integers with an absolute value of at most 1000000000 and a length from 0 to 200000. queries is an array of [l, r, k] with at most 200000 queries.',
+  'The answer to a query is the k-th smallest of the values at the indexes l to r (0-based, both included), counting duplicates: k = 1 is the minimum and k = r - l + 1 is the maximum. In the values 4, 4, 4, 2, 2 the 2nd smallest is 2 and the 3rd smallest is 4.',
+  'A query is invalid, and its answer is null, when l > r, l < 0, r >= n, k < 1 or k > r - l + 1. The queries of an array do not depend on each other.',
+  'Compact input. A generator makes a stream of integers: x(0) = seed and x(i) = (x(i-1) * 48271) mod 2147483647; the i-th number of the stream is x(i).',
+  'values can be {n, seed, maxV} instead of an array: the array of n integers whose i-th element (i from 0) is the (i+1)-th stream number mod (2 * maxV + 1), minus maxV.',
+  'queries can be {count, seed} instead of an array, and then each query depends on the previous answer: last is 0 before the first query, and after a query it is that query\'s answer. Query j takes the next three numbers p, q and s of its own stream. With M(x, m) = ((x mod m) + m) mod m, set l0 = M(p + last, n) and r0 = M(q + last, n), then l = min(l0, r0), r = max(l0, r0) and k = 1 + M(s + last, r - l + 1). Compact queries need n of at least 1 and are always valid.',
+  'Return the object {count, first, digest}. count is the number of answers. first is the array of the first ten answers (all of them when there are fewer).',
+  'digest summarises all answers: start with h = 0 and for each answer in order set h = (h * 1000003 + w) mod 998244353, where w is 0 for a null answer and otherwise w = ((answer mod 998244353) + 998244353) mod 998244353, plus 1.',
+].join(' ');
+
+export default {
+  slug: 'online-kth',
+  tier: { level: 4, human_minutes: 45, basis: 'estimated from the reference (about 110 lines): a persistent segment tree (or wavelet tree) over compressed values, plus the validity rules and the compact generator; a known technique, but long to write and check' },
+  name: 'onlineKth',
+  signature: 'onlineKth(values, queries) -> {count, first, digest}',
+  tags: ['efficiency', 'data-structure'],
+  task,
+  edges: {
+    duplicates: 'counting duplicates',
+    'invalid-order': 'l > r',
+    'invalid-bounds': 'l < 0, r >= n',
+    'invalid-k': 'k < 1 or k > r - l + 1',
+    'empty-values': 'a length from 0 to 200000',
+    negative: 'an absolute value of at most 1000000000',
+    online: 'each query depends on the previous answer',
+    generated: 'values can be {n, seed, maxV}',
+    digest: 'mod 998244353',
+    huge: 'at most 200000 queries',
+  },
+  tests: [
+    t('digest', [[5, 3, 8, 1, 9, 2], [[0, 5, 1], [0, 5, 6], [1, 3, 2], [2, 2, 1]]], { count: 4, first: [1, 9, 3, 8], digest: 796040311 }),
+    t('duplicates', [[4, 4, 4, 2, 2], [[0, 4, 3], [0, 4, 4], [0, 4, 2], [2, 4, 2]]], { count: 4, first: [4, 4, 2, 2], digest: 690468559 }),
+    t('invalid-order', [[5, 3, 8, 1, 9, 2], [[3, 1, 1]]], { count: 1, first: [null], digest: 0 }),
+    t('invalid-bounds', [[5, 3, 8, 1, 9, 2], [[-1, 2, 1], [0, 6, 1], [6, 6, 1]]], { count: 3, first: [null, null, null], digest: 0 }),
+    t('invalid-k', [[5, 3, 8, 1, 9, 2], [[0, 2, 0], [1, 2, 3], [0, 0, 2]]], { count: 3, first: [null, null, null], digest: 0 }),
+    t('empty-values', [[], [[0, 0, 1], [0, -1, 1]]], { count: 2, first: [null, null], digest: 0 }),
+    t('empty-values', [[7], []], { count: 0, first: [], digest: 0 }),
+    t('negative', [[-5, -1, -9, 0, 1000000000, -1000000000], [[0, 5, 1], [0, 5, 6], [0, 3, 2], [2, 4, 3]]]),
+    t('duplicates', [[3, 3, 3, 3], [[0, 3, 1], [0, 3, 4], [1, 2, 2], [3, 3, 1]]]),
+    t('basic', [Array.from({ length: 20 }, (_, i) => (i * 7) % 11), Array.from({ length: 14 }, (_, i) => [i % 5, 10 + i, 1 + (i % 4)])]),
+    t('generated', [{ n: 12, seed: 5, maxV: 6 }, { count: 15, seed: 3 }]),
+    t('online', [{ n: 1, seed: 9, maxV: 100 }, { count: 6, seed: 4 }]),
+    t('online', [{ n: 50, seed: 77, maxV: 1000000000 }, { count: 200, seed: 8 }]),
+    t('duplicates', [{ n: 300, seed: 123, maxV: 2 }, { count: 400, seed: 456 }]),
+    t('huge', [{ n: 120000, seed: 12345, maxV: 1000000000 }, { count: 100000, seed: 777 }]),
+    t('huge', [{ n: 200000, seed: 2147483646, maxV: 25 }, { count: 200000, seed: 31337 }]),
+    t('huge', [{ n: 100000, seed: 424242, maxV: 100000 }, { count: 100000, seed: 1 }]),
+  ],
+};

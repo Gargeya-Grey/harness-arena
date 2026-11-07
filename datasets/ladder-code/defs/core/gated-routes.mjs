@@ -1,0 +1,52 @@
+import { t } from './_util.mjs';
+
+const task = [
+  'A directed graph has n nodes numbered 0 to n-1 (1 <= n <= 200000) and edges [u, v, len, period, open]: you can walk from u to v, the walk takes len time units (len >= 1), and the edge has a gate.',
+  'You can start walking an edge at time t only if t mod period < open (1 <= open <= period; when open equals period the gate never closes). Once you have started, the walk always finishes after len time units.',
+  'Waiting costs nothing: at any node, also at the start, you may wait any whole number of time units.',
+  'You start at node from at time start (an integer, 0 or more). You also have one pass: on at most one edge of your walk you may ignore the gate and start walking at once.',
+  'Return the earliest time at which you can be at node to, or -1 if you cannot get there. If from equals to, return start.',
+  'There can be several edges between two nodes, and edges from a node to itself. There are at most 400000 edges, and all times stay below 2^53.',
+  'Compact input. edges can be {m, seed, maxLen, maxPeriod} instead of an array. A generator makes a stream of integers: x(0) = seed and x(i) = (x(i-1) * 48271) mod 2147483647; the i-th number of the stream is x(i). Edge j (j from 0) takes the next five numbers a, b, c, d, e in this order: u = a mod n, v = b mod n, len = 1 + (c mod maxLen), period = 1 + (d mod maxPeriod) and open = 1 + (e mod period).',
+].join(' ');
+
+export default {
+  slug: 'gated-routes',
+  tier: { level: 4, human_minutes: 40, basis: 'estimated from the reference (about 110 lines): Dijkstra over (node, pass used) with a binary heap, gate waiting, and a compact generator; the state twist and the heap are where the time goes' },
+  name: 'earliestArrival',
+  signature: 'earliestArrival(n, edges, from, to, start) -> number',
+  tags: ['efficiency', 'graph'],
+  task,
+  edges: {
+    gate: 'only if t mod period < open',
+    'always-open': 'the gate never closes',
+    wait: 'Waiting costs nothing',
+    pass: 'one pass',
+    'same-node': 'If from equals to, return start',
+    unreachable: 'or -1 if you cannot get there',
+    parallel: 'several edges between two nodes',
+    'self-loop': 'edges from a node to itself',
+    generated: 'edges can be {m, seed, maxLen, maxPeriod}',
+    huge: 'at most 400000 edges',
+  },
+  tests: [
+    t('gate', [2, [[0, 1, 5, 10, 3]], 0, 1, 0], 5),
+    t('pass', [2, [[0, 1, 5, 10, 3]], 0, 1, 4], 9),
+    t('wait', [3, [[0, 1, 5, 10, 3], [1, 2, 1, 4, 1]], 0, 2, 4], 13),
+    t('always-open', [2, [[0, 1, 3, 5, 5]], 0, 1, 7], 10),
+    t('same-node', [1, [], 0, 0, 6], 6),
+    t('unreachable', [3, [[0, 1, 1, 1, 1]], 0, 2, 0], -1),
+    t('unreachable', [2, [[1, 0, 1, 1, 1]], 0, 1, 0], -1),
+    t('parallel', [2, [[0, 1, 10, 1, 1], [0, 1, 3, 6, 2]], 0, 1, 4], 7),
+    t('self-loop', [2, [[0, 0, 1, 2, 1], [0, 1, 2, 3, 1]], 0, 1, 0], 2),
+    t('gate', [4, [[0, 1, 2, 7, 2], [1, 3, 2, 5, 1], [0, 2, 6, 3, 3], [2, 3, 1, 9, 1]], 0, 3, 3]),
+    t('pass', [5, [[0, 1, 4, 6, 1], [1, 2, 4, 6, 1], [2, 4, 4, 6, 1], [0, 3, 30, 1, 1], [3, 4, 30, 1, 1]], 0, 4, 1]),
+    t('wait', [4, [[0, 1, 1, 12, 2], [1, 2, 1, 12, 2], [2, 3, 1, 12, 2], [0, 3, 40, 7, 6]], 0, 3, 5]),
+    t('generated', [8, { m: 24, seed: 11, maxLen: 6, maxPeriod: 8 }, 0, 7, 2]),
+    t('generated', [12, { m: 40, seed: 2024, maxLen: 9, maxPeriod: 12 }, 3, 10, 0]),
+    t('generated', [30, { m: 70, seed: 99, maxLen: 20, maxPeriod: 25 }, 0, 29, 5]),
+    t('huge', [100000, { m: 400000, seed: 12345, maxLen: 20, maxPeriod: 30 }, 0, 99999, 5]),
+    t('huge', [100000, { m: 300000, seed: 987654321, maxLen: 9, maxPeriod: 50 }, 7, 77777, 0]),
+    t('huge', [100000, { m: 250000, seed: 31337, maxLen: 30, maxPeriod: 12 }, 99999, 1, 1000000]),
+  ],
+};

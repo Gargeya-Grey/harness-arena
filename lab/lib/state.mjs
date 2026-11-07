@@ -165,7 +165,7 @@ function observationStatus(raw, quality) {
  * is still running, or was never scored (halted by the guard), counts nothing: its
  * answers have no score yet, so its errors alone would pull the mean down.
  */
-function countedRows(rows, hasQuality) {
+export function countedRows(rows, hasQuality) {
   if (!hasQuality) return [];
   return rows.flatMap((row) => {
     if (!row.run_scored) return [];
