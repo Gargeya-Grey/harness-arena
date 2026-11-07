@@ -13,6 +13,10 @@
 //   <case_id>.mjs         reference
 //   <case_id>.naive.mjs   correct on small inputs, too slow on huge ones (efficiency cases only)
 //   <case_id>.wrong.mjs   plausible mistake
+//
+// The reference solution is not the only judge of the expected values. Every case also carries
+// hand-derived tests: tests whose `returns` stands in the definition (worked out from the task text,
+// not computed by the reference). The reference has to agree with all of them.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,6 +27,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { getEvaluator } from '../lab/evaluators/index.mjs';
 import { buildCases } from '../datasets/ladder-code/generate.mjs';
+import { loadDefinitions } from '../lab/lib/ladder.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFS = path.join(HERE, '..', 'datasets', 'ladder-code', 'defs', 'supreme');
@@ -41,6 +46,7 @@ const ids = new Set(slugs.map((slug) => `ladder-code-${slug}`));
 const cases = (await buildCases()).filter((item) => ids.has(item.case_id));
 const efficiency = cases.filter((item) => item.tags.includes('efficiency'));
 const specs = cases.filter((item) => item.tags.includes('spec'));
+const defs = new Map((await loadDefinitions(DEFS)).map((def) => [`ladder-code-${def.slug}`, def]));
 const jsFunction = getEvaluator('js-function', '1');
 const solutionText = (id, kind = '') => fs.readFileSync(path.join(SOLUTIONS, `${id}${kind}.mjs`), 'utf8');
 const wrap = (code) => '```js\n' + code + '\n```';
@@ -130,7 +136,8 @@ test('the supreme tier holds 10 tier 5 cases: 6 efficiency, 4 precise-spec, all 
     assert.ok(item.input.task.length > 400, `${item.case_id}: the task text is complete`);
     assert.equal(item.tags.length, 2, `${item.case_id}: tags are [tier, kind]`);
     const count = item.expected.tests.length;
-    assert.ok(count >= 8 && count <= 80, `${item.case_id}: ${count} tests, expected 8 to 80`);
+    // The spec cases hold a large set of hand-derived tests next to the computed ones.
+    assert.ok(count >= 8 && count <= 250, `${item.case_id}: ${count} tests, expected 8 to 250`);
   }
 });
 
@@ -230,5 +237,29 @@ test('an empty function scores 0 and a function that returns null does not pass 
     assert.equal(empty.value, 0, `${item.case_id}: an empty function scored ${empty.value}`);
     const stub = scoreHere(item, `function ${item.input.name}() { return null; }`);
     assert.ok(stub.value < 1, `${item.case_id}: a null stub passes`);
+  }
+});
+
+test('every case has hand-derived tests: a spec case at least 10 and every rule family, an efficiency case at least 3 small ones', () => {
+  for (const item of cases) {
+    const def = defs.get(item.case_id);
+    assert.ok(def, `${item.case_id}: definition not found`);
+    const handTests = def.tests.filter((one) => 'returns' in one);
+    if (item.tags.includes('spec')) {
+      assert.ok(handTests.length >= 10, `${item.case_id}: only ${handTests.length} hand-derived tests`);
+      // Each rule family that the definition names is covered by a hand-derived test, not only by a computed one.
+      for (const name of Object.keys(def.edges)) {
+        assert.ok(handTests.some((one) => one.edge === name), `${item.case_id}: no hand-derived test for the edge "${name}"`);
+      }
+    } else {
+      const small = handTests.filter((one) => !one.edge.startsWith('huge'));
+      assert.ok(small.length >= 3, `${item.case_id}: only ${small.length} small hand-derived tests`);
+      assert.ok(handTests.every((one) => !one.edge.startsWith('huge')), `${item.case_id}: a huge test needs the reference`);
+    }
+    // The stored value of a hand-derived test is the one in the definition.
+    handTests.forEach((one) => {
+      const stored = item.expected.tests.find((entry) => JSON.stringify(entry.args) === JSON.stringify(one.args));
+      assert.deepEqual(stored?.returns, one.returns, `${item.case_id}: stored value differs from the hand-derived one for ${JSON.stringify(one.args).slice(0, 80)}`);
+    });
   }
 });

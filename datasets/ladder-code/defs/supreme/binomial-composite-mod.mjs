@@ -28,11 +28,14 @@ export default {
     huge: '10^18',
   },
   tests: [
-    t('m-one', ['1000', '500', 1]),
-    t('k-zero', ['57', '0', 100]),
-    t('k-n', ['57', '57', 100]),
-    t('prime-power', ['4095', '2048', 4096]),
-    t('divides', ['1000', '500', 32]),
+    // The five small tests carry hand-derived expected values (not computed by the reference):
+    // m = 1 gives 0, k = 0 and k = n give 1 mod m, C(6,3) = 20 and 20 mod 8 = 4 (a proper prime power),
+    // C(10,5) = 252 = 7 * 36, so both 4 and 9 divide it and the result mod 36 is 0.
+    t('m-one', ['1000', '500', 1], 0),
+    t('k-zero', ['57', '0', 100], 1),
+    t('k-n', ['57', '57', 100], 1),
+    t('prime-power', ['6', '3', 8], 4),
+    t('divides', ['10', '5', 36], 0),
     t('huge', ['999999999999999999', '87969178777723506', 997514757]),
     t('huge', ['1000000000000000000', '596760479739115676', 997996507]),
     t('huge', ['999999999999999989', '90113987146026257', 800000000]),

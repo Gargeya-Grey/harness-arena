@@ -38,8 +38,14 @@ Commands
   report [--write]        Markdown comparison per context (to stdout, or reports/comparison.md)
   ladder                  The difficulty ladder per configuration: solved / tasks and mean score per tier
       --calibrate           Per task: panel mean, tier band, verdict (in band, move to <tier>, rework)
-                            and a flag for negative discrimination
+                            and a flag for negative discrimination: of two configurations that ran
+                            the task, the one with the higher mean on the other tasks both ran scored
+                            under 0.5 on every repeat, and the other scored 1 on every repeat
       --suite <id>          Only ladder-answer, ladder-code or ladder-agent
+      --suite-version <suite>@<version>
+                            Use this version of a suite (repeat, or comma-separate, for several).
+                            Default: per suite, the newest version that has counted runs. A suite
+                            version whose counted runs mix prompt versions is refused (use --runs)
       --runs <id,...>       Only these runs (a run id, or part of one)
       --json                The same data as JSON
   dashboard [--port n]    Start the local dashboard (default http://127.0.0.1:4317)
@@ -71,6 +77,7 @@ async function main(argv) {
       json: { type: 'boolean' },
       suite: { type: 'string' },
       runs: { type: 'string' },
+      'suite-version': { type: 'string', multiple: true },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -118,7 +125,7 @@ async function main(argv) {
       reportCommand(root, { write: values.write });
       return 0;
     case 'ladder':
-      ladderCommand(root, { calibrate: values.calibrate, json: values.json, suite: values.suite, runs: values.runs ? values.runs.split(',').map((item) => item.trim()).filter(Boolean) : null });
+      ladderCommand(root, { calibrate: values.calibrate, json: values.json, suite: values.suite, suiteVersions: values['suite-version']?.flatMap((item) => item.split(',')).map((item) => item.trim()).filter(Boolean), runs: values.runs ? values.runs.split(',').map((item) => item.trim()).filter(Boolean) : null });
       return 0;
     case 'dashboard': {
       const { startServer } = await import('../dashboard/server.mjs');

@@ -46,7 +46,7 @@ export function buildArgs(root, body) {
   }
   if (command === 'run') {
     const file = String(body.experiment || '');
-    if (!FILE.test(file)) throw bad('Name an experiment file in experiments/, for example smoke-opencode.yaml');
+    if (!FILE.test(file)) throw bad('Name an experiment file in experiments/, for example smoke-harness-sweep.yaml');
     const abs = path.join(p.experiments, file);
     if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) throw bad(`No experiment named ${file}`);
     const args = ['run', abs];

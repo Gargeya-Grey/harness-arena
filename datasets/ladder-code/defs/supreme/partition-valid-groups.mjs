@@ -29,11 +29,20 @@ export default {
     huge: 'n <= 16',
   },
   tests: [
-    t('unordered', [8, 3, 2, 8, 2]),
-    t('cap', [9, 4, 1, 3, 3]),
-    t('d-one', [10, 5, 1, 10, 4]),
-    t('k-n', [8, 8, 1, 8, 6]),
-    t('zero-weight', [10, 3, 5, 10, 772]),
+    // Hand-derived expected values. With d = 1 every group is valid, so only the cap matters.
+    // 3 items in 2 groups: {0,1}{2}, {0,2}{1}, {1,2}{0} -> 3.
+    t('unordered', [3, 2, 1, 3, 1], 3),
+    // 5 items in 2 groups of at most 3: only sizes 2 and 3 fit, C(5,2) = 10 ways to pick the pair.
+    t('cap', [5, 2, 1, 3, 1], 10),
+    // 5 items in 3 groups with no limit: the Stirling number S(5,3) = 25.
+    t('d-one', [5, 3, 1, 5, 1], 25),
+    // Seed 59 gives the weights [0, 603, 708, 235] (draws 2848000, 36854603, 892081708, ...). The first three are
+    // multiples of 3, so every item alone is valid and k = n = 3 has exactly one partition.
+    t('k-n', [3, 3, 3, 3, 59], 1),
+    // Same weights, d = 2, k = 2, cap 4: items 1 (603) and 3 (235) are odd, so they must share a group.
+    // Items 0 (weight 0) and 2 (708) go to either side, but not both to the group of 1 and 3 (the other group
+    // would be empty): 4 - 1 = 3 partitions.
+    t('zero-weight', [4, 2, 2, 4, 59], 3),
     t('huge', [15, 6, 1, 15, 11]),
     t('huge', [16, 8, 1, 16, 13]),
     t('huge', [16, 6, 3, 16, 16]),

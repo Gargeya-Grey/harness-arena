@@ -201,3 +201,32 @@ test('the starters, checks and solutions leak no home path, tool setup or old su
     }
   }
 });
+
+// A correct solution that is only slow: the reference plus one natural slow method (a rescan of the whole
+// upstream, a body copied on every push, a copy of the text on every search). Each speed probe it targets
+// must fail, and every other probe and file rule must still pass. Speed probes that no natural slow method
+// fails inside the sandbox limits are not listed here (see the report of this unit).
+const SLOW = [
+  { slug: 'build-scheduler', overlay: 'build-scheduler--slow', fails: ['a long chain and a wide graph finish fast'] },
+  {
+    slug: 'http1-parser',
+    overlay: 'http1-parser--slow',
+    fails: ['a body in one-byte pieces stays fast', 'many pipelined requests in one call stay fast', 'a chunked body of tiny chunks in one call stays fast'],
+  },
+  { slug: 'regex-engine', overlay: 'regex-engine--slow', fails: ['many matches in a long text stay fast'] },
+];
+
+test('a slow solution fails the speed probes and passes the rest', () => {
+  for (const { slug, overlay, fails } of SLOW) {
+    const work = workspaceWith(slug, slug); // the reference ...
+    fs.cpSync(path.join(SOLUTIONS, overlay), work, { recursive: true }); // ... with its slow files on top
+    for (const file of listFiles(path.join(SOLUTIONS, overlay))) assert.equal(path.relative(path.join(SOLUTIONS, overlay), file).split(path.sep)[0], 'src', `${overlay}: ${file} is outside src`);
+    const runDir = tempDir('supreme-a-slow-run-');
+    const artifact = snapshotWorkspace({ fixtureDir: fixtureOf(slug), workDir: work, runDir, base: 'w', artifactId: 'x', createdAt: '2026-11-07T00:00:00Z' });
+    const run = runWorkspaceCheck({ fixtureDir: fixtureOf(slug), check: checkOf(slug), runDir, manifestPath: artifact.path });
+    assert.equal(run.error, undefined, `${overlay}: the check itself broke: ${run.error}`);
+    assert.deepEqual(failed(run.results).map((item) => item.name), fails, `${overlay}: the probes that fail`);
+    assert.equal(passedCount(run.results), run.results.length - fails.length, overlay);
+    for (const name of fails) assert.ok(Object.hasOwn(checkOf(slug).probes, name), `${overlay}: "${name}" is not a probe of ${slug}`);
+  }
+});

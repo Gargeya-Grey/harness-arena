@@ -29,10 +29,21 @@ export default {
     huge: '24000',
   },
   tests: [
-    t('end-excluded', [15, 30, 10, 10, 50, 2]),
-    t('none-active', [20, 40, 1000, 30, 1000, 3]),
-    t('same-time', [30, 80, 5, 3, 100, 5]),
-    t('negative-price', [40, 100, 50, 20, 1000000, 6]),
+    // Hand-derived expected values; the offers and queries come from the draws of each seed.
+    // Seed 1, horizon 6, maxLen 3, xRange 10: offers [0,2) price 701x + 949389933 and [4,5) price -545x + 332966427;
+    // queries (time 0, x 10), (time 5, x 6), (time 0, x 4). Time 5 is the end of the second offer, which is not
+    // included, so the answers are 949396943, 4000000000, 949392737. The checksum fold gives 305535925.
+    t('end-excluded', [2, 3, 6, 3, 10, 1], 305535925),
+    // Seed 4: offers [3,5) and [4,5); queries at times 2, 2, 1 find no offer, so all three answers are 4000000000
+    // (that is 999999979 mod 1000000007), and the fold gives 804195643.
+    t('none-active', [2, 3, 6, 3, 10, 4], 804195643),
+    // Seed 1, horizon 2, maxLen 2: offers [0,1) 701x + 949389933 and [0,2) -545x + 332966427; queries (0,10), (1,6), (0,4).
+    // Two offers are active at time 0 and the cheaper one wins: 332960977; at time 1 only the second offer is active
+    // (the first ended at 1): 332963157; then 332964247. The fold gives 604364697.
+    t('same-time', [2, 3, 2, 2, 10, 1], 604364697),
+    // Seed 5, horizon 1 (every offer is active at time 0), xRange 10^6: offers -138x + 18337893 and 517x + 604348799;
+    // queries x = 151164 and x = 833558 give -2522739 and -96693111. The fold gives 156756333.
+    t('negative-price', [2, 2, 1, 1, 1000000, 5], 156756333),
     t('huge', [24000, 24000, 1000000000, 300000000, 1000000, 20260101]),
     t('huge', [24000, 24000, 100000, 50000, 1000000, 424242]),
     t('huge', [24000, 24000, 1000, 1000, 1000000, 777]),

@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ladderCommand, ladderReport, verdictFor } from '../lab/commands/ladder.mjs';
+import { compareVersions, ladderCommand, ladderReport, verdictFor } from '../lab/commands/ladder.mjs';
 import { ensureLedger } from '../lab/lib/ledger.mjs';
 import { ladderStatus, loadLadder } from '../lab/lib/ladder.mjs';
 import { buildState } from '../lab/lib/state.mjs';
@@ -50,14 +50,14 @@ const SCORES = {
   'model-c': { c1: [1, 1], c2: [0, 0], c3: [0, 0], c4: [1, 1], c5: [0, 0], c6: [0, 1] },
 };
 
-function manifest(runId, modelKey, { status = 'completed' } = {}) {
+function manifest(runId, modelKey, { status = 'completed', suiteVersion = '1.0.0', promptVersion = '1' } = {}) {
   return {
     run_id: runId,
     created_at: '2026-11-01T10:00:00.000Z',
     finished_at: status === 'completed' ? '2026-11-01T10:30:00.000Z' : null,
     status,
-    suite: { id: 'ladder-code', version: '1.0.0', sha256: 'a'.repeat(64) },
-    prompt: { id: 'js-function', version: '1', sha256: 'b'.repeat(64) },
+    suite: { id: 'ladder-code', version: suiteVersion, sha256: 'a'.repeat(64) },
+    prompt: { id: 'js-function', version: promptVersion, sha256: 'b'.repeat(64) },
     experiment: { id: 'ladder-code', suite: 'ladder-code', prompt: 'js-function', repeats: 2 },
     models: [{ model_key: modelKey, provider: 'fake', model: modelKey, params: {} }],
     repeats: 2,
@@ -245,8 +245,9 @@ test('--json prints the same data, with the problems and the filters', (t) => {
   const report = ladderCommand(root, { json: true, suite: 'code', log: (line) => lines.push(line) });
   const parsed = JSON.parse(lines.join('\n'));
   assert.deepEqual(parsed.configs, JSON.parse(JSON.stringify(report.configs)));
-  assert.deepEqual(Object.keys(parsed).sort(), ['cases', 'configs', 'filters', 'problems', 'tiers']);
-  assert.deepEqual(parsed.filters, { suite: 'ladder-code', runs: null });
+  assert.deepEqual(Object.keys(parsed).sort(), ['cases', 'configs', 'filters', 'problems', 'tiers', 'versions']);
+  assert.deepEqual(parsed.filters, { suite: 'ladder-code', runs: null, suite_versions: null });
+  assert.deepEqual(parsed.versions, [{ suite: 'ladder-code', version: '1.0.0', prompt: 'js-function@1', runs: 3, left_out_runs: 0, left_out_versions: [] }]);
   assert.ok(parsed.problems.length > 0);
   assert.throws(() => ladderCommand(root, { suite: 'nope', log: () => {} }), /--suite must be one of ladder-answer, ladder-code, ladder-agent/);
   assert.throws(() => ladderCommand(root, { runs: ['no-such-run'], log: () => {} }), /no run matches/);
@@ -263,4 +264,87 @@ test('with no counted run the table is empty and nothing breaks; a root without 
   const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-ladder-bare-'));
   t.after(() => fs.rmSync(bare, { recursive: true, force: true, maxRetries: 5 }));
   assert.throws(() => ladderCommand(bare, { log: () => {} }), /No usable difficulty ladder/);
+});
+
+// Two suite versions of one task, one configuration: the old run scored 0, the reworked task scores 1.
+function versionedRoot(t) {
+  const root = makeRoot(t);
+  writeRun(root, 'd00001', 'model-a', rowsOf({ c1: [0, 0], c2: [1, 1] }), { suiteVersion: '1.0.0' });
+  writeRun(root, 'd00002', 'model-a', rowsOf({ c1: [1, 1] }), { suiteVersion: '1.1.0' });
+  ensureLedger(root);
+  return root;
+}
+
+test('suite versions: the newest version with counted runs is used, and one line says what was left out', (t) => {
+  const root = versionedRoot(t);
+  const lines = [];
+  const report = ladderCommand(root, { calibrate: true, log: (line) => lines.push(line) });
+  assert.ok(lines.includes('Suite versions used: ladder-code 1.1.0 (1 run). Left out: 1 counted run of other versions (ladder-code 1.0.0).'));
+  const c1 = report.cases.find((entry) => entry.case_id === 'ladder-code-c1');
+  assert.deepEqual([c1.mean, c1.configs_n, c1.verdict], [1, 1, 'in band'], 'the old score 0 is not averaged in');
+  assert.deepEqual(cellOf(report.configs[0], 2), [0, 0, null], 'c2 was only in the old version');
+  assert.deepEqual(report.versions, [{ suite: 'ladder-code', version: '1.1.0', prompt: 'js-function@1', runs: 1, left_out_runs: 1, left_out_versions: ['1.0.0'] }]);
+});
+
+test('--suite-version picks another version; a bad value or two versions of one suite is refused', (t) => {
+  const root = versionedRoot(t);
+  const lines = [];
+  const report = ladderCommand(root, { calibrate: true, suiteVersions: ['ladder-code@1.0.0'], log: (line) => lines.push(line) });
+  assert.ok(lines.includes('Suite versions used: ladder-code 1.0.0 (1 run). Left out: 1 counted run of other versions (ladder-code 1.1.0).'));
+  const byCase = Object.fromEntries(report.cases.map((entry) => [entry.case_id, entry.mean]));
+  assert.deepEqual([byCase['ladder-code-c1'], byCase['ladder-code-c2']], [0, 1]);
+  const short = ladderCommand(root, { suiteVersions: ['code@1.0.0'], json: true, log: () => {} });
+  assert.equal(short.versions[0].version, '1.0.0', 'the short suite name works');
+  for (const bad of ['ladder-code', 'ladder-code@', 'nope@1.0.0', '@1.0.0']) {
+    assert.throws(() => ladderCommand(root, { suiteVersions: [bad], log: () => {} }), /--suite-version must be <suite>@<version>/, bad);
+  }
+  assert.throws(() => ladderCommand(root, { suiteVersions: ['ladder-code@1.0.0', 'ladder-code@1.1.0'], log: () => {} }), /names two versions of ladder-code: 1\.0\.0 and 1\.1\.0/);
+  const none = ladderCommand(root, { suiteVersions: ['ladder-code@9.9.9'], json: true, log: () => {} });
+  assert.deepEqual([none.configs.length, none.versions[0].runs, none.versions[0].left_out_runs], [0, 0, 2], 'a version with no counted run gives an empty table');
+});
+
+test('suite versions: dotted numbers compare as numbers; a suite version that mixes prompt versions is refused', (t) => {
+  assert.deepEqual(['1.10.0', '1.9.0', '1.2.0', '2.0.0'].sort(compareVersions), ['1.2.0', '1.9.0', '1.10.0', '2.0.0']);
+  const root = makeRoot(t);
+  writeRun(root, 'e00001', 'model-a', rowsOf({ c1: [1, 1] }), { promptVersion: '1' });
+  const second = writeRun(root, 'e00002', 'model-b', rowsOf({ c1: [1, 1] }), { promptVersion: '2' });
+  ensureLedger(root);
+  assert.throws(() => reportOf(root), /ladder-code@1\.0\.0 has counted runs with different prompt versions \(js-function@1, js-function@2\).*--runs/);
+  assert.equal(reportOf(root, { runs: [second.runId] }).configs.length, 1, '--runs keeps one prompt version');
+});
+
+// Rule 4 fixture: model-w fails c2 and solves c3. Each other configuration is [model key, scores by case].
+function discriminationRoot(t, others) {
+  const root = makeRoot(t);
+  writeRun(root, 'f00001', 'model-w', rowsOf({ c2: [0, 0], c3: [1, 1] }));
+  others.forEach(([key, byCase], index) => writeRun(root, `f0001${index}`, key, rowsOf(byCase)));
+  ensureLedger(root);
+  return root;
+}
+const flagsOf = (report, slug = 'c3') => report.cases.find((entry) => entry.case_id === `ladder-code-${slug}`).flags.map((flag) => [flag.solved_by.split('__')[0], flag.failed_by.split('__')[0], flag.shared_tasks, flag.solved_by_mean, flag.failed_by_mean]);
+
+test('negative discrimination compares configurations on the tasks both ran, not on their own totals', (t) => {
+  // model-s ran easy extra tasks, so its own total (0.6) is above model-w's (0.5), but on the shared task c2 both score 0.
+  // model-t scores 1 on c2: on the shared task it is the stronger one, and it fails c3.
+  const root = discriminationRoot(t, [
+    ['model-s', { c2: [0, 0], c3: [0, 0], c4: [1, 1], c5: [1, 1], c6: [1, 1] }],
+    ['model-t', { c2: [1, 1], c3: [0, 0], c4: [1, 1] }],
+  ]);
+  assert.deepEqual(flagsOf(reportOf(root)), [['model-w', 'model-t', 1, 0, 1]]);
+  const lines = [];
+  ladderCommand(root, { calibrate: true, log: (line) => lines.push(line) });
+  assert.match(lines.join('\n'), /ladder-code-c3: solved by model-w__fake-1\.0\.0__default, failed on every repeat by model-t__fake-1\.0\.0__default, which has the higher mean on the 1 other shared task\(s\) \(1\.00 against 0\.00\)/);
+});
+
+test('negative discrimination: no other shared task, no flag; failed means under 0.5 on every repeat, so 0.95 is not failed', (t) => {
+  const root = discriminationRoot(t, [
+    ['model-x', { c3: [0, 0] }],
+    ['model-p', { c2: [1, 1], c3: [0.95, 0.95] }],
+    ['model-q', { c2: [1, 1], c3: [0.4, 0.4] }],
+    ['model-r', { c2: [1, 1], c3: [0.4, 0.9] }],
+  ]);
+  const report = reportOf(root);
+  assert.deepEqual(flagsOf(report), [['model-w', 'model-q', 1, 0, 1]], '0.95 and 0.95 is a near miss, and 0.4 with 0.9 is not a failure on every repeat');
+  const perConfig = Object.fromEntries(report.cases.find((entry) => entry.case_id === 'ladder-code-c3').per_config.map((entry) => [entry.config_id.split('__')[0], [entry.solved, entry.failed]]));
+  assert.deepEqual(perConfig, { 'model-w': [true, false], 'model-x': [false, true], 'model-p': [false, false], 'model-q': [false, true], 'model-r': [false, false] });
 });

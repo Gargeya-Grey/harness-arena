@@ -32,11 +32,19 @@ export default {
     huge: 'n <= 16000',
   },
   tests: [
-    t('exactly', [12, 4, 20, 30, 7, 6]),
-    t('fee', [25, 6, 50, 50, 100, 7]),
-    t('k-one', [30, 1, 100, 10, 12345, 8]),
-    t('k-n', [20, 20, 100, 10, 50, 9]),
-    t('zeros', [60, 30, 1, 95, 0, 11]),
+    // Hand-derived expected values. Seed 1 with zeroPct 70 and maxA 10 gives the sequence [7, 0, 8, 8]
+    // (draws 48282 183136786 | 1153105965 949389933 | 700428874 419638497 | 1304130194 332966427:
+    // u mod 100 = 82, 65, 74, 94, so only the second element is zero; v mod 10 = 6, 9, 7, 7 give 7, 8, 8).
+    // Exactly 2 groups: [7][0,8,8] = 305, [7,0][8,8] = 305, [7,0,8][8] = 289 -> 289 + 2 * 3 = 295.
+    t('exactly', [4, 2, 10, 70, 3, 1], 295),
+    // maxA 1 and zeroPct 0 make every element 1. Two groups of 3: 9 + 9 = 18, plus 2 fees of 10.
+    t('fee', [6, 2, 1, 0, 10, 1], 38),
+    // One group: (7 + 0 + 8 + 8)^2 = 529, plus the fee 5.
+    t('k-one', [4, 1, 10, 70, 5, 1], 534),
+    // Every element alone: 49 + 0 + 64 + 64 = 177, plus 4 fees of 2.
+    t('k-n', [4, 4, 10, 70, 2, 1], 185),
+    // Three groups: [7][0][8,8] = 305, [7][0,8][8] = 177, [7,0][8][8] = 177 (a tie) -> 177 + 3 = 180.
+    t('zeros', [4, 3, 10, 70, 1, 1], 180),
     t('huge', [13000, 700, 200, 20, 1000, 20260101]),
     t('huge', [12000, 6000, 200, 80, 3, 424242]),
     t('huge', [12000, 11000, 200, 5, 1000000000, 777]),

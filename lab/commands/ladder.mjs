@@ -12,6 +12,9 @@ import { mean } from '../lib/metrics.mjs';
 import { buildState, countedRows } from '../lib/state.mjs';
 
 const EPS = 1e-9;
+// Negative discrimination: a task is failed on every repeat when each score is under this
+// (the same cut the dashboard uses for a pass when an evaluator gives no pass flag).
+const FAIL_BELOW = 0.5;
 const round = (value, digits = 3) => (value == null ? null : Number(value.toFixed(digits)));
 
 /**
@@ -32,7 +35,7 @@ export function verdictFor({ mean: value, tier, minutes, ladder }) {
   return target ? { verdict: `move to ${target.name}`, move_to: target.level, distance } : { verdict: 'rework', move_to: null, distance };
 }
 
-/** One config's counted rows grouped by case: Map case_id -> { n, mean, solved, failed }. */
+/** One config's counted rows grouped by case: Map case_id -> { n, mean, solved, failed, scores }. */
 function taskResults(rows) {
   const byCase = new Map();
   for (const row of countedRows(rows, true)) {
@@ -42,9 +45,62 @@ function taskResults(rows) {
   return new Map(
     [...byCase].map(([id, list]) => {
       const value = mean(list.map((row) => row.value));
-      return [id, { n: list.length, mean: value, solved: value >= 1 - EPS, failed: !list.some((row) => row.passed) }];
+      const scores = list.map((row) => row.value);
+      return [id, { n: list.length, mean: value, solved: value >= 1 - EPS, failed: scores.every((score) => score < FAIL_BELOW), scores }];
     }),
   );
+}
+
+const versionParts = (version) => String(version).split('.').map((part) => (/^\d+$/.test(part) ? Number(part) : part));
+
+/** Dotted versions in order: 1.9.0 before 1.10.0; a non-numeric part compares as text. */
+export function compareVersions(a, b) {
+  const left = versionParts(a);
+  const right = versionParts(b);
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const x = left[index] ?? 0;
+    const y = right[index] ?? 0;
+    if (x === y) continue;
+    if (typeof x === 'number' && typeof y === 'number') return x - y;
+    return String(x).localeCompare(String(y));
+  }
+  return 0;
+}
+
+/**
+ * Keep, per suite, only the counted runs of one suite version: the newest that has counted runs,
+ * or the version named in `chosen` (Map suite id -> version). Runs of other versions are left out,
+ * because a task reworked under the same case_id in a new version is a different measurement.
+ * One suite version that mixes prompt versions is refused: the scores would not be comparable.
+ * Returns { rows, versions }; versions lists the suite, version, prompt, run count and runs left out.
+ */
+function selectVersions(observations, contextOf, chosen) {
+  const runs = new Map();
+  for (const row of observations) {
+    if (!runs.has(row.run_id)) {
+      const ctx = contextOf.get(row.context_key);
+      runs.set(row.run_id, { run_id: row.run_id, suite: ctx.suite.id, version: String(ctx.suite.version), prompt: `${ctx.prompt.id}@${ctx.prompt.version}`, rows: [] });
+    }
+    runs.get(row.run_id).rows.push(row);
+  }
+  const counted = [...runs.values()].filter((run) => countedRows(run.rows, true).length > 0);
+  const suites = [...new Set([...counted.map((run) => run.suite), ...chosen.keys()])].sort();
+  const keep = new Set();
+  const versions = [];
+  for (const suiteId of suites) {
+    const own = counted.filter((run) => run.suite === suiteId);
+    const newest = [...new Set(own.map((run) => run.version))].sort(compareVersions).pop();
+    const version = chosen.get(suiteId) ?? newest;
+    const used = own.filter((run) => run.version === version);
+    const prompts = [...new Set(used.map((run) => run.prompt))].sort();
+    if (prompts.length > 1) {
+      throw new Error(`${suiteId}@${version} has counted runs with different prompt versions (${prompts.join(', ')}); scores of different prompts are not comparable. Choose the runs with --runs.`);
+    }
+    used.forEach((run) => keep.add(run.run_id));
+    const other = own.filter((run) => run.version !== version);
+    versions.push({ suite: suiteId, version: version ?? null, prompt: prompts[0] ?? null, runs: used.length, left_out_runs: other.length, left_out_versions: [...new Set(other.map((run) => run.version))].sort(compareVersions) });
+  }
+  return { rows: observations.filter((row) => keep.has(row.run_id)), versions };
 }
 
 /**
@@ -53,20 +109,36 @@ function taskResults(rows) {
  *   ladder        loadLadder(root)
  *   ladderCases   [{ kind, suite, item }] as ladderStatus(root).cases returns them
  *   suite, runs   optional filters: a ladder suite id (or kind), and run ids
+ *   suiteVersions optional ['<suite>@<version>', ...]: use that version of a suite instead of its newest
  *
  * A task is solved by a configuration when its mean score over the configuration's counted
  * repeats is 1. A tier cell holds solved / counted tasks and the mean of those tasks' means.
  * `tasks` is the tier's size in scope; `counted` is how many of them the configuration has.
  * A case's calibration mean is the mean of the configurations' task means (each configuration
- * counts once). A configuration's total mean is the mean over its counted tasks, and ranks
- * configurations for the negative-discrimination check (Calibration rule 4).
+ * counts once). A configuration's total mean is the mean over its counted tasks; it only orders the table.
+ *
+ * Per suite, only the counted runs of one suite version are used (selectVersions); `versions` says which.
+ *
+ * Negative discrimination (Calibration rule 4), per pair of configurations that both ran the case:
+ * their abilities are their means over the other tasks both ran. The case is flagged when the pair's
+ * higher-ability configuration scored under 0.5 on every repeat of the case and the other scored 1 on every repeat.
  */
-export function ladderReport({ state, ladder, ladderCases, suite = null, runs = null }) {
+export function ladderReport({ state, ladder, ladderCases, suite = null, runs = null, suiteVersions = null }) {
   const inScope = ladderCases.filter((entry) => !suite || entry.suite === suite || entry.kind === suite);
   const caseIds = new Set(inScope.map((entry) => entry.item.case_id));
   const withQuality = new Set((state.contexts || []).filter((ctx) => (ctx.evaluators || []).some((item) => item.dimension === 'quality')).map((ctx) => ctx.key));
   const runSet = runs ? new Set(runs) : null;
-  const observations = state.observations.filter((row) => row.trusted !== false && caseIds.has(row.case_id) && withQuality.has(row.context_key) && (!runSet || runSet.has(row.run_id)));
+  const contextOf = new Map((state.contexts || []).map((ctx) => [ctx.key, ctx]));
+  const chosen = new Map();
+  for (const entry of suiteVersions || []) {
+    const at = entry.lastIndexOf('@');
+    if (inScope.some((item) => item.suite === entry.slice(0, at))) chosen.set(entry.slice(0, at), entry.slice(at + 1));
+  }
+  const { rows: observations, versions } = selectVersions(
+    state.observations.filter((row) => row.trusted !== false && caseIds.has(row.case_id) && withQuality.has(row.context_key) && (!runSet || runSet.has(row.run_id))),
+    contextOf,
+    chosen,
+  );
 
   const rowsByConfig = new Map();
   for (const row of observations) {
@@ -97,7 +169,6 @@ export function ladderReport({ state, ladder, ladderCases, suite = null, runs = 
     return { config_id: id, label: config?.short_label ?? id, tiers: cells, total, _mean: mean(all.map((task) => task.mean)) };
   });
   configs.sort((a, b) => (b._mean ?? -1) - (a._mean ?? -1) || a.config_id.localeCompare(b.config_id));
-  const totalOf = new Map(configs.map((config) => [config.config_id, config._mean]));
   for (const config of configs) delete config._mean;
 
   const cases = inScope
@@ -109,12 +180,19 @@ export function ladderReport({ state, ladder, ladderCases, suite = null, runs = 
         .map(([id, tasks]) => ({ config_id: id, ...tasks.get(item.case_id), mean: round(tasks.get(item.case_id).mean) }));
       const value = mean(perConfig.map((entry) => results.get(entry.config_id).get(item.case_id).mean));
       const verdict = tier ? verdictFor({ mean: value, tier, minutes: item.metadata?.tier?.human_minutes, ladder }) : { verdict: 'no data', move_to: null, distance: null };
-      // Rule 4: a configuration with a lower total solves it while one with a higher total fails every repeat.
+      // Rule 4: of two configurations, the one with the higher mean on the other tasks both ran scores
+      // under 0.5 on every repeat of this task while the other scores 1 on every repeat.
       const flags = [];
       for (const weak of perConfig.filter((entry) => entry.solved)) {
         for (const strong of perConfig.filter((entry) => entry.failed)) {
-          if (totalOf.get(strong.config_id) > totalOf.get(weak.config_id) + EPS) {
-            flags.push({ flag: 'negative discrimination', solved_by: weak.config_id, failed_by: strong.config_id });
+          const weakTasks = results.get(weak.config_id);
+          const strongTasks = results.get(strong.config_id);
+          const shared = [...weakTasks.keys()].filter((id) => id !== item.case_id && strongTasks.has(id));
+          if (!shared.length) continue;
+          const weakMean = mean(shared.map((id) => weakTasks.get(id).mean));
+          const strongMean = mean(shared.map((id) => strongTasks.get(id).mean));
+          if (strongMean > weakMean + EPS) {
+            flags.push({ flag: 'negative discrimination', solved_by: weak.config_id, failed_by: strong.config_id, shared_tasks: shared.length, solved_by_mean: round(weakMean), failed_by_mean: round(strongMean) });
           }
         }
       }
@@ -135,7 +213,7 @@ export function ladderReport({ state, ladder, ladderCases, suite = null, runs = 
     })
     .sort((a, b) => (a.tier ?? 99) - (b.tier ?? 99) || a.case_id.localeCompare(b.case_id));
 
-  return { configs, tiers, cases };
+  return { configs, tiers, cases, versions };
 }
 
 const fixed = (value) => (value == null ? 'n/a' : value.toFixed(2));
@@ -155,6 +233,12 @@ export function formatLadder(report, { calibrate = false } = {}) {
   const rows = report.configs.map((config) => [config.config_id, ...report.tiers.map((tier) => cell(config.tiers[tier.level])), cell(config.total)]);
   lines.push('Solved / tasks counted, then mean score (a task is solved at mean score 1 over its counted repeats).');
   lines.push(...table(header, rows));
+  if (report.versions?.length) {
+    const used = report.versions.map((item) => `${item.suite} ${item.version ?? 'none'} (${item.runs} run${item.runs === 1 ? '' : 's'})`).join(', ');
+    const left = report.versions.reduce((sum, item) => sum + item.left_out_runs, 0);
+    const detail = report.versions.filter((item) => item.left_out_runs).map((item) => `${item.suite} ${item.left_out_versions.join(', ')}`).join('; ');
+    lines.push(`Suite versions used: ${used}. Left out: ${left} counted run${left === 1 ? '' : 's'} of other versions${left ? ` (${detail})` : ''}.`);
+  }
   if (!rows.length) lines.push('No counted ladder runs yet. Run an experiment from experiments/ladder-*.yaml, or see node lab runs.');
   if (rows.some((row) => row.some((text) => String(text).includes('*')))) lines.push('* the configuration has counted results for fewer tasks than the tier holds.');
   if (calibrate) {
@@ -170,7 +254,7 @@ export function formatLadder(report, { calibrate = false } = {}) {
     ]);
     lines.push(...table(['case', 'tier', 'mean', 'configs', 'band', 'verdict', 'check'], caseRows));
     for (const entry of report.cases.filter((item) => item.flags.length)) {
-      for (const flag of entry.flags) lines.push(`  ${entry.case_id}: solved by ${flag.solved_by}, failed on every repeat by ${flag.failed_by}, which has the higher total; check the task for a defect first`);
+      for (const flag of entry.flags) lines.push(`  ${entry.case_id}: solved by ${flag.solved_by}, failed on every repeat by ${flag.failed_by}, which has the higher mean on the ${flag.shared_tasks} other shared task(s) (${fixed(flag.failed_by_mean)} against ${fixed(flag.solved_by_mean)}); check the task for a defect first`);
     }
     const counts = {};
     for (const entry of report.cases) {
@@ -184,7 +268,7 @@ export function formatLadder(report, { calibrate = false } = {}) {
 
 const SUITE_ALIASES = { answer: 'ladder-answer', code: 'ladder-code', agent: 'ladder-agent' };
 
-export function ladderCommand(root, { calibrate = false, json = false, suite = null, runs = null, log = console.log } = {}) {
+export function ladderCommand(root, { calibrate = false, json = false, suite = null, runs = null, suiteVersions = null, log = console.log } = {}) {
   let status;
   try {
     status = ladderStatus(root);
@@ -194,6 +278,16 @@ export function ladderCommand(root, { calibrate = false, json = false, suite = n
   const known = Object.values(status.ladder.suites);
   const chosen = suite ? (SUITE_ALIASES[suite] ?? suite) : null;
   if (chosen && !known.includes(chosen)) throw new Error(`--suite must be one of ${known.join(', ')}; got "${suite}"`);
+  const picked = new Map();
+  for (const ref of suiteVersions || []) {
+    const at = String(ref).lastIndexOf('@');
+    const id = SUITE_ALIASES[ref.slice(0, Math.max(at, 0))] ?? ref.slice(0, Math.max(at, 0));
+    if (at < 1 || at === ref.length - 1 || !known.includes(id)) throw new Error(`--suite-version must be <suite>@<version> with a suite from ${known.join(', ')}; got "${ref}"`);
+    const version = ref.slice(at + 1);
+    if (picked.has(id) && picked.get(id) !== version) throw new Error(`--suite-version names two versions of ${id}: ${picked.get(id)} and ${version}`);
+    picked.set(id, version);
+  }
+  const versionRefs = [...picked].map(([id, version]) => `${id}@${version}`);
   const state = buildState(root, { validate: false });
   let runIds = null;
   if (runs) {
@@ -206,9 +300,9 @@ export function ladderCommand(root, { calibrate = false, json = false, suite = n
       runIds.push(...(exact.length ? exact : matches));
     }
   }
-  const report = ladderReport({ state, ladder: status.ladder, ladderCases: status.cases, suite: chosen, runs: runIds });
+  const report = ladderReport({ state, ladder: status.ladder, ladderCases: status.cases, suite: chosen, runs: runIds, suiteVersions: versionRefs });
   if (json) {
-    log(JSON.stringify({ problems: status.problems, filters: { suite: chosen, runs: runIds }, ...report }, null, 2));
+    log(JSON.stringify({ problems: status.problems, filters: { suite: chosen, runs: runIds, suite_versions: versionRefs.length ? versionRefs : null }, ...report }, null, 2));
     return report;
   }
   if (status.problems.length) {

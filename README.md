@@ -51,7 +51,7 @@ node lab ladder --calibrate
 node lab dashboard
 ```
 
-`node lab ladder` puts configurations in rows and tiers in columns. Each cell is `solved/counted` tasks and the mean score; a task is solved when its mean score is 1. This is the table that shows where configurations separate. `--calibrate` adds one line per task: its mean across the configurations, its tier's target band, and a verdict (`in band`, `move to <tier>`, `rework`), with a flag for a task that a weaker configuration solves and a stronger one fails. `--suite`, `--runs` and `--json` filter or print the data.
+`node lab ladder` puts configurations in rows and tiers in columns. Each cell is `solved/counted` tasks and the mean score; a task is solved when its mean score is 1. This is the table that shows where configurations separate. `--calibrate` adds one line per task: its mean across the configurations, its tier's target band, and a verdict (`in band`, `move to <tier>`, `rework`), with a flag for a task that one configuration solves while a stronger one (higher mean on the other tasks both ran) scores under 0.5 on every repeat. Per suite it uses the newest suite version that has counted runs; `--suite-version <suite>@<version>` picks another. `--suite`, `--runs` and `--json` filter or print the data.
 
 The older suites (`reasoning`, `coding`, `agentic` and their `-hard` forms) are retired. They sit in `datasets/archive/`, their experiments in `experiments/archive/`. Old runs still open and score, and an archived experiment still runs by path: `node lab run experiments/archive/coding-sweep.yaml --dry-run`.
 
@@ -71,7 +71,7 @@ To add any other model that OpenCode reaches (`opencode models` lists them), add
 | `node lab score <run-id> \| --all` | Computes scores again from `raw.jsonl`. Makes no model calls. |
 | `node lab validate` | Checks every input and stored record against `schemas/`. |
 | `node lab runs` | Lists runs, newest first. |
-| `node lab ladder [--calibrate] [--suite <id>] [--runs <id,...>] [--json]` | Prints the difficulty ladder per configuration: solved/tasks and mean score per tier. `--calibrate` adds the verdict for each task. Reads counted evidence only; makes no model calls. |
+| `node lab ladder [--calibrate] [--suite <id>] [--suite-version <suite>@<version>] [--runs <id,...>] [--json]` | Prints the difficulty ladder per configuration: solved/tasks and mean score per tier, from one suite version per suite (the newest with counted runs, unless `--suite-version` says otherwise). `--calibrate` adds the verdict for each task. Reads counted evidence only; makes no model calls. |
 | `node lab report [--write]` | Prints a Markdown comparison per context, or writes `reports/comparison.md`. |
 | `node lab dashboard [--port n]` | Starts the local control page and comparison dashboard. |
 | `npm test` | Runs the test suite (`tests/*.test.mjs`). |

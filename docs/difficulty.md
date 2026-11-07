@@ -31,6 +31,11 @@ Difficulty is not guessed from how a task looks. It is set in two steps.
 1. **A prior from expert time.** Each case records `metadata.tier.human_minutes`: the time a competent professional needs to read the task, solve it and check the result, without AI help. It also records `basis`, one line that says how the estimate was made (a timed solve, the size of the reference solution, or a published anchor below).
 2. **A measured position.** A pilot run gives each task a mean score across the panel. A task outside its tier's target band moves tier or is reworked (Calibration).
 
+The professional works under the same conditions as the model:
+
+- **Answer tasks: no computer.** The prompt forbids tools, so the expert time is the time to solve on paper. A short script would solve some tier 4 and 5 answer tasks in 15 to 40 minutes; that is the point of them, because the model has no script either. A harness that lets the model run code in answer mode breaks this condition. The pilot checks each harness's tool calls on answer tasks.
+- **Code and agent tasks: normal tools.** An editor, Node and a shell, as in METR's and SWE-bench's human baselines.
+
 Expert time is the scale because it is the best-supported measure of task difficulty for AI systems that we know of:
 
 - **METR time horizons.** METR measures each task by how long skilled humans take, and fits model success against the logarithm of that time. Success falls along a logistic curve, so tiers spaced by a constant factor of time (this ladder uses about 4x) are spaced evenly in difficulty. METR reports the 50% horizon of the best public model at 16 to 20 hours in May 2026, with an 80% horizon near 3 hours. The ladder's panel is mostly smaller models, so the top tier stops at 16 hours, where METR's own suite stops being reliable.
@@ -45,8 +50,10 @@ The panel is the targets of the ladder experiments. Each task runs once per targ
 1. Compute each task's mean score across the panel (a score is the share of hidden tests passed, so partial work counts).
 2. A task whose mean is inside its tier's target band stays.
 3. A task outside its band moves to the nearest tier whose band holds its mean, as long as its expert time is within a factor of 4 of that tier's range. Otherwise the task is wrong for the scale (too easy for its length, or broken) and is reworked. `node lab ladder --calibrate` applies this rule and prints a verdict per task.
-4. A task that a weaker configuration passes and a stronger one fails on every repeat is checked for a defect before anything else. Item response theory work on public benchmarks finds that such negative discrimination usually means an error in the item (ATLAS, 2025).
+4. A task is checked for a defect before anything else when, for two configurations that both ran it, the one with the higher mean on the other tasks both ran scores under 0.5 on every repeat of it while the other scores 1 on every repeat (`node lab ladder --calibrate` flags it). Item response theory work on public benchmarks finds that such negative discrimination usually means an error in the item (ATLAS, 2025).
 5. Moving a task keeps its `case_id`. Its tier changes in a new suite version.
+
+Timing limits. Agent probes and the ladder's own tests judge speed by CPU time, so a busy machine does not change their verdict. The `js-function@1` evaluator still gives each code test 2 s of wall time. Ladder references need at most about 0.5 s of CPU per test, a margin of 4x or more, but a correct answer close to the limit can time out on a busy machine. Score code runs on an idle machine. Scores are derived, so `node lab score` can recompute a doubtful one without new model calls.
 
 Four targets are a small panel. The bands are wide on purpose, and a tier needs both its expert-time prior and its measured mean to agree before a task is settled. A frontier configuration in the panel is the next step: without one, the top tier's headroom above the strongest models is not measured.
 

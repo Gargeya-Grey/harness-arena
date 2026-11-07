@@ -31,10 +31,23 @@ export default {
     huge: '40000',
   },
   tests: [
-    t('negative', [10, 24, 2, 1000, 2]),
-    t('single-vertex', [1, 9, 1, 500, 3]),
-    t('path-graph', [30, 60, 1, 200, 4]),
-    t('later-sees-earlier', [40, 100, 40, 1000, 5]),
+    // Hand-derived expected values; seed 1 draws: 48282 183136786 1153105965 949389933 700428874 419638497
+    // 1304130194 332966427 854783580 1654880380 634121885 1613090155 2012799090 1222232180 551326760 1476678347 1463276824.
+    // n = 1, bias 0: value(0) = 282. Operation 1 has kind 183136786 mod 3 = 1 (sum): 282. Operation 2 has kind 0
+    // and d = 854783580 mod 201 - 100 = 26: the value is 308. Operation 3 has kind 1: 308.
+    // Fold: 282 * 1000003 + 308 = 282001154.
+    t('single-vertex', [1, 3, 1, 0, 1], 282001154),
+    // Same, bias 500: value(0) = -218, answers -218 and -192; fold: -218 * 1000003 - 192 = -218000846,
+    // which is 781999161 modulo 1000000007.
+    t('negative', [1, 3, 1, 500, 1], 781999161),
+    // n = 3, window 1: parents 0, 1; values -35, -67, -126 (bias 1000). Operation 1 adds 26 on the path 2..0 -> -9, -41, -100.
+    // Operation 2 is the sum on 2..1: -141. Operation 3 is the maximum on vertex 2: -100.
+    // Fold: -141 * 1000003 - 100 = -141000523, which is 858999484 modulo 1000000007.
+    t('path-graph', [3, 3, 1, 1000, 1], 858999484),
+    // n = 4, window 2: parents 0, 1, 1 (draws 48282, 183136786, 1153105965 give offsets 0, 0, 1); values 433, 374, -3, -306 (bias 500).
+    // Operation 1 adds -50 at vertex 0 (u = w = 0): 383. Operation 2 is the sum on 2..0: -3 + 374 + 383 = 754.
+    // Operation 3 is the maximum on 0..2: max(383, 374, -3) = 383. Fold: 754 * 1000003 + 383 = 754002645.
+    t('later-sees-earlier', [4, 3, 2, 500, 1], 754002645),
     t('huge', [40000, 40000, 1, 1000, 20260101]),
     t('huge', [40000, 40000, 2, 500, 424242]),
     t('huge', [40000, 40000, 3, 0, 777]),

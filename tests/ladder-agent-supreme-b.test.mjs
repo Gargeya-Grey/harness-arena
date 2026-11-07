@@ -202,3 +202,49 @@ test('the starters, the checks and the solutions leak no home path or tool setup
     for (const file of list(root)) assert.ok(!bad.test(fs.readFileSync(file, 'utf8')), `${path.relative(REPO, file)} names a home path`);
   }
 });
+
+// A correct solution that is only slow: the reference plus one natural slow method (array copies, a linear
+// search in place of a map, a rescan of everything waiting). Each speed probe it targets must fail, and every
+// other probe and file rule must still pass. Speed probes that no natural slow method fails inside the sandbox
+// limits are not listed here (see the report of this unit).
+const SLOW = [
+  {
+    slug: 'markdown-renderer',
+    overlay: 'markdown-renderer--slow',
+    fails: ['md35 emphasis stays fast on long runs', 'md37 a long document renders in linear time'],
+  },
+  // rr42 sits within a factor of two of its limit even for the reference (140 to 375 ms of CPU against 700), so a
+  // constant-factor slowdown of DAILY periods can tip it over on a busy machine: it may fail here, it is not claimed.
+  { slug: 'rrule-expander', overlay: 'rrule-expander--slow-days', fails: ['rr40'], maybe: ['rr42'] },
+  { slug: 'rrule-expander', overlay: 'rrule-expander--slow-seen', fails: ['rr41', 'rr42', 'rr44'] },
+  { slug: 'rrule-expander', overlay: 'rrule-expander--slow-exdates', fails: ['rr42', 'rr43'] },
+  {
+    slug: 'rga-text-crdt',
+    overlay: 'rga-text-crdt--slow',
+    fails: ['rg33 ten thousand local inserts, three thousand in the middle, a thousand deletes', 'rg36 deleting a very long range in one call'],
+    // rg34 and rg35 stay within 1.2 times their limits with this slow method, so they may fail here and are not claimed.
+    maybe: ['rg34 five thousand operations delivered one at a time in reverse', 'rg35 three replicas typing at the start and the end thousands of times'],
+  },
+  {
+    slug: 'spreadsheet-engine',
+    overlay: 'spreadsheet-engine--slow',
+    fails: ['sp33 three thousand formulas in dependency chains', 'sp34 five hundred formulas summing the same five hundred cells'],
+  },
+];
+
+test('a slow solution fails the speed probes and passes the rest', () => {
+  const listFiles = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? listFiles(path.join(dir, entry.name)) : [path.join(dir, entry.name)]));
+  for (const { slug, overlay, fails, maybe = [] } of SLOW) {
+    for (const file of listFiles(path.join(SOLUTIONS, overlay))) assert.equal(path.relative(path.join(SOLUTIONS, overlay), file).split(path.sep)[0], 'src', `${overlay}: ${file} is outside src`);
+    const work = workspaceWith(slug, [slug, overlay]); // the reference, then its slow files
+    const runDir = tempDir('sb-slow-run-');
+    const artifact = snapshotWorkspace({ fixtureDir: fixtureOf(slug), workDir: work, runDir, base: 'w', artifactId: 'x', createdAt: '2026-11-07T00:00:00Z' });
+    const checkData = loadCheck(path.join(SUITE, 'checks'), slug);
+    const run = runWorkspaceCheck({ fixtureDir: fixtureOf(slug), check: checkData, runDir, manifestPath: artifact.path });
+    assert.equal(run.error, undefined, `${overlay}: the check itself broke: ${run.error}`);
+    const names = failed(run.results).map((item) => item.name);
+    assert.deepEqual(names.filter((name) => !maybe.includes(name)), fails, `${overlay}: the probes that fail`);
+    for (const name of fails) assert.ok(names.includes(name), `${overlay}: "${name}" passes`);
+    for (const name of fails) assert.ok(Object.hasOwn(checkData.probes, name), `${overlay}: "${name}" is not a probe of ${slug}`);
+  }
+});

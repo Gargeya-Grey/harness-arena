@@ -30,10 +30,19 @@ export default {
     huge: '200000',
   },
   tests: [
-    t('overlap', [12, 9, 1, 4, 7]),
-    t('twice-in-b', [20, 16, 3, 11, 12]),
-    t('single-letter', [9, 3, 1, 2, 3]),
-    t('distinct', [40, 25, 2, 99, 100]),
+    // Hand-derived expected values. With one letter, A = a^n and B = a^m; a^j counts when j <= n and j <= m - 1.
+    // n = 12, m = 9: j = 1..8 -> 8.
+    t('overlap', [12, 9, 1, 4, 7], 8),
+    // Alphabet 2, parity of the draws: seed 1 gives A = "aabba" (48282 183136786 1153105965 949389933 700428874),
+    // seed 2 gives B = "baabaa" (96553 365742580 297017204 716626923 631614268 826994180).
+    // Substrings of B with two or more occurrences: a, b, ba, aa, baa. Those inside A: a, b, ba, aa -> 4
+    // ("ab" is in A but occurs once in B).
+    t('twice-in-b', [5, 6, 2, 1, 2], 4),
+    // n = 9, m = 3: j = 1..2 -> 2.
+    t('single-letter', [9, 3, 1, 2, 3], 2),
+    // Seed 3 gives A = "aaab", seed 4 gives B = "babbaa". Substrings of B that occur twice or more: a, b, ba.
+    // Inside A: a, b -> 2 ("a" occurs three times in A but counts once).
+    t('distinct', [4, 6, 2, 3, 4], 2),
     t('huge', [120000, 120000, 2, 20260101, 20260202]),
     t('huge', [200000, 200000, 1, 1, 2]),
     t('huge', [100000, 150000, 4, 424242, 242424]),

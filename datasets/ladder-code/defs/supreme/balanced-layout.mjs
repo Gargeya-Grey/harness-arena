@@ -20,32 +20,44 @@ const P1 = 'The quick brown fox jumps over the lazy dog while the well-known sta
 const P2 = 'In a village of La Mancha, the name of which I have no desire to call to mind, there lived not long since one of those gentlemen that keep a lance in the lance-rack, an old buckler, a lean hack, and a greyhound for coursing. An olla of rather more beef than mutton, a salad on most nights, scraps on Saturdays, lentils on Fridays, and a pigeon or so extra on Sundays, made away with three-quarters of his income.';
 const P3 = 'Pneumonoultramicroscopicsilicovolcanoconiosis is a word, as is supercalifragilisticexpialidocious, and so is antidisestablishmentarianism; but a-b-c-d-e-f-g is not, and neither is 1-2-3-4-5-6-7-8-9-10-11-12.';
 
-export default {
-  slug: 'balanced-layout',
-  tier: {
-    level: 5,
-    human_minutes: 135,
-    basis: 'A word-splitting rule with hyphen conditions, forced cutting of long fragments, an optimal line-breaking DP with an exact tie-break, and exact justification arithmetic. About 12 rules; the reference is about 80 lines. An expert needs about 2 to 2.5 h to read the rules closely and match every tie and edge.',
-  },
-  tags: ['spec'],
-  name: 'layoutText',
-  signature: 'layoutText(text, width, justify) -> array of strings',
-  task: spec,
-  edges: {
-    words: 'only the space character separates words',
-    empty: 'return an empty array',
-    'other-whitespace': 'including tabs and line breaks',
-    'hyphen-rule': 'just before and just after the hyphen',
-    'long-piece': 'a fragment that is longer than width is cut further',
-    glue: 'items of the same word are joined with no space',
-    optimal: 'minimise the total cost',
-    'last-line-free': 'except that the last line has no cost',
-    'tie-later': 'the later break is better',
-    distribution: 'the leftmost (e mod g) gaps get one more',
-    'no-gap': 'a line with no gap is left as it is',
-    'justify-off': 'when justify is false',
-  },
-  tests: [
+// Hand-derived tests: the lines of each were worked out from the task text alone, before the reference solution was
+// run on it, and are stored here as written (generate.mjs does not compute them). The tie-later rows each have two optimal breaks.
+const hand = [
+  t('words', ['  hello   world  ', 20, false], ['hello world']),
+  t('empty', ['', 5, true], []),
+  t('empty', ['   ', 3, false], []),
+  t('other-whitespace', ['a\nb c', 3, true], ['a\nb', 'c']),
+  t('other-whitespace', ['a\tb  c', 3, false], ['a\tb', 'c']),
+  t('hyphen-rule', ['well-known', 6, false], ['well-', 'known']),
+  t('hyphen-rule', ['a--b', 2, false], ['a-', '-b']),
+  t('hyphen-rule', ['x-(y', 2, false], ['x-', '(y']),
+  t('hyphen-rule', ['(a)-b', 3, false], ['(a)', '-b']),
+  t('hyphen-rule', ['1-2', 2, false], ['1-', '2']),
+  t('hyphen-rule', ['a-b-c', 4, false], ['a-b-', 'c']),
+  t('hyphen-rule', ['ab-12-cd', 4, false], ['ab-', '12-', 'cd']),
+  t('hyphen-rule', ['a-', 1, false], ['a', '-']),
+  t('long-piece', ['abcdefghij', 4, false], ['abcd', 'efgh', 'ij']),
+  t('long-piece', ['abcdefg-hi', 5, false], ['abcde', 'fg-hi']),
+  t('optimal', ['aaaa bbbbb cc ddddddddd', 10, false], ['aaaa', 'bbbbb cc', 'ddddddddd']),
+  t('optimal', ['aaaa bbbbb cc ddddddddd', 10, true], ['aaaa', 'bbbbb   cc', 'ddddddddd']),
+  t('last-line-free', ['a bb ccc', 6, false], ['a bb', 'ccc']),
+  t('distribution', ['aa bb cc dd ee ff gg hh ii jj', 16, true], ['aa  bb  cc dd ee', 'ff gg hh ii jj']),
+  t('justify-off', ['aa bb cc dd ee ff gg hh ii jj', 16, false], ['aa bb cc dd ee', 'ff gg hh ii jj']),
+  t('distribution', ['a b c dddddddddd', 10, true], ['a    b   c', 'dddddddddd']),
+  t('distribution', ['a b c dddddddd', 8, true], ['a   b  c', 'dddddddd']),
+  t('distribution', ['a b c d eeeeeeeeeeee', 12, true], ['a   b   c  d', 'eeeeeeeeeeee']),
+  t('glue', ['well-known x yyyyyyyyyyyy', 14, true], ['well-known   x', 'yyyyyyyyyyyy']),
+  t('no-gap', ['abc defghij', 7, true], ['abc', 'defghij']),
+  t('no-gap', ['a b c', 1, true], ['a', 'b', 'c']),
+  t('tie-later', ['aaaaa bb ccc dd eeeeee', 6, false], ['aaaaa', 'bb ccc', 'dd', 'eeeeee']),
+  t('tie-later', ['a bb c d e fff ggggg', 6, true], ['a   bb', 'c  d e', 'fff', 'ggggg']),
+  t('tie-later', ['a b c ddd eeeee', 5, false], ['a b c', 'ddd', 'eeeee']),
+  t('tie-later', ['a bb c dddd eee', 5, true], ['a  bb', 'c', 'dddd', 'eee']),
+];
+
+// Tests whose expected value is computed from the reference solution when generate.mjs runs.
+// A computed test with the same arguments as a hand-derived one is dropped.
+const computed = [
     t('words', ['  the   quick  brown fox ', 10, false]),
     t('empty', ['', 5, true]),
     t('empty', ['     ', 3, false]),
@@ -81,5 +93,34 @@ export default {
     t('optimal', [P3, 1, false]),
     t('optimal', ['a b c', 1, true]),
     t('last-line-free', ['short text', 80, true]),
-  ],
+];
+const argsKey = (test) => JSON.stringify(test.args);
+const handKeys = new Set(hand.map(argsKey));
+
+export default {
+  slug: 'balanced-layout',
+  tier: {
+    level: 5,
+    human_minutes: 135,
+    basis: 'A word-splitting rule with hyphen conditions, forced cutting of long fragments, an optimal line-breaking DP with an exact tie-break, and exact justification arithmetic. About 12 rules; the reference is about 80 lines. An expert needs about 2 to 2.5 h to read the rules closely and match every tie and edge.',
+  },
+  tags: ['spec'],
+  name: 'layoutText',
+  signature: 'layoutText(text, width, justify) -> array of strings',
+  task: spec,
+  edges: {
+    words: 'only the space character separates words',
+    empty: 'return an empty array',
+    'other-whitespace': 'including tabs and line breaks',
+    'hyphen-rule': 'just before and just after the hyphen',
+    'long-piece': 'a fragment that is longer than width is cut further',
+    glue: 'items of the same word are joined with no space',
+    optimal: 'minimise the total cost',
+    'last-line-free': 'except that the last line has no cost',
+    'tie-later': 'the later break is better',
+    distribution: 'the leftmost (e mod g) gaps get one more',
+    'no-gap': 'a line with no gap is left as it is',
+    'justify-off': 'when justify is false',
+  },
+  tests: [...hand, ...computed.filter((test) => !handKeys.has(argsKey(test)))],
 };
