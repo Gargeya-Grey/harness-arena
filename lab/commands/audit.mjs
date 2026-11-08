@@ -291,7 +291,7 @@ function verifySuite(root, suite, version) {
     }
     if (manifest?.suite?.id === suite.id && String(manifest.suite.version) === suite.version && manifest.suite.sha256) recorded.add(manifest.suite.sha256);
   }
-  if (recorded.size && !recorded.has(suite.sha256)) {
+  if (recorded.size > 1 || (recorded.size === 1 && !recorded.has(suite.sha256))) {
     throw new Error(`Runs recorded ${suite.id} ${suite.version} with hash ${[...recorded].join(', ')}, but ${suite.frozen ? 'the copy' : 'the suite'} has hash ${suite.sha256}; the suite changed without a new version, or the copy is broken, so it is not audited`);
   }
 }
@@ -417,7 +417,9 @@ function stabilityRuns(root, refs) {
   for (const dir of dirs) {
     const runId = readJson(path.join(dir, 'run.json')).run_id;
     const run = runs.find((one) => one.run_id === runId);
-    const why = run ? whyNotCounted(run) : 'it is not a run of this store';
+    // A copied folder can hold a trusted run's id; only the store's own folder for that id was checked.
+    const own = run && path.resolve(resolveRunDir(root, runId)) === path.resolve(dir);
+    const why = !run ? 'it is not a run of this store' : !own ? 'this folder is not where the store keeps that run' : whyNotCounted(run);
     if (why) throw new Error(`Run ${runId} does not count: ${why}. Stability reads only runs that count (closed, ledger-matched, scored).`);
   }
   return [...new Set(dirs)];

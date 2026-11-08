@@ -348,6 +348,11 @@ test('a frozen copy whose suite.yaml names another version is refused, and so is
   assert.notEqual(changed.code, 0);
   assert.match(changed.err, new RegExp(`Runs recorded fx-copy 1\\.2\\.0 with hash ${recorded}, but the copy has hash ${actual}`));
   assert.equal(changed.out, '');
+  const secondRun = '20261108T000001Z__fx-copy__fx__bbbbbb';
+  put(root, { [`results/${secondRun}/run.json`]: JSON.stringify({ run_id: secondRun, status: 'completed', suite: { id: 'fx-copy', version: '1.2.0', sha256: actual } }) });
+  const mixed = lab(root, ['audit', 'checks', '--suite', 'fx-copy', '--suite-version', '1.2.0', '--json']);
+  assert.notEqual(mixed.code, 0, 'one matching hash is not enough when the runs disagree');
+  assert.match(mixed.err, /Runs recorded fx-copy 1\.2\.0 with hash [0-9a-f]+, [0-9a-f]+, but the copy has hash/);
   const current = lab(root, ['audit', 'checks', '--suite', 'fx-copy', '--suite-version', '2.0.0', '--json']);
   assert.equal(current.code, 0, current.err);
 });
@@ -519,6 +524,15 @@ test('a named run that does not count (not in the ledger) is refused by name, wi
   assert.notEqual(run.code, 0);
   assert.match(run.err, new RegExp(`Run ${runId} does not count: it is not in the ledger`));
   assert.match(run.err, /Stability reads only runs that count \(closed, ledger-matched, scored\)/);
+  assert.equal(run.out, '');
+});
+
+test('a copied folder that holds a trusted run id is refused by name', () => {
+  const { root, runId, runDir } = stabilityRoot('fx-copied', [{ args: [1], returns: 1 }], ['export function answer(n) { return n; }']);
+  fs.cpSync(runDir, path.join(root, 'results', 'copied-folder'), { recursive: true });
+  const run = lab(root, ['audit', 'stability', '--runs', 'copied-folder', '--json']);
+  assert.notEqual(run.code, 0);
+  assert.match(run.err, new RegExp(`Run ${runId} does not count: this folder is not where the store keeps that run`));
   assert.equal(run.out, '');
 });
 
