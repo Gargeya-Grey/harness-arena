@@ -67,13 +67,13 @@ test('the answer names the pairs the sign test separates, and the setup they sha
   assert.match(headline(ladder).pairs, /^The runs can tell 3 of 6 pairs of setups apart \(sign test, p below 0\.05\)\. They are .+ and .+; .+ and .+; .+ and .+\.$/);
 });
 
-test('a task no setup ran reads "no data" and "not run", never 0', () => {
+test('a task with no counted result reads "no data" and "no result", never 0', () => {
   const markup = renderTasks(data.ladder, data.cases, defaultUi());
   const row = rowOf(markup, 'ladder-answer-fx-e2');
   assert.ok(row, 'the unrun task is listed');
   assert.match(text(row), /No data/);
-  assert.match(text(row), /No setup ran it/);
-  assert.equal((row.match(/not run/g) || []).length, 4, 'every setup cell says not run');
+  assert.match(text(row), /No setup has a result/);
+  assert.equal((row.match(/no result/g) || []).length, 4, 'every setup cell says no result');
   assert.doesNotMatch(row, /data-solved/, 'no setup cell carries a score');
   assert.doesNotMatch(row, /ld-mk/, 'no mark of solved or not solved');
   assert.doesNotMatch(text(row), /(^|\s)0(\s|$)/, 'no bare zero in the row text');
@@ -82,9 +82,9 @@ test('a task no setup ran reads "no data" and "not run", never 0', () => {
 test('a task only one setup ran says so and shows that one result', () => {
   const row = rowOf(renderTasks(data.ladder, data.cases, defaultUi()), 'ladder-answer-fx-e1');
   assert.match(text(row), /One setup only/);
-  assert.match(text(row), /1 of 4 setups ran it/);
+  assert.match(text(row), /1 of 4 setups with a result/);
   assert.equal((row.match(/data-solved="/g) || []).length, 1);
-  assert.equal((row.match(/not run/g) || []).length, 3);
+  assert.equal((row.match(/no result/g) || []).length, 3);
 });
 
 test('a setup with results for fewer tasks than the tier holds says so in words', () => {
@@ -335,13 +335,45 @@ test('a pair row marks the pair that tells two setups apart', () => {
   assert.ok(ALPHA === 0.05);
 });
 
-test('the basis shows only when the case record still says what the ladder row says', () => {
+test('the basis comes from the ladder row, so a changed current case cannot replace it', () => {
+  const ladder = clone().ladder;
+  const task = allTasks(ladder).find((item) => item.case_id === 'ladder-answer-fx-a1');
+  assert.equal(task.basis, data.cases['ladder-answer-fx-a1'].metadata.tier.basis, 'the server copies the basis of the selected version');
+  task.basis = 'Timed solve: about a minute.';
   const cases = structuredClone(data.cases);
-  cases['ladder-answer-fx-a1'].metadata.tier.basis = 'Timed solve: about a minute.';
-  const row = rowOf(renderTasks(data.ladder, cases, defaultUi()), 'ladder-answer-fx-a1');
-  assert.match(text(row), /Basis: Timed solve: about a minute\./);
-  cases['ladder-answer-fx-a1'].metadata.tier.human_minutes = 4;
-  assert.doesNotMatch(text(rowOf(renderTasks(data.ladder, cases, defaultUi()), 'ladder-answer-fx-a1')), /Basis:/);
+  cases['ladder-answer-fx-a1'].metadata.tier.basis = 'A newer basis of the current suite.';
+  const row = text(rowOf(renderTasks(ladder, cases, defaultUi()), 'ladder-answer-fx-a1'));
+  assert.match(row, /Basis: Timed solve: about a minute\./);
+  assert.doesNotMatch(row, /A newer basis/);
+  task.basis = null;
+  assert.doesNotMatch(text(rowOf(renderTasks(ladder, cases, defaultUi()), 'ladder-answer-fx-a1')), /Basis:/);
+});
+
+test('the two setup selects work one after the other', () => {
+  assert.deepEqual(cleanUi({ ...defaultUi(), a: CLEAN }, data.ladder), { ...defaultUi(), a: CLEAN });
+  assert.deepEqual(cleanUi({ ...defaultUi(), b: LEAKED }, data.ladder), { ...defaultUi(), b: LEAKED });
+  assert.deepEqual(cleanUi({ ...defaultUi(), a: CLEAN, b: LEAKED }, data.ladder), { ...defaultUi(), a: CLEAN, b: LEAKED });
+});
+
+test('a split filter on a pair with nothing to split is dropped, so it cannot hide every task', () => {
+  const ladder = clone().ladder;
+  const pair = ladder.pairs.find((item) => (item.a === CLEAN && item.b === LEAKED) || (item.a === LEAKED && item.b === CLEAN));
+  Object.assign(pair, { a_only: 0, b_only: 0 });
+  assert.equal(cleanUi({ ...defaultUi(), a: CLEAN, b: LEAKED, split: true }, ladder).split, false);
+});
+
+test('a failed refresh says the numbers are from the last load and offers a retry', () => {
+  const page = renderPage(data, defaultUi(), 'HTTP 500');
+  assert.match(text(page.notices), /The page could not refresh \(HTTP 500\)\. The numbers below are from the last load and may be out of date\. Try again/);
+  assert.match(page.notices, /data-act="reload"/);
+  assert.doesNotMatch(renderPage(data, defaultUi()).notices, /could not refresh/);
+});
+
+test('runs of a refused suite are not called runs of other versions', () => {
+  const state = clone();
+  state.ladder.versions = [{ suite: 'ladder-code', version: '2.0.0', refused: 'mixed prompts', runs: 0, left_out_runs: 2 }, { suite: 'ladder-agent', version: '1.0.0', runs: 3, left_out_runs: 1 }];
+  const evidence = text(renderPage(state).evidence);
+  assert.match(evidence, /Left out: 1 counted run of other versions\. Not shown: 2 counted runs of suites that cannot be compared\./);
 });
 
 test('a flagged task lists each check with the numbers the server gave', () => {
@@ -357,8 +389,8 @@ test('the link keeps the filters, drops what the loaded data lacks, and round-tr
   assert.deepEqual(parseHash(hashFor(ui)), ui);
   assert.equal(hashFor(defaultUi()), '');
   const stale = cleanUi({ ...defaultUi(), kind: 'code', tier: '9', info: 'maybe', sort: 'luck', a: 'gone', b: LEAKED, split: true }, data.ladder);
-  assert.deepEqual(stale, defaultUi());
-  assert.deepEqual(cleanUi({ ...defaultUi(), a: CLEAN, b: CLEAN }, data.ladder), defaultUi(), 'one setup against itself is no pair');
+  assert.deepEqual(stale, { ...defaultUi(), b: LEAKED }, 'a setup that is gone drops, the valid one stays');
+  assert.deepEqual(cleanUi({ ...defaultUi(), a: CLEAN, b: CLEAN }, data.ladder), { ...defaultUi(), a: CLEAN }, 'one setup against itself is no pair');
 });
 
 test('ladder.html and ladder.js are served, the state has the ladder, and the shell links the page', async () => {

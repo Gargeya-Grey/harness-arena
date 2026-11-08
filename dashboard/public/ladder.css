@@ -13,7 +13,7 @@
 .ld-answer { margin-top: 28px; padding: 26px 30px 24px 34px; }
 .ld-answer::before { content: ''; position: absolute; left: 16px; top: 31px; width: 2px; height: 20px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 8px var(--glow), 0 0 2px var(--accent); }
 .ld-say { font: 500 22px/31px var(--sans); letter-spacing: -0.012em; max-width: 64ch; text-wrap: pretty; }
-.ld-more { margin-top: 10px; max-width: 74ch; font-size: 14.5px; line-height: 22px; color: var(--muted); }
+.ld-more { margin-top: 10px; max-width: 74ch; font-size: 14.5px; line-height: 22px; color: var(--muted); overflow-wrap: anywhere; }
 .ld-more.ld-pairs-say { color: var(--text); }
 .ld-foot { margin-top: 20px; padding-top: 16px; box-shadow: inset 0 1px 0 var(--line); }
 .fair { display: flex; align-items: baseline; gap: 10px; font-size: 13.5px; line-height: 20px; color: var(--muted); max-width: 80ch; }
@@ -142,7 +142,7 @@ thead .ld-tierv .sub { font-weight: 400; }
 .ld-tasks td.ld-score { text-align: left; }
 .ld-name { display: block; font-weight: 500; font-size: 15px; overflow-wrap: anywhere; }
 .ld-id { display: block; margin-top: 2px; font: 400 12px/17px var(--mono); color: var(--faint); overflow-wrap: anywhere; }
-.ld-basis { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 6px; font-size: 12.5px; line-height: 17px; color: var(--muted); }
+.ld-basis { display: block; margin-top: 6px; font-size: 12.5px; line-height: 17px; color: var(--muted); }
 .ld-flags { margin-top: 8px; font-size: 12.5px; line-height: 18px; color: var(--warn); }
 .ld-flags summary { width: max-content; max-width: 100%; cursor: pointer; font-weight: 500; }
 .ld-flags p { margin-top: 6px; color: var(--muted); overflow-wrap: anywhere; }

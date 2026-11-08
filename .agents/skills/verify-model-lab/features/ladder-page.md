@@ -1,13 +1,13 @@
 # Ladder evidence page
 
-`/ladder.html` shows the difficulty ladder and what the stored runs do and do not show about it. It reads `state.ladder` from `/api/state`, the same numbers as `node lab ladder --calibrate` ([ladder-report.md](ladder-report.md)), and the basis of a task from `state.cases`. It writes nothing and calls no model.
+`/ladder.html` shows the difficulty ladder and what the stored runs do and do not show about it. It reads `state.ladder` from `/api/state`, the same numbers as `node lab ladder --calibrate` ([ladder-report.md](ladder-report.md)). It writes nothing and calls no model.
 
 ## Sub-features
 
 - `ladder-answer` opens the page. It gives how many tasks show a real disagreement, how many only one setup ran, and which pairs the runs can tell apart.
 - `ladder-setups` has one row per setup and one column per tier: solved of counted, and the mean. A setup with fewer counted tasks than the ladder holds says so.
 - `ladder-pairs` has one row per pair: tasks both ran, the tasks only one solved, the sign test p and what the runs show. Choosing two setups opens a card with the same numbers. A pair whose setups were not kept out equally, or that holds a leaked or unknown setup, reads `Differ, not a clean comparison`, never `Can tell apart`.
-- `ladder-tasks` has one row per task, with filters by kind, tier and information class, and four sorts. Every tier value carries the word estimate. A setup with no result reads `not run`, never `0`.
+- `ladder-tasks` has one row per task, with filters by kind, tier and information class, and four sorts. Every tier value carries the word estimate. A setup with no counted result reads `no result`, never `0`.
 - `ladder-empty` covers a root with no ladder, a ladder with no counted run, a suite that is refused (no number shown), and a load error.
 
 ## How to get to it (user POV)
@@ -26,4 +26,3 @@ Preconditions: `ROOT=$(node .agents/skills/verify-model-lab/scripts/temp-root.mj
 ## Gotchas
 
 - The checker can measure before the first paint when `/api/state` is slow. Serve a saved copy of `/api/state` if a result looks wrong.
-- `state.ladder` has no basis, so the page reads it from `state.cases`, and only when the level and minutes there match the ladder row.

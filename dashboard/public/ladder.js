@@ -271,11 +271,12 @@ export function cleanUi(ui, ladder) {
   if (!(ladder?.tiers || []).some((tier) => String(tier.level) === next.tier)) next.tier = '';
   if (!INFORMATION.includes(next.info)) next.info = '';
   if (!SORTS.some(([key]) => key === next.sort)) next.sort = 'tier';
-  if (!ids.has(next.a) || !ids.has(next.b) || next.a === next.b) {
-    next.a = '';
-    next.b = '';
-    next.split = false;
-  }
+  if (!ids.has(next.a)) next.a = '';
+  if (!ids.has(next.b)) next.b = '';
+  if (next.a && next.a === next.b) next.b = '';
+  // The switch shows only for a pair with tasks that split it, so a stale split must not hide every task.
+  const pair = next.a && next.b ? pairOf(ladder, next.a, next.b) : null;
+  if (!pair || !(pair.a_only + pair.b_only)) next.split = false;
   return next;
 }
 
@@ -297,25 +298,17 @@ export function visibleTasks(ladder, ui) {
 }
 
 function scoreCell(entry, letter, picked) {
-  if (!entry) return html`<td data-label="${letter}" class="ld-score is-none${picked ? ' is-pick' : ''}"><span class="nil">not run</span></td>`;
+  if (!entry) return html`<td data-label="${letter}" class="ld-score is-none${picked ? ' is-pick' : ''}"><span class="nil">no result</span></td>`;
   return html`<td data-label="${letter}" class="ld-score${picked ? ' is-pick' : ''}" data-solved="${entry.solved ? '1' : '0'}"><span class="ld-mk ${entry.solved ? 'ld-pass' : 'ld-fail'}" aria-hidden="true">${entry.solved ? '✓' : '✕'}</span><span class="v num">${scoreText(entry.mean)}</span><span class="sr">${entry.solved ? ' solved' : ' not solved'}</span>${entry.n > 1 ? html`<span class="sub">${plural(entry.n, 'try', 'tries')}</span>` : ''}</td>`;
-}
-
-// The case's basis comes from the case record, and only when that record still says what the ladder row says:
-// a case reworked after the runs would otherwise show a basis for another estimate.
-function basisOf(task, cases) {
-  const tier = cases?.[task.case_id]?.metadata?.tier;
-  if (!tier || tier.level !== task.tier || tier.human_minutes !== task.human_minutes) return '';
-  return typeof tier.basis === 'string' ? tier.basis : '';
 }
 
 function taskRow(task, ladder, cases, ui) {
   const letters = letterMap(ladder);
   const configs = configsOf(ladder);
   const found = new Map((task.per_config || []).map((entry) => [entry.config_id, entry]));
-  const basis = basisOf(task, cases);
+  const { basis } = task;
   const tier = tierEntry(ladder, task.tier);
-  return html`<tr data-case="${task.case_id}" data-info="${task.information}" data-kind="${task.kind}"><th scope="row" class="c-task"><span class="ld-name">${caseName(task.case_id, task.suite, cases?.[task.case_id]?.input)}</span><span class="ld-id">${KIND_TEXT[task.kind] || task.kind} task · ${task.case_id}</span>${basis ? html`<span class="ld-basis">Basis: ${basis}</span>` : ''}${task.flags?.length ? html`<details class="ld-flags"><summary class="disclose">Check this task${task.flags.length > 1 ? ` (${task.flags.length})` : ''}</summary>${task.flags.map((flag) => html`<p data-flag="${flag.flag}">${cap(flag.flag)}: solved by ${labelOf(ladder, flag.solved_by)}, failed on every try by ${labelOf(ladder, flag.failed_by)}, which scores higher on the ${flag.shared_tasks} other shared ${flag.shared_tasks === 1 ? 'task' : 'tasks'} (${fixed(flag.failed_by_mean)} against ${fixed(flag.solved_by_mean)}). Check the task for a defect first.</p>`)}</details>` : ''}</th><td data-label="Tier" class="c-tier">${tierValue(task.tier, tier?.name ?? task.tier_name, `estimate: ${minutesText(task.human_minutes)}`)}</td><td data-label="What the runs show" class="c-info"><span class="ld-info" data-info="${task.information}" title="${INFO_HINT[task.information] || ''}"><span class="ld-ishape" aria-hidden="true"></span>${INFO_TEXT[task.information] || task.information}</span><span class="sub">${task.configs_n ? `${task.configs_n} of ${plural(configs.length, 'setup')} ran it` : 'No setup ran it'}</span></td>${configs.map((config) => scoreCell(found.get(config.config_id), `${letters.get(config.config_id)} ${config.label}`, config.config_id === ui.a || config.config_id === ui.b))}</tr>`;
+  return html`<tr data-case="${task.case_id}" data-info="${task.information}" data-kind="${task.kind}"><th scope="row" class="c-task"><span class="ld-name">${caseName(task.case_id, task.suite, cases?.[task.case_id]?.input)}</span><span class="ld-id">${KIND_TEXT[task.kind] || task.kind} task · ${task.case_id}</span>${basis ? html`<span class="ld-basis">Basis: ${basis}</span>` : ''}${task.flags?.length ? html`<details class="ld-flags"><summary class="disclose">Check this task${task.flags.length > 1 ? ` (${task.flags.length})` : ''}</summary>${task.flags.map((flag) => html`<p data-flag="${flag.flag}">${cap(flag.flag)}: solved by ${labelOf(ladder, flag.solved_by)}, failed on every try by ${labelOf(ladder, flag.failed_by)}, which scores higher on the ${flag.shared_tasks} other shared ${flag.shared_tasks === 1 ? 'task' : 'tasks'} (${fixed(flag.failed_by_mean)} against ${fixed(flag.solved_by_mean)}). Check the task for a defect first.</p>`)}</details>` : ''}</th><td data-label="Tier" class="c-tier">${tierValue(task.tier, tier?.name ?? task.tier_name, `estimate: ${minutesText(task.human_minutes)}`)}</td><td data-label="What the runs show" class="c-info"><span class="ld-info" data-info="${task.information}" title="${INFO_HINT[task.information] || ''}"><span class="ld-ishape" aria-hidden="true"></span>${INFO_TEXT[task.information] || task.information}</span><span class="sub">${task.configs_n ? `${task.configs_n} of ${plural(configs.length, 'setup')} with a result` : 'No setup has a result'}</span></td>${configs.map((config) => scoreCell(found.get(config.config_id), `${letters.get(config.config_id)} ${config.label}`, config.config_id === ui.a || config.config_id === ui.b))}</tr>`;
 }
 
 export function renderTasks(ladder, cases, ui) {
@@ -339,8 +332,9 @@ function renderEvidence(ladder) {
   const parts = [];
   if (versions.length) {
     const used = versions.filter((item) => item.version != null && !item.refused);
-    const left = versions.reduce((sum, item) => sum + (item.left_out_runs || 0), 0);
-    parts.push(html`<p>Suite versions used: ${used.map((item) => `${item.suite} ${item.version} (${plural(item.runs, 'run')}${item.cases_from === 'frozen copy' ? '; cases and tiers of its frozen copy' : ''})`).join(', ') || 'none'}. Left out: ${plural(left, 'counted run')} of other versions.</p>`);
+    const left = versions.filter((item) => !item.refused).reduce((sum, item) => sum + (item.left_out_runs || 0), 0);
+    const refused = versions.filter((item) => item.refused).reduce((sum, item) => sum + (item.left_out_runs || 0), 0);
+    parts.push(html`<p>Suite versions used: ${used.map((item) => `${item.suite} ${item.version} (${plural(item.runs, 'run')}${item.cases_from === 'frozen copy' ? '; cases and tiers of its frozen copy' : ''})`).join(', ') || 'none'}. Left out: ${plural(left, 'counted run')} of other versions.${refused ? ` Not shown: ${plural(refused, 'counted run')} of suites that cannot be compared.` : ''}</p>`);
   }
   parts.push(html`<p>A setup solves a task when its mean score over its counted tries is 1. A score is the share of hidden checks passed, so partial work does not solve. Only closed runs that match the evidence ledger and have scores count.</p>`);
   const problems = ladder?.problems || [];
@@ -383,7 +377,7 @@ export function renderPage(data, ui = defaultUi(), error = null) {
     ui: shown,
     meta: renderMeta(ladder),
     answer: hasTasks ? renderAnswer(ladder) : '',
-    notices: renderNotices(ladder),
+    notices: `${error && data ? String(html`<div class="ld-note is-warn" data-notice="stale" role="alert"><span class="mark-s warn" aria-hidden="true"></span><div><strong>The page could not refresh (${error}).</strong> The numbers below are from the last load and may be out of date. <button type="button" class="link-btn" data-act="reload" data-fk="reload">Try again</button></div></div>`) : ''}${renderNotices(ladder)}`,
     empty: renderEmpty(data, error),
     setups: hasTasks ? renderSetups(ladder) : '',
     pairsOn: hasTasks && configs.length > 0,
@@ -558,8 +552,11 @@ function onKey(event) {
     else if (event.key === 'End') setActive(menu, menu.def.options.length - 1);
     else if (event.key === 'Enter' || event.key === ' ') pickFromMenu();
     else if (event.key === 'Escape') closeMenu();
-    else if (event.key === 'Tab') closeMenu(false);
-    else return;
+    else if (event.key === 'Tab') {
+      // Focus goes back to the select first, so the browser's own Tab moves on from there.
+      closeMenu();
+      return;
+    } else return;
     event.preventDefault();
     return;
   }
