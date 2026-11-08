@@ -58,9 +58,10 @@ export function defineCli(spec) {
     supports_effort: Boolean(spec.supportsEffort),
     supports_decoding: false,
     // `args` is what the run records as user_config_flags and what turns isolation on (a
-    // non-empty list). With a temp home it also lists the env vars, as KEY=<temp home>/sub.
+    // non-empty list). With a temp home it also lists the env vars, as KEY=<temp home>/sub;
+    // the env vars of `isolation.env` are listed as KEY=value.
     // `flags` is the part that goes on the command line.
-    isolation: { args: [...flags, ...(home ? describeEnv(homeEnv) : [])], flags, env: isolation.env || {}, home, note: isolation.note },
+    isolation: { args: [...flags, ...Object.entries(isolation.env || {}).map(([key, value]) => `${key}=${value}`), ...(home ? describeEnv(homeEnv) : [])], flags, env: isolation.env || {}, home, note: isolation.note },
     // access: edit (agent tasks) lets the harness edit files and run commands in its folder.
     edit: edit ? { args: edit.args || [], note: edit.note || '' } : null,
     // access: answer (the default) turns the CLI's tools off where only config can do it.

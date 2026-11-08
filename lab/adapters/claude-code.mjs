@@ -18,7 +18,11 @@ export default defineCli({
   edit: { args: ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash,Read,Edit,Write,Glob,Grep'], note: 'Edits files and runs shell commands; web tools stay off.' },
   isolation: {
     args: ['--setting-sources', 'project,local', '--strict-mcp-config', '--disable-slash-commands'],
-    note: 'Skips user settings, MCP servers, skills and slash commands. Built-in plugins still load.',
+    // The flags do not cover instruction files. The call folder is under the home folder on
+    // Windows (os.tmpdir()), so ~/.claude/CLAUDE.md is found as a parent folder's file, and the
+    // auto memory of the home folder's project loads too.
+    env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
+    note: 'Skips user settings, MCP servers, skills, slash commands, CLAUDE.md files and auto memory. Built-in plugins still load.',
   },
 
   args({ model, effort, system, persist }) {
