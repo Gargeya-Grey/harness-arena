@@ -165,10 +165,10 @@ function checkWorkspace({ fixtureDir, check, overlay, mutation, limits }) {
   try {
     const work = path.join(scratch, 'work');
     copyTree(fixtureDir, work);
-    fs.cpSync(overlay, work, { recursive: true });
+    fs.cpSync(overlay, work, { recursive: true }); // not a run folder: a scratch folder
     if (mutation) {
       const file = path.join(work, ...mutation.file.split('/'));
-      fs.writeFileSync(file, applyMutation(fs.readFileSync(file, 'utf8'), mutation.site), 'utf8');
+      fs.writeFileSync(file, applyMutation(fs.readFileSync(file, 'utf8'), mutation.site), 'utf8'); // not a run folder: a scratch folder
     }
     const runDir = path.join(scratch, 'run');
     fs.mkdirSync(runDir); // not a run folder: a scratch folder
@@ -422,7 +422,7 @@ export async function auditCommand(root, positionals = [], values = {}) {
     let written = null;
     if (values.write) {
       written = path.join(paths(root).reports, 'audit', `${report.suite.id}@${report.suite.version}.json`);
-      writeJson(written, report);
+      writeJson(written, report); // not a run folder: reports/audit/
     }
     console.log(values.json ? JSON.stringify(report, null, 2) : formatChecks(report));
     if (written && !values.json) console.log(`\nWritten: ${posix(path.relative(root, written))}`);
