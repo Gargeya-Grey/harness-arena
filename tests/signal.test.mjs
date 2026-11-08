@@ -87,10 +87,10 @@ function addRun(root, { rand, model, rows, harness = 'claude-code', setup = 'kep
 }
 
 /** An experiment file; targets: [[model, harness], ...]. */
-function addExperiment(root, targets, { name = 'fx-exp', extra = '', userConfig = 'isolated' } = {}) {
+function addExperiment(root, targets, { name = 'fx-exp', extra = '', userConfig = 'isolated', evaluator = '  - id: workspace-tests\n    version: "1"\n    dimension: quality\n' } = {}) {
   const lines = targets.map(([model, harness]) => `  - model: ${model}\n    harness: ${harness}`).join('\n');
   const file = path.join(root, 'experiments', `${name}.yaml`);
-  write(file, `id: ${name}\nsuite: fx-sig\nprompt: ptest\nrepeats: 2\nuser_config: ${userConfig}\ntargets:\n${lines}\nevaluators:\n  - id: workspace-tests\n    version: "1"\n    dimension: quality\n${extra}`);
+  write(file, `id: ${name}\nsuite: fx-sig\nprompt: ptest\nrepeats: 2\nuser_config: ${userConfig}\ntargets:\n${lines}\nevaluators:\n${evaluator}${extra}`);
   return file;
 }
 
@@ -152,11 +152,17 @@ test('each task class: all solved, all unsolved, disagree, and a task only one s
   const [pair] = report.pairs;
   assert.deepEqual([pair.shared, pair.a_only, pair.b_only, pair.predicted_disagreements, pair.needed, pair.unseen], [8, 3, 1, 4, 6, 2]);
   // Three against one over 8 shared tasks: p = 2 x (1 + 4) / 16 = 0.625. Even if both unseen tasks went one way: 5 against 1, 2 x (1 + 6) / 64 = 0.21875.
-  assert.deepEqual([pair.sign_p, pair.best_case_p, pair.status], [0.625, 0.21875, 'unreachable']);
+  assert.deepEqual([pair.sign_p, pair.best_case_p, pair.status], [0.625, 0.21875, 'unlikely']);
   assert.equal(report.result, 'low signal');
 });
 
-test('a pair with 6 disagreements all one way is worth running; the same data with 5 is low signal', (t) => {
+test('the sign test stays correct where 0.5 ** n underflows: an even split past 1000 tasks is not significant', () => {
+  assert.equal(signTestP(538, 538), 1);
+  assert.ok(signTestP(1076, 0) < 0.05);
+  assert.ok(signTestP(700, 400) < 0.05);
+});
+
+test('a pair with 6 disagreements all one way is worth running; the same data with 5 is low signal, as a prediction', (t) => {
   const six = makeRoot(t, { tasks: 8 });
   // A solves tasks 1-6, B solves none of them; tasks 7-8 both solve. Every task has history for both.
   addRun(six, { rand: 'a00001', model: 'm-a', rows: scoresOf(range(1, 8)), tokens: (n) => 10 * n });
@@ -175,9 +181,9 @@ test('a pair with 6 disagreements all one way is worth running; the same data wi
   addRun(five, { rand: 'a00002', model: 'm-b', rows: scoresOf([6, 7, 8], range(1, 5)) });
   vouch(five);
   const low = signalReport(five, addExperiment(five, A_B));
-  assert.deepEqual([low.pairs[0].predicted_disagreements, low.pairs[0].sign_p, low.pairs[0].status], [5, 0.0625, 'unreachable']);
+  assert.deepEqual([low.pairs[0].predicted_disagreements, low.pairs[0].sign_p, low.pairs[0].status], [5, 0.0625, 'unlikely']);
   assert.equal(low.result, 'low signal');
-  assert.match(low.reasons.join('\n'), /No planned task lacks history, and p stays at 0\.0625, over 0\.05\./);
+  assert.match(low.reasons.join('\n'), /On these stored results p is 0\.0625, over 0\.05\. This is a prediction: a new run can differ\./);
 });
 
 test('a pair with too little history is open: the run could still reach 6, so the result is unknown', (t) => {
@@ -212,7 +218,7 @@ test('only one chosen setup has history: every task reads no history, even those
   vouch(root);
   const report = signalReport(root, addExperiment(root, A_B));
   assert.deepEqual(report.tasks, { no_history: 8, all_solved: 0, all_unsolved: 0, disagree: 0 });
-  assert.equal(report.calls_low_information, 0);
+  assert.equal(report.calls_low_information, null, 'unknown, not zero');
   assert.equal(report.result, 'unknown');
   assert.equal(report.pairs[0].shared, 0);
   assert.equal(report.pairs[0].predicted_disagreements, null);
@@ -231,7 +237,7 @@ test('when every task is already solved by every chosen setup the result is low 
   assert.equal(report.calls_low_information, 32);
   assert.equal(report.planned_calls, 32);
   assert.deepEqual(report.tasks, { no_history: 0, all_solved: 8, all_unsolved: 0, disagree: 0 });
-  assert.equal(report.reasons[0], 'Every one of the 32 planned calls repeats a task that every chosen setup already solved. A new run cannot add information.');
+  assert.equal(report.reasons[0], 'Every one of the 32 planned calls repeats a task that every chosen setup already solved. History shows no difference, so a new run will probably add little.');
 });
 
 test('an experiment with zero planned calls is low signal', (t) => {
@@ -253,16 +259,57 @@ test('a plan of fewer than 6 tasks cannot reach p under 0.05 whatever the histor
   assert.equal(report.pairs[0].predicted_disagreements, null, 'no history, so no predicted count');
 });
 
-test('a suite whose counted runs mix prompt versions is refused: the result is unknown, with the reason, and the history is not used', (t) => {
+test('runs of another prompt version are left out, the rest still count, and the reasons say so', (t) => {
   const root = makeRoot(t, { tasks: 8 });
   addRun(root, { rand: 'a00001', model: 'm-a', rows: scoresOf(range(1, 6), [7, 8]), promptVersion: '1' });
   addRun(root, { rand: 'a00002', model: 'm-b', rows: scoresOf([], range(1, 8)), promptVersion: '2' });
   vouch(root);
   const report = signalReport(root, addExperiment(root, A_B));
   assert.equal(report.result, 'unknown');
-  assert.match(report.reasons[0], /^fx-sig@1\.0\.0 has counted runs with different prompt versions \(ptest@1, ptest@2\); scores of different prompts are not comparable\./);
+  assert.match(report.reasons.join('\n'), /Stored runs of fx-sig@1\.0\.0 used prompt ptest@2; this experiment uses ptest@1\./);
   assert.deepEqual(report.tasks, { no_history: 8, all_solved: 0, all_unsolved: 0, disagree: 0 });
-  assert.deepEqual(report.output_tokens.map((item) => item.estimate), [null, null]);
+  assert.deepEqual(report.setups.map((setup) => setup.history), [true, false]);
+  assert.deepEqual(report.output_tokens.map((item) => item.estimate), [80, null]);
+});
+
+test('a setup that is not chosen cannot affect the report, even with another prompt version', (t) => {
+  const root = makeRoot(t, { tasks: 8 });
+  addRun(root, { rand: 'a00001', model: 'm-a', rows: scoresOf(range(1, 8)) });
+  addRun(root, { rand: 'a00002', model: 'm-b', rows: scoresOf([7, 8], range(1, 6)) });
+  addRun(root, { rand: 'a00003', model: 'm-c', rows: scoresOf(range(1, 8)), promptVersion: '2' });
+  vouch(root);
+  const report = signalReport(root, addExperiment(root, A_B));
+  assert.equal(report.result, 'worth running');
+  assert.doesNotMatch(report.reasons.join('\n'), /ptest@2/);
+});
+
+test('history scored by another evaluator version is not used, so it cannot make a run worth running', (t) => {
+  const root = makeRoot(t, { tasks: 8 });
+  addRun(root, { rand: 'a00001', model: 'm-a', rows: scoresOf(range(1, 8)) });
+  addRun(root, { rand: 'a00002', model: 'm-b', rows: scoresOf([7, 8], range(1, 6)) });
+  vouch(root);
+  const report = signalReport(root, addExperiment(root, A_B, { evaluator: '  - id: workspace-tests\n    version: "2"\n    dimension: quality\n' }));
+  assert.equal(report.result, 'unknown');
+  assert.deepEqual(report.setups.map((setup) => setup.history), [false, false]);
+  assert.match(report.reasons.join('\n'), /were scored with workspace-tests@1; this experiment uses workspace-tests@2\./);
+});
+
+test('a plan with no quality evaluator reads unknown, whatever the history', (t) => {
+  const root = makeRoot(t, { tasks: 8 });
+  addRun(root, { rand: 'a00001', model: 'm-a', rows: scoresOf(range(1, 8)) });
+  addRun(root, { rand: 'a00002', model: 'm-b', rows: scoresOf([7, 8], range(1, 6)) });
+  vouch(root);
+  const report = signalReport(root, addExperiment(root, A_B, { evaluator: '  - id: latency\n    version: "1"\n    dimension: speed\n' }));
+  assert.equal(report.result, 'unknown');
+  assert.equal(report.reasons[0], 'The experiment has no quality evaluator, so its results cannot show which setup solves more tasks.');
+});
+
+test('the reasons name the harness versions the history comes from, and say the installed ones were not checked', (t) => {
+  const root = makeRoot(t, { tasks: 8 });
+  addRun(root, { rand: 'a00001', model: 'm-a', rows: scoresOf(range(1, 8)) });
+  addRun(root, { rand: 'a00002', model: 'm-b', rows: scoresOf([7, 8], range(1, 6)) });
+  vouch(root);
+  assert.match(signalReport(root, addExperiment(root, A_B)).reasons.join('\n'), /History is from claude-code 1\.0\.0\. The harness versions installed now were not checked/);
 });
 
 test('history from another prompt version, another suite version or changed suite content is not used', (t) => {
@@ -322,7 +369,7 @@ test('a setup that cannot be kept out is flagged, and a pair with it is not clea
   addRun(root, { rand: 'a00001', model: 'm-a', rows: scoresOf(range(1, 8)) });
   vouch(root);
   const report = signalReport(root, addExperiment(root, [['m-a', 'claude-code'], ['m-b', 'plain-cli']]));
-  assert.deepEqual(report.setups.map((setup) => setup.setup_state), ['kept out', 'unknown']);
+  assert.deepEqual(report.setups.map((setup) => setup.setup_state), ['kept out', 'loaded'], 'a harness with no flags loads the setup, as the runner records it');
   assert.equal(report.pairs[0].status, 'confounded');
   assert.match(report.reasons.join('\n'), /m-b · plain-cli was asked to stay out of your setup, but the lab cannot show that it does/);
   // The same experiment with the setup loaded asks for nothing to be kept out.
@@ -330,15 +377,43 @@ test('a setup that cannot be kept out is flagged, and a pair with it is not clea
   assert.deepEqual(loaded.setups.map((setup) => setup.setup_state), ['loaded', 'loaded']);
 });
 
-test('a setup that can be only partly kept out is named in the reasons', (t) => {
+test('a setup that can be only partly kept out is named, and its pair with a fully kept-out setup is not worth running', (t) => {
   const root = makeRoot(t, { tasks: 8 });
+  addRun(root, { rand: 'a00001', model: 'm-a', rows: scoresOf(range(1, 8)) });
+  addRun(root, { rand: 'a00002', model: 'm-b', harness: 'command-code', rows: scoresOf([7, 8], range(1, 6)) });
+  vouch(root);
   const report = signalReport(root, addExperiment(root, [['m-a', 'claude-code'], ['m-b', 'command-code']]));
   assert.deepEqual(report.setups.map((setup) => setup.setup_state), ['kept out', 'partly kept out']);
+  assert.equal(report.pairs[0].status, 'confounded');
+  assert.equal(report.result, 'low signal');
+  assert.match(report.reasons.join('\n'), /one is kept out and the other partly kept out, so a difference may come from your own setup/);
   assert.match(report.reasons.join('\n'), /m-b · command-code can be only partly kept out of your setup\./);
   assert.doesNotMatch(report.reasons.join('\n'), /m-a · claude-code can be only partly/);
 });
 
 // ---- check quality -----------------------------------------------------------------------------
+
+test('check quality counts only the planned tasks the audit really covered', (t) => {
+  const root = makeRoot(t, { tasks: 8 });
+  const file = addExperiment(root, A_B);
+  const report = (audited) => ({ kind: 'checks', suite: { id: 'fx-sig', version: '1.0.0', sha256: suiteSha(root), frozen: false }, totals: { tasks: 8, audited: audited.length, kill_rate: 0.9 }, tasks: range(1, 8).map((n) => (audited.includes(n) ? { case_id: taskId(n), status: 'audited', mutants: 4, killed: n <= 2 ? 4 : 2 } : { case_id: taskId(n), status: 'excluded', reason: 'no reference solution' })) });
+  const store = (audited) => write(path.join(root, 'reports', 'audit', 'fx-sig@1.0.0.json'), `${JSON.stringify(report(audited))}\n`);
+
+  store([]);
+  const none = signalReport(root, file);
+  assert.equal(none.checks.state, 'not audited');
+  assert.match(none.reasons.join('\n'), /covers none of the planned tasks/);
+
+  store([1, 2, 3]);
+  // 4 + 4 + 2 of 12 wrong answers caught.
+  assert.deepEqual(signalReport(root, file).checks, { state: 'partly audited', kill_rate: 0.83333, audited_tasks: 3, tasks: 8 });
+  assert.match(signalReport(root, file).reasons.join('\n'), /The hidden checks of 3 of 8 planned tasks are audited: they caught 83%/);
+  const onlyExcluded = signalReport(root, addExperiment(root, A_B, { name: 'fx-narrow', extra: `cases:\n  - ${taskId(7)}\n  - ${taskId(8)}\n` }));
+  assert.equal(onlyExcluded.checks.state, 'not audited', 'a narrowed plan does not inherit the suite-wide rate');
+
+  store(range(1, 8));
+  assert.equal(signalReport(root, file).checks.state, 'audited');
+});
 
 test('check quality reads reports/audit, and a suite with no audit, or an audit of other content, reads not audited', (t) => {
   const root = makeRoot(t, { tasks: 8 });
@@ -346,11 +421,11 @@ test('check quality reads reports/audit, and a suite with no audit, or an audit 
   assert.deepEqual(signalReport(root, file).checks, { state: 'not audited', kill_rate: null });
   assert.match(signalReport(root, file).reasons.join('\n'), /The hidden checks are not audited/);
 
-  const audit = (sha) => ({ kind: 'checks', suite: { id: 'fx-sig', version: '1.0.0', sha256: sha, frozen: false }, totals: { tasks: 8, audited: 6, kill_rate: 0.75 } });
+  const audit = (sha) => ({ kind: 'checks', suite: { id: 'fx-sig', version: '1.0.0', sha256: sha, frozen: false }, totals: { tasks: 8, audited: 6, kill_rate: 0.75 }, tasks: range(1, 6).map((n) => ({ case_id: taskId(n), status: 'audited', mutants: 4, killed: 3 })) });
   write(path.join(root, 'reports', 'audit', 'fx-sig@1.0.0.json'), `${JSON.stringify(audit(suiteSha(root)))}\n`);
   const audited = signalReport(root, file);
-  assert.deepEqual([audited.checks.state, audited.checks.kill_rate, audited.checks.audited_tasks, audited.checks.tasks], ['audited', 0.75, 6, 8]);
-  assert.match(audited.reasons.join('\n'), /The hidden checks are audited: they caught 75% of the wrong answers made for the audit\./);
+  assert.deepEqual([audited.checks.state, audited.checks.kill_rate, audited.checks.audited_tasks, audited.checks.tasks], ['partly audited', 0.75, 6, 8]);
+  assert.match(audited.reasons.join('\n'), /The hidden checks of 6 of 8 planned tasks are audited: they caught 75% of the wrong answers made for the audit\./);
 
   write(path.join(root, 'reports', 'audit', 'fx-sig@1.0.0.json'), `${JSON.stringify(audit('d'.repeat(64)))}\n`);
   assert.equal(signalReport(root, file).checks.state, 'not audited');
@@ -444,7 +519,7 @@ test('GET /api/signal gives the same report as the command, takes the Run page n
     const narrow = await get('/api/signal?experiment=fx-exp.yaml&models=m-a&cases=fx-sig-t01,fx-sig-t02&repeats=3');
     assert.equal(narrow.status, 200);
     assert.equal(narrow.json.planned_calls, 6);
-    for (const bad of ['', '?experiment=../fx-exp.yaml', '?experiment=fx-exp.txt', '?experiment=nope.yaml', '?experiment=fx-exp.yaml&repeats=0', '?experiment=fx-exp.yaml&models=-x', '?experiment=fx-exp.yaml&cases=fx-sig-nope']) {
+    for (const bad of ['', '?experiment=../fx-exp.yaml', '?experiment=fx-exp.txt', '?experiment=nope.yaml', '?experiment=fx-exp.yaml&repeats=0', '?experiment=fx-exp.yaml&models=-x', '?experiment=fx-exp.yaml&cases=fx-sig-nope', '?experiment=fx-exp.yaml&harness=claude-code,codex']) {
       const refused = await get(`/api/signal${bad}`);
       assert.equal(refused.status, 400, bad);
       assert.equal(typeof refused.json.error, 'string');

@@ -15,7 +15,7 @@ export function formatSignal(report) {
     '',
     `Planned calls: ${report.planned_calls} (${e.setups} setups x ${e.tasks} tasks x ${e.repeats} tries)`,
     `Tasks by what history says: ${report.tasks.no_history} no history, ${report.tasks.all_solved} all solved, ${report.tasks.all_unsolved} all unsolved, ${report.tasks.disagree} disagree`,
-    `Calls with little chance of new information: ${report.tasks.no_history === e.tasks ? 'unknown (no history)' : `${report.calls_low_information} (tasks every setup already solved)`}`,
+    `Calls with little chance of new information: ${report.calls_low_information == null ? 'unknown (no history)' : `${report.calls_low_information} (tasks every setup already solved)`}`,
     '',
     'Estimated output tokens (stored median per call x planned calls):',
   ];

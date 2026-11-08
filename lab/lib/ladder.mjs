@@ -202,10 +202,22 @@ export function taskInformation(caseRow) {
 }
 
 /** Two-sided exact sign test: the chance of a split at least this uneven among n tasks only one side solved, if both were equally likely to win. */
+/** Past about 1000 trials 0.5 ** n underflows to 0, so the terms are carried as logarithms. */
+function signTestLargeP(n, k) {
+  let logTerm = -n * Math.LN2;
+  let tail = 0;
+  for (let i = 0; i <= k; i += 1) {
+    tail += Math.exp(logTerm);
+    logTerm += Math.log((n - i) / (i + 1));
+  }
+  return Math.min(1, 2 * tail);
+}
+
 export function signTestP(a, b) {
   const n = a + b;
   if (n === 0) return 1;
   const k = Math.min(a, b);
+  if (n > 1000) return signTestLargeP(n, k);
   let term = 0.5 ** n;
   let tail = 0;
   for (let i = 0; i <= k; i += 1) {

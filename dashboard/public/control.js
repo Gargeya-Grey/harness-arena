@@ -646,14 +646,13 @@ const tokenTotal = (items) => {
 function paintSignal(r) {
   const [tone, word] = SIGNAL_WORD[r.result] || ['info', r.result];
   const predicted = r.pairs.map((pair) => pair.predicted_disagreements).filter((n) => n != null);
-  const noHistory = r.tasks.no_history === r.experiment.tasks;
   const rows = [
     ['Planned calls', r.planned_calls],
-    ['Little chance of new information', noHistory ? 'unknown' : r.calls_low_information],
+    ['Little chance of new information', r.calls_low_information ?? 'unknown'],
     ['Output tokens (estimate)', tokenTotal(r.output_tokens)],
     ['Disagreements a pair needs', r.pairs.length ? r.pairs[0].needed : 'no pair'],
     ['History predicts, best pair', r.pairs.length ? (predicted.length ? Math.max(...predicted) : 'unknown') : 'no pair'],
-    ['Check quality', r.checks.state === 'audited' ? `audited${r.checks.kill_rate == null ? '' : `, ${Math.round(r.checks.kill_rate * 100)}% caught`}` : 'not audited'],
+    ['Check quality', `${r.checks.state}${r.checks.kill_rate == null ? '' : `, ${Math.round(r.checks.kill_rate * 100)}% caught`}`],
     ['Setup state', [...new Set(r.setups.map((s) => s.setup_state))].map((state) => `${r.setups.filter((s) => s.setup_state === state).length} ${state}`).join(', ')],
   ];
   const box = signalBox();
@@ -694,7 +693,7 @@ function scheduleSignal() {
   const box = signalBox();
   box.hidden = false;
   box.classList.add('busy');
-  if (!box.firstChild) box.innerHTML = '<p class="signal-why">Checking stored runs…</p>';
+  box.innerHTML = '<p class="signal-why">Checking stored runs…</p>';
   signalTimer = setTimeout(loadSignal, 300);
 }
 function syncRunButtons() {

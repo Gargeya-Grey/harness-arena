@@ -47,7 +47,8 @@ function plannedSetups(root, plan) {
   for (const { harness, effort, models } of plan.groups.values()) {
     const adapter = getAdapter(harness, root);
     const flags = isolated ? adapter.isolation?.args || [] : [];
-    const { state } = setupEvidenceOf({ harness: { name: harness, settings: { user_config: isolated ? 'isolated' : 'loaded', user_config_flags: flags } } });
+    // As the runner records it: no flags means the harness loaded the user's setup.
+    const { state } = setupEvidenceOf({ harness: { name: harness, settings: { user_config: flags.length ? 'isolated' : 'loaded', user_config_flags: flags } } });
     const answerTools = answerToolsOf({ harness: { settings: { access: plan.access, ...accessSettings(adapter, plan.access) } } });
     for (const model of models) {
       const used = effectiveEffort({ effort }, plan.registry[model], adapter);
@@ -58,7 +59,7 @@ function plannedSetups(root, plan) {
         setup_state: state,
         answer_tools: answerTools,
         // Asked to stay out, and the lab cannot show that it did.
-        unproved_setup: isolated && (state === 'unknown' || state === 'leaked'),
+        unproved_setup: isolated && (state === 'loaded' || state === 'unknown' || state === 'leaked'),
         label: `${model} · ${harness}${used ? ` · ${used}` : ''}`,
         planned_id: configId(model, { name: harness, version: 'unknown' }, used, state, answerTools),
       });
@@ -67,54 +68,55 @@ function plannedSetups(root, plan) {
   return setups;
 }
 
+const qualityOf = (evaluators) => (evaluators || []).filter((item) => item.dimension === 'quality').map((item) => `${item.id}@${item.version}`).sort().join(' + ');
+
 /**
- * The stored rows that can speak for this plan: counted-or-not rows of the same suite version, the same suite
- * content (hash) and the same prompt version. `refused` is set when the counted runs mix prompt versions or
- * quality evaluator versions, as the ladder report refuses them. `notes` says what was left out and why.
+ * The stored rows that can speak for this plan: rows of the chosen setups with the same suite version, suite content
+ * (hash), prompt version and quality evaluators as the plan. Runs of any other setup are not looked at, so they cannot
+ * affect the report. `blocked` is set when the plan cannot produce a comparable score. `notes` says what was left out.
  */
-function usableHistory(state, plan) {
+function usableHistory(state, plan, setups) {
+  const plannedQuality = qualityOf(plan.experiment.evaluators);
+  if (!plannedQuality) return { rows: [], blocked: 'The experiment has no quality evaluator, so its results cannot show which setup solves more tasks.', notes: [] };
   const contextOf = new Map(state.contexts.map((ctx) => [ctx.key, ctx]));
   const runOf = new Map(state.runs.map((run) => [run.run_id, run]));
+  const chosen = new Set(setups.map((setup) => `${setup.model}\0${setup.harness}\0${setup.effort ?? ''}`));
+  const isChosen = (row) => {
+    const config = state.configs[row.config_id];
+    return config && chosen.has(`${config.model_key}\0${config.harness.name}\0${config.effort ?? ''}`);
+  };
   const version = String(plan.suite.version);
+  const label = `${plan.suite.id}@${version}`;
+  const plannedPrompt = `${plan.prompt.id}@${plan.prompt.version}`;
   const notes = [];
-  const rows = state.observations.filter((row) => {
-    const ctx = contextOf.get(row.context_key);
-    return row.trusted !== false && ctx?.suite?.id === plan.suite.id && String(ctx.suite.version) === version && (ctx.evaluators || []).some((item) => item.dimension === 'quality');
-  });
   const byRun = new Map();
-  for (const row of rows) {
+  for (const row of state.observations) {
+    const ctx = contextOf.get(row.context_key);
+    if (row.trusted === false || ctx?.suite?.id !== plan.suite.id || String(ctx.suite.version) !== version || !qualityOf(ctx.evaluators) || !isChosen(row)) continue;
     if (!byRun.has(row.run_id)) byRun.set(row.run_id, []);
     byRun.get(row.run_id).push(row);
   }
-  const keep = new Set();
+  const keep = [];
   const changed = [];
-  for (const [id, runRows] of byRun) {
+  const otherPrompts = new Set();
+  const otherEvaluators = new Set();
+  for (const [id, rows] of byRun) {
+    const ctx = contextOf.get(rows[0].context_key);
+    const counted = countedRows(rows, true).length > 0;
+    const prompt = `${ctx.prompt.id}@${ctx.prompt.version}`;
     if (runOf.get(id)?.suite?.sha256 !== plan.suite.sha256) changed.push(id);
-    else keep.add(id);
+    else if (prompt !== plannedPrompt) { if (counted) otherPrompts.add(prompt); }
+    else if (qualityOf(ctx.evaluators) !== plannedQuality) { if (counted) otherEvaluators.add(qualityOf(ctx.evaluators)); }
+    else keep.push(id);
   }
   if (changed.length) notes.push(`${count(changed.length, 'stored run')} of ${plan.suite.id} ${version} recorded other suite content than the suite now has (it changed without a new version), so ${changed.length === 1 ? 'it is' : 'they are'} not used.`);
-  const counted = [...keep].filter((id) => countedRows(byRun.get(id), true).length > 0);
-  if (!counted.length) {
+  if (otherPrompts.size) notes.push(`Stored runs of ${label} used prompt ${[...otherPrompts].sort().join(', ')}; this experiment uses ${plannedPrompt}. Scores of different prompts are not comparable, so they are not used.`);
+  if (otherEvaluators.size) notes.push(`Stored runs of ${label} were scored with ${[...otherEvaluators].sort().join(', ')}; this experiment uses ${plannedQuality}. Scores of different evaluator versions are not comparable, so they are not used.`);
+  if (!keep.some((id) => countedRows(byRun.get(id), true).length > 0)) {
     const others = [...new Set(state.observations.filter((row) => row.trusted !== false && row.run_scored && contextOf.get(row.context_key)?.suite?.id === plan.suite.id && String(contextOf.get(row.context_key).suite.version) !== version).map((row) => String(contextOf.get(row.context_key).suite.version)))].sort(compareVersions);
-    if (others.length) notes.push(`No counted run of ${plan.suite.id}@${version} is stored. Counted runs of ${others.join(', ')} are not used: a task reworked under the same id in a new version is a different measurement.`);
+    if (others.length) notes.push(`No counted run of ${label} is stored. Counted runs of ${others.join(', ')} are not used: a task reworked under the same id in a new version is a different measurement.`);
   }
-  const describe = (id) => {
-    const ctx = contextOf.get(byRun.get(id)[0].context_key);
-    return { prompt: `${ctx.prompt.id}@${ctx.prompt.version}`, evaluators: ctx.evaluators.filter((item) => item.dimension === 'quality').map((item) => `${item.id}@${item.version}`).sort().join(' + ') };
-  };
-  const prompts = [...new Set(counted.map((id) => describe(id).prompt))].sort();
-  const evaluators = [...new Set(counted.map((id) => describe(id).evaluators))].sort();
-  const label = `${plan.suite.id}@${version}`;
-  let refused = null;
-  if (prompts.length > 1) refused = `${label} has counted runs with different prompt versions (${prompts.join(', ')}); scores of different prompts are not comparable.`;
-  else if (evaluators.length > 1) refused = `${label} has counted runs scored with different quality evaluator versions (${evaluators.join(', ')}); scores of different evaluator versions are not comparable.`;
-  if (refused) return { rows: [], refused, notes };
-  const planned = `${plan.prompt.id}@${plan.prompt.version}`;
-  if (prompts.length === 1 && prompts[0] !== planned) {
-    notes.push(`The stored runs of ${label} used prompt ${prompts[0]}; this experiment uses ${planned}. Scores of different prompts are not comparable, so they are not used.`);
-    return { rows: [], refused: null, notes };
-  }
-  return { rows: rows.filter((row) => keep.has(row.run_id)), refused: null, notes };
+  return { rows: keep.flatMap((id) => byRun.get(id)), blocked: null, notes };
 }
 
 /** Each setup's stored configuration: same model, harness, effort, answer tools and setup state, with usable rows. */
@@ -135,6 +137,7 @@ function matchHistory(setups, state, rows) {
       ...setup,
       config_id: chosen?.id ?? setup.planned_id,
       has_history: Boolean(chosen),
+      history_version: chosen?.harness.version ?? null,
       history_label: chosen?.short_label ?? setup.label,
       rows: chosen ? rowsOf.get(chosen.id) : [],
       other_harness_versions: own.slice(1).map((config) => config.id),
@@ -176,7 +179,7 @@ function taskClass(entries, chosen) {
   return info === 'all-solved' ? 'all_solved' : 'all_unsolved';
 }
 
-/** What the audit stored for this exact suite content (reports/audit/<suite>@<version>.json), or not audited. */
+/** What the audit stored for the planned tasks of this exact suite content (reports/audit/<suite>@<version>.json). */
 function checkQuality(root, plan) {
   const none = { state: 'not audited', kill_rate: null };
   const file = path.join(paths(root).reports, 'audit', `${plan.suite.id}@${plan.suite.version}.json`);
@@ -187,8 +190,12 @@ function checkQuality(root, plan) {
     return none;
   }
   if (report?.kind !== 'checks' || report.suite?.id !== plan.suite.id || String(report.suite?.version) !== String(plan.suite.version) || report.suite?.sha256 !== plan.suite.sha256) return { ...none, stale: true };
-  const rate = report.totals?.kill_rate;
-  return { state: 'audited', kill_rate: typeof rate === 'number' ? rate : null, audited_tasks: report.totals?.audited ?? null, tasks: report.totals?.tasks ?? null };
+  const wanted = new Set(plan.cases.map((item) => item.case_id));
+  const audited = (Array.isArray(report.tasks) ? report.tasks : []).filter((item) => wanted.has(item.case_id) && item.status === 'audited');
+  if (!audited.length) return { ...none, no_coverage: true };
+  const mutants = audited.reduce((sum, item) => sum + (item.mutants || 0), 0);
+  const killed = audited.reduce((sum, item) => sum + (item.killed || 0), 0);
+  return { state: audited.length === wanted.size ? 'audited' : 'partly audited', kill_rate: mutants ? round(killed / mutants) : null, audited_tasks: audited.length, tasks: wanted.size };
 }
 
 function pairOf(a, b, cases, planned) {
@@ -198,9 +205,11 @@ function pairOf(a, b, cases, planned) {
   const smaller = Math.min(evidence.a_only, evidence.b_only);
   const unproved = [a, b].filter((setup) => setup.unproved_setup);
   let status = 'open';
-  if (unproved.length) status = 'confounded';
+  if (unproved.length || a.setup_state !== b.setup_state) status = 'confounded';
+  // The one bound that does not depend on history: too few tasks. Anything else is a prediction from stored results.
+  else if (planned < NEEDED) status = 'unreachable';
   else if (evidence.shared && evidence.sign_p < ALPHA) status = 'reachable';
-  else if (signTestP(larger + unseen, smaller) >= ALPHA) status = 'unreachable';
+  else if (signTestP(larger + unseen, smaller) >= ALPHA) status = 'unlikely';
   return {
     a: a.config_id,
     b: b.config_id,
@@ -222,15 +231,15 @@ function pairOf(a, b, cases, planned) {
 function pairReason(pair) {
   const names = `${pair.a_label} against ${pair.b_label}`;
   const split = `${count(pair.a_only, 'task')} only ${pair.a_label} solved, ${count(pair.b_only, 'task')} only ${pair.b_label} solved`;
-  if (pair.status === 'confounded') return `${names}: a setup that cannot be shown to stay out may carry your own setup, so this pair cannot give a clean signal.`;
-  if (!pair.shared) {
-    return pair.status === 'unreachable'
-      ? `${names}: no planned task has history for both. Even if all ${pair.unseen} split one way, p would stay at ${pair.best_case_p}, over ${ALPHA}.`
-      : `${names}: no planned task has history for both, so no disagreement can be predicted.`;
+  if (pair.status === 'confounded') {
+    return pair.setup_states[0] === pair.setup_states[1]
+      ? `${names}: a setup that cannot be shown to stay out may carry your own setup, so this pair cannot give a clean signal.`
+      : `${names}: one is ${pair.setup_states[0]} and the other ${pair.setup_states[1]}, so a difference may come from your own setup. This pair cannot give a clean signal.`;
   }
+  if (!pair.shared) return `${names}: no planned task has history for both, so no disagreement can be predicted.`;
   const head = `${names}: ${count(pair.shared, 'shared task')} with history, ${split}.`;
   if (pair.status === 'reachable') return `${head} That pattern gives p ${pair.sign_p}, under ${ALPHA}.`;
-  if (pair.status === 'unreachable') return `${head} ${pair.unseen ? `Even if ${count(pair.unseen, 'task')} without history all went one way, p would stay at ${pair.best_case_p}` : `No planned task lacks history, and p stays at ${pair.best_case_p}`}, over ${ALPHA}.`;
+  if (pair.status === 'unlikely') return `${head} ${pair.unseen ? `Even if ${count(pair.unseen, 'task')} without history all went one way, p would be ${pair.best_case_p}` : `On these stored results p is ${pair.best_case_p}`}, over ${ALPHA}. This is a prediction: a new run can differ.`;
   return `${head} p ${pair.sign_p}. ${count(pair.unseen, 'task')} ${pair.unseen === 1 ? 'has' : 'have'} no history for both, so a run could still reach ${NEEDED} disagreements.`;
 }
 
@@ -246,7 +255,7 @@ export function signalReport(root, experiment, options = {}) {
   const setups = plannedSetups(root, plan);
   const calls = plan.cases.length * plan.repeats;
   const plannedCalls = setups.length * calls;
-  const history = usableHistory(state, plan);
+  const history = usableHistory(state, plan, setups);
   const matched = matchHistory(setups, state, history.rows);
   const results = new Map(matched.map((setup) => [setup.config_id, taskResults(setup.rows)]));
 
@@ -271,38 +280,40 @@ export function signalReport(root, experiment, options = {}) {
   const checks = checkQuality(root, plan);
   const reasons = [];
   let result;
-  if (history.refused) {
+  if (history.blocked) {
     result = 'unknown';
-    reasons.push(`${history.refused} Its history is not used. Choose the runs with node lab ladder --runs, or run one prompt version.`);
+    reasons.push(history.blocked);
   } else if (!plannedCalls) {
     result = 'low signal';
     reasons.push('The experiment plans 0 calls, so a run cannot show anything.');
   } else if (lowCalls === plannedCalls) {
     result = 'low signal';
-    reasons.push(`Every one of the ${count(plannedCalls, 'planned call')} repeats a task that every chosen setup already solved. A new run cannot add information.`);
+    reasons.push(`Every one of the ${count(plannedCalls, 'planned call')} repeats a task that every chosen setup already solved. History shows no difference, so a new run will probably add little.`);
   } else if (matched.length < 2) {
     result = 'unknown';
     reasons.push('One setup is planned, so there is no pair to compare. This check judges comparisons between setups.');
   } else if (pairs.some((pair) => pair.status === 'reachable')) {
     result = 'worth running';
-  } else if (pairs.every((pair) => pair.status === 'unreachable' || pair.status === 'confounded')) {
+  } else if (pairs.every((pair) => ['unreachable', 'unlikely', 'confounded'].includes(pair.status))) {
     result = 'low signal';
   } else {
     result = 'unknown';
   }
-  if (!history.refused && plannedCalls && lowCalls && lowCalls !== plannedCalls) reasons.push(`${count(lowCalls, 'planned call')} repeat${lowCalls === 1 ? 's' : ''} a task that every chosen setup already solved.`);
-  if (!history.refused && plannedCalls && lowCalls !== plannedCalls && matched.length >= 2) {
+  if (!history.blocked && plannedCalls && lowCalls && lowCalls !== plannedCalls) reasons.push(`${count(lowCalls, 'planned call')} repeat${lowCalls === 1 ? 's' : ''} a task that every chosen setup already solved.`);
+  if (!history.blocked && plannedCalls && lowCalls !== plannedCalls && matched.length >= 2) {
     if (plan.cases.length < NEEDED) {
       reasons.push(`The plan has ${count(plan.cases.length, 'task')}. Two setups need at least ${NEEDED} tasks that one solves and the other does not, so no pair can reach p under ${ALPHA}.`);
     } else {
       const withEvidence = pairs.filter((pair) => pair.shared || pair.status !== 'open');
-      const byStatus = Object.fromEntries(['reachable', 'open', 'unreachable', 'confounded'].map((name) => [name, pairs.filter((pair) => pair.status === name).length]));
-      if (pairs.length > 3 && withEvidence.length) reasons.push(`${count(pairs.length, 'pair')}: ${byStatus.reachable} can reach p under ${ALPHA} from history, ${byStatus.unreachable} cannot, ${byStatus.confounded} cannot be compared cleanly, ${byStatus.open} are open.`);
-      const order = ['reachable', 'open', 'confounded', 'unreachable'];
-      for (const pair of withEvidence.sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status)).slice(0, 3)) reasons.push(pairReason(pair));
+      const byStatus = Object.fromEntries(['reachable', 'open', 'unlikely', 'confounded'].map((name) => [name, pairs.filter((pair) => pair.status === name).length]));
+      if (pairs.length > 3 && withEvidence.length) reasons.push(`${count(pairs.length, 'pair')}: history predicts p under ${ALPHA} for ${byStatus.reachable} and not for ${byStatus.unlikely}, ${byStatus.confounded} cannot be compared cleanly, ${byStatus.open} are open.`);
+      const order = ['reachable', 'open', 'confounded', 'unlikely'];
+      // In a long list the summary line and the setup flag already name the unclean pairs.
+      const explained = withEvidence.filter((pair) => pairs.length <= 3 || pair.status !== 'confounded');
+      for (const pair of explained.sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status)).slice(0, 3)) reasons.push(pairReason(pair));
     }
   }
-  if (!history.refused) {
+  if (!history.blocked) {
     const without = matched.filter((setup) => !setup.has_history);
     if (without.length) reasons.push(`${count(without.length, 'setup')} of ${matched.length} ${without.length === 1 ? 'has' : 'have'} no history for ${plan.suite.id}@${plan.suite.version} in the planned setup state: ${without.map((setup) => `${setup.label} (${setup.setup_state})`).join(', ')}.`);
     for (const setup of without.filter((item) => item.excluded.length)) {
@@ -317,16 +328,22 @@ export function signalReport(root, experiment, options = {}) {
     for (const setup of matched.filter((item) => item.setup_state === 'partly kept out')) {
       reasons.push(`${setup.label} can be only partly kept out of your setup. Its results may carry part of it, so a comparison with a setup fully kept out is not clean.`);
     }
+    const versions = [...new Set(matched.filter((setup) => setup.has_history).map((setup) => `${setup.harness} ${setup.history_version}`))].sort();
+    if (versions.length) reasons.push(`History is from ${versions.join(', ')}. The harness versions installed now were not checked, and a different version can behave differently.`);
   }
   reasons.push(...history.notes);
-  if (checks.state === 'audited') reasons.push(`The hidden checks are audited${checks.kill_rate == null ? '' : `: they caught ${Math.round(checks.kill_rate * 100)}% of the wrong answers made for the audit`}.`);
+  const caught = checks.kill_rate == null ? '' : `: they caught ${Math.round(checks.kill_rate * 100)}% of the wrong answers made for the audit`;
+  if (checks.state === 'audited') reasons.push(`The hidden checks are audited${caught}.`);
+  else if (checks.state === 'partly audited') reasons.push(`The hidden checks of ${checks.audited_tasks} of ${checks.tasks} planned tasks are audited${caught}.`);
+  else if (checks.no_coverage) reasons.push('The stored audit of the hidden checks covers none of the planned tasks, so these checks read as not audited.');
   else reasons.push(checks.stale ? 'The stored audit of the hidden checks is for other suite content, so these checks read as not audited.' : 'The hidden checks are not audited: nobody has tested whether they catch a wrong answer.');
   if (result === 'worth running' && tasks.no_history) reasons.push(`${count(tasks.no_history, 'task')} ${tasks.no_history === 1 ? 'has' : 'have'} no history, so the estimate rests on the others.`);
 
   return {
     planned_calls: plannedCalls,
     tasks,
-    calls_low_information: lowCalls,
+    // null when no planned task has history: the count is unknown, not zero.
+    calls_low_information: plan.cases.length && tasks.no_history === plan.cases.length ? null : lowCalls,
     output_tokens: outputTokens,
     pairs,
     checks,
@@ -355,7 +372,9 @@ export function signalForQuery(root, query) {
     return items;
   };
   const options = {};
-  if (query.harness) [options.harness] = list(query.harness, 'harness name');
+  const harnesses = list(query.harness, 'harness name');
+  if (harnesses.length > 1) throw bad('Name one harness');
+  if (harnesses.length) [options.harness] = harnesses;
   const models = list(query.models, 'model key');
   if (models.length) options.models = models;
   const cases = list(query.cases, 'case id');
