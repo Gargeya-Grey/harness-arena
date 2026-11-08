@@ -145,6 +145,30 @@ test('freezeSuite copies the current version with its parts, is safe to repeat, 
   assert.throws(() => freezeSuite(root, 'smoke'), /exists and is not the current content of smoke/);
 });
 
+test('freezeSuite leaves out what the hash leaves out, and no temporary folder stays', (t) => {
+  const root = tempRoot(t, []);
+  const suite = loadSuite(root, 'agentic');
+  const starter = fs.readdirSync(suite.workspacesDir)[0];
+  fs.mkdirSync(path.join(suite.workspacesDir, starter, 'node_modules', 'dep'), { recursive: true });
+  fs.writeFileSync(path.join(suite.workspacesDir, starter, 'node_modules', 'dep', 'index.js'), 'x');
+  const frozen = freezeSuite(root, 'agentic');
+  assert.ok(!fs.existsSync(path.join(frozen.dir, 'workspaces', starter, 'node_modules')));
+  assert.deepEqual(fs.readdirSync(suite.dir).filter((name) => name.startsWith('.freeze-')), []);
+  assert.deepEqual(fs.readdirSync(path.join(suite.dir, 'versions')).filter((name) => name.includes('tmp')), []);
+});
+
+test('the state does not show the cases of a frozen copy that is not the content the run used', (t) => {
+  const root = tempRoot(t, [RUN]);
+  const cases = path.join(copyFolder(root), 'cases.jsonl');
+  const edited = fs.readFileSync(cases, 'utf8').replace(/"question":"[^"]*"/, '"question":"An edited question?"');
+  fs.writeFileSync(cases, edited);
+  const state = buildState(root, { validate: false });
+  const context = state.contexts.find((item) => item.suite.version === '1.0.0');
+  assert.deepEqual(context.case_data, {});
+  assert.ok(!JSON.stringify(state.cases).includes('An edited question?'));
+  assert.ok(state.problems.some((item) => /the frozen copy of suite reasoning 1\.0\.0 is not the content its runs used/.test(JSON.stringify(item))), JSON.stringify(state.problems));
+});
+
 test('new-case freezes the old version before it adds the case and bumps the version', (t) => {
   const root = tempRoot(t, [SMOKE_RUN]);
   const before = loadSuite(root, 'smoke');

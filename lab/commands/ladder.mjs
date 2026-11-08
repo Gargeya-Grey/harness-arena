@@ -171,7 +171,9 @@ export function ladderReport({ state, ladder, ladderCases, suite = null, runs = 
     const onDisk = diskVersions?.get(suiteId);
     let frozen = used?.version != null && onDisk != null && String(onDisk) !== used.version ? frozenOf(suiteId, used.version) : null;
     if (frozen) {
-      const recorded = new Set(selected.rows.map((row) => contextOf.get(row.context_key)?.suite).filter((item) => item?.id === suiteId).map((item) => item.sha256));
+      // From each run, not its context: a context keeps only the first hash of the runs it merges.
+      const suiteOfRun = new Map((state.runs || []).map((run) => [run.run_id, run.suite]));
+      const recorded = new Set(selected.rows.map((row) => suiteOfRun.get(row.run_id)).filter((item) => item?.id === suiteId).map((item) => item.sha256));
       if ([...recorded].some((sha) => sha !== frozen.sha256)) {
         badCopies.set(suiteId, frozen.sha256);
         frozen = null;

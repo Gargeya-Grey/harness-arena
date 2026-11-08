@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { listDirs, listFiles, readJson, readJsonl, resolveInside, safeSegment, isoNow } from './fsutil.mjs';
-import { paths, loadRegistry, loadCases, runDirs } from './repo.mjs';
+import { paths, loadRegistry, loadSuite, runDirs } from './repo.mjs';
 import { SchemaSet } from './schema.mjs';
 import { clusteredInterval, mean, percentile, sum, variance } from './metrics.mjs';
 import { errorClass, modelCheck, runLiveness } from './checks.mjs';
@@ -332,10 +332,28 @@ export function buildState(root, { validate = true } = {}) {
   const cases = {};
   // One load per suite version for the whole build: an agent suite load reads every workspace file.
   const suiteLoads = new Map();
-  const casesAt = (suiteId, version) => {
+  const suiteAt = (suiteId, version) => {
     const key = `${suiteId}@${version ?? ''}`;
-    if (!suiteLoads.has(key)) suiteLoads.set(key, loadCases(root, suiteId, version));
+    if (!suiteLoads.has(key)) {
+      let suite = null;
+      try {
+        suite = loadSuite(root, suiteId, { version });
+      } catch {
+        // Unknown or unreadable suite: no cases.
+      }
+      suiteLoads.set(key, suite);
+    }
     return suiteLoads.get(key);
+  };
+  const casesAt = (suiteId, version) => suiteAt(suiteId, version)?.cases ?? [];
+  // A frozen copy speaks for a run only when it is the content the run recorded.
+  const runCases = (suite) => {
+    const at = suiteAt(suite.id, suite.version);
+    if (at?.frozen && at.sha256 !== suite.sha256) {
+      note(path.join(at.dir, 'cases.jsonl'), `the frozen copy of suite ${suite.id} ${suite.version} is not the content its runs used; its cases are not shown`);
+      return [];
+    }
+    return at?.cases ?? [];
   };
 
   // The evidence ledger (lab/lib/ledger.mjs): a run that does not match it is listed,
@@ -393,7 +411,7 @@ export function buildState(root, { validate = true } = {}) {
     let caseIds = declared;
     // The case list of the version the run recorded: the suite now, or its frozen copy
     // (datasets/<suite>/versions/<version>/). Neither: the cases the run has rows for.
-    const versionCases = casesAt(manifest.suite.id, manifest.suite.version);
+    const versionCases = runCases(manifest.suite);
     if (!caseIds.length) {
       const suiteCases = versionCases.map((item) => item.case_id);
       caseIds = suiteCases.length ? suiteCases : [...new Set(rawRows.map((row) => row.case_id))].sort();

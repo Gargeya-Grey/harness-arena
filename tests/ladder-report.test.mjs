@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { adoptCommand } from '../lab/commands/adopt.mjs';
 import { compareVersions, ladderCommand, ladderReport, verdictFor } from '../lab/commands/ladder.mjs';
 import { ensureLedger } from '../lab/lib/ledger.mjs';
 import { ladderStatus, loadLadder } from '../lab/lib/ladder.mjs';
@@ -315,6 +316,14 @@ test('an older suite version with a frozen copy is reported with its own cases a
   assert.equal(tampered.warnings.length, 1);
   assert.match(tampered.warnings[0].message, /the frozen copy of 1\.0\.0 is not the content its runs used/);
   write(copyCases, good);
+  // Two runs of one version with different hashes share a context: the runs chosen decide.
+  const other = writeRun(root, 'd00003', 'model-b', rowsOf({ c1: [1, 1], c2: [1, 1] }), { suiteVersion: '1.0.0', suiteSha: 'c'.repeat(64) });
+  ensureLedger(root);
+  adoptCommand(root, [other.runId], { log: () => {} });
+  const onlyGood = ladderCommand(root, { calibrate: true, suiteVersions: ['ladder-code@1.0.0'], runs: ['d00001'], json: true, log: () => {} });
+  assert.equal(onlyGood.versions[0].cases_from, 'frozen copy');
+  const onlyBad = ladderCommand(root, { calibrate: true, suiteVersions: ['ladder-code@1.0.0'], runs: ['d00003'], json: true, log: () => {} });
+  assert.equal(onlyBad.versions[0].cases_from, 'disk');
   // Without the copy, the disk's case set stands and the warning says so.
   fs.rmSync(path.join(dir, 'versions'), { recursive: true, force: true });
   const bare = ladderCommand(root, { calibrate: true, suiteVersions: ['ladder-code@1.0.0'], json: true, log: () => {} });

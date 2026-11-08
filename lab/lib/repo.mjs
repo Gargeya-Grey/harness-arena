@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseYaml } from './yaml.mjs';
 import { readJsonl, readText, sha256 } from './fsutil.mjs';
-import { treeHash } from './workspace.mjs';
+import { copyTree, treeHash } from './workspace.mjs';
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -264,17 +264,17 @@ export function freezeSuite(root, suiteId) {
     if (existing?.sha256 === suite.sha256) return { dir: dest, version: suite.version, created: false };
     throw new Error(`${dest} exists and is not the current content of ${suiteId} ${suite.version}; the suite changed without a new version, or the copy is broken`);
   }
-  // Copy to a temporary folder, check the hash, then rename into place.
-  const temp = `${dest}.tmp-${process.pid}`;
-  fs.rmSync(temp, { recursive: true, force: true }); // not a run folder: a suite's versions/
-  fs.mkdirSync(temp, { recursive: true }); // not a run folder: a suite's versions/
+  // Copy to a folder of its own beside versions/ (a name in versions/ would be read as a version),
+  // check the hash, then rename into place. copyTree skips what the hash skips (.git, node_modules).
+  const temp = fs.mkdtempSync(path.join(suite.dir, '.freeze-')); // not a run folder: a suite folder
   try {
     for (const name of FROZEN_FILES) fs.copyFileSync(path.join(suite.dir, name), path.join(temp, name)); // not a run folder: a suite's versions/
     for (const name of ['workspaces', 'checks']) {
-      if (fs.existsSync(path.join(suite.dir, name))) fs.cpSync(path.join(suite.dir, name), path.join(temp, name), { recursive: true, verbatimSymlinks: true }); // not a run folder: a suite's versions/
+      if (fs.existsSync(path.join(suite.dir, name))) copyTree(path.join(suite.dir, name), path.join(temp, name));
     }
     const copy = readSuiteAt(temp, suiteId);
     if (copy.sha256 !== suite.sha256) throw new Error(`the copy of ${suiteId} ${suite.version} does not hash like the suite; nothing was frozen`);
+    fs.mkdirSync(path.dirname(dest), { recursive: true }); // not a run folder: a suite's versions/
     fs.renameSync(temp, dest); // not a run folder: a suite's versions/
   } finally {
     fs.rmSync(temp, { recursive: true, force: true }); // not a run folder: a suite's versions/

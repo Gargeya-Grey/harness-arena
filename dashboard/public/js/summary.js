@@ -14,7 +14,7 @@ export function verdictFor(c = ctx(), ids = null) {
 
 export function caseLabel(c) {
   if (c.cases.length !== 1) return '';
-  const k = caseOf(c.cases[0]);
+  const k = caseOf(c.cases[0], c);
   return caseName(c.cases[0], c.suite.id, k && k.input);
 }
 
