@@ -631,12 +631,12 @@ export function buildState(root, { validate = true } = {}) {
       ctx.aggregates[id] = aggregate(ctxRows.filter((row) => row.config_id === id), configs[id], { hasQuality });
     }
     ctx.comparison = comparisonMode(ctx.config_ids.map((id) => configs[id]));
-    // Answers stored in a run with no scores, counted whether or not the run counts: a run that stopped
-    // before scoring has answers and no aggregate, and the page must say so instead of "no answers".
+    // Answers stored in a run with no counted scores: a run that stopped before scoring, or one whose
+    // old score files do not count, has answers and no aggregate, and the page must say so instead of "no answers".
     // An answer the evaluator left unchecked in a scored run is already in the aggregate's unscored_n.
     ctx.unscored_answers = {};
     for (const row of observations) {
-      if (row.context_key !== ctx.key || row.error || row.quality != null || row.run_scored) continue;
+      if (row.context_key !== ctx.key || row.error || row.run_scored) continue;
       ctx.unscored_answers[row.config_id] = (ctx.unscored_answers[row.config_id] || 0) + 1;
     }
     ctx.latest_run_at = ctx.runs

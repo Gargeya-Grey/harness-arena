@@ -19,6 +19,7 @@ import { buildState, configId, setupEvidenceOf, setupStateOf } from '../lab/lib/
 import { answer } from '../dashboard/public/js/verdict.js';
 import { S, setData, chooseContext, shownSetups, chartNames } from '../dashboard/public/js/model.js';
 import { anyScored, renderCases } from '../dashboard/public/js/cases.js';
+import { whoText } from '../dashboard/public/js/review.js';
 import { renderSetups } from '../dashboard/public/js/setups.js';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -697,6 +698,7 @@ test('a suite that mixes prompt versions is refused alone in state.ladder; the o
   assert.match(byId['ladder-code'].refused, /ladder-code@1\.0\.0 has counted runs with different prompt versions/);
   assert.deepEqual(byId['ladder-answer'].cases.map((entry) => [entry.case_id, entry.information]), [['ladder-answer-a1', 'all-solved'], ['ladder-answer-a2', 'disagree']]);
   assert.equal(byId['ladder-answer'].refused, null);
+  assert.deepEqual(byId['ladder-code'].cases, [], 'a refused suite names no case set');
   assert.equal(ladder.pairs.length, 1, 'only the suite that is not refused gives a pair');
   assert.throws(() => reportOf(root), /different prompt versions/, 'the command still refuses and names --runs');
 });
@@ -732,9 +734,27 @@ const shownFacts = (tries, passed, unscoredAnswers = 0) => ({ tries, errors: 0, 
 test('stored answers with no score are counted even when another setup has scores', () => {
   const said = answer({ setups: [{ id: 'a', name: 'A', facts: shownFacts(3, 3), errorReason: null }, { id: 'b', name: 'B', facts: shownFacts(0, 0, 58), errorReason: null }], cases: 3 });
   assert.equal(said.kind, 'few');
-  assert.ok(said.more.includes('58 answers are stored with no score, so they count nowhere yet.'), JSON.stringify(said.more));
+  assert.ok(said.more.includes('58 answers are stored with no counted score, so they count nowhere yet.'), JSON.stringify(said.more));
   const one = answer({ setups: [{ id: 'a', name: 'A', facts: shownFacts(3, 3), errorReason: null }, { id: 'b', name: 'B', facts: shownFacts(0, 0, 1), errorReason: null }], cases: 3 });
-  assert.ok(one.more.includes('1 answer is stored with no score, so it counts nowhere yet.'), JSON.stringify(one.more));
+  assert.ok(one.more.includes('1 answer is stored with no counted score, so it counts nowhere yet.'), JSON.stringify(one.more));
+});
+
+test('answers of a run that does not count are counted as stored, even when old score files exist', (t) => {
+  const root = makeRoot(t);
+  writeRun(root, 'w00001', 'model-a', rowsOf({ c1: [1, 1] }), { status: 'running' });
+  ensureLedger(root);
+  const [ctx] = buildState(root, { validate: false }).contexts;
+  assert.deepEqual(ctx.unscored_answers, { 'model-a__fake-1.0.0__default': 2 });
+});
+
+test('the review reveal names the user setup, so a leaked and a clean setup differ', (t) => {
+  const { root } = claudeRoot(t);
+  const state = buildState(root, { validate: false });
+  setData(state);
+  const reveal = (id) => whoText({ config_id: id, repeat: 0 });
+  assert.equal(reveal(LEAKED), 'Model A · claude-code 1.0.0 · user setup leaked · try 1');
+  assert.equal(reveal(LEGACY), 'Model A · claude-code 1.0.0 · user setup kept out · try 1');
+  assert.equal(reveal('model-b__claude-code-1.0.0__default'), 'Model B · claude-code 1.0.0 · try 1');
 });
 
 test('an answer the evaluator left unchecked in a scored run is not also an unscored answer', (t) => {
@@ -767,7 +787,7 @@ test('a stopped run with answers and no scores counts the unscored answers; a ru
   setData(state);
   chooseContext(ctx.key);
   const sentence = answer({ setups: shownSetups(), cases: 6 });
-  assert.deepEqual([sentence.kind, sentence.sentences], ['empty', ['3 answers are stored with no score, so nothing counts yet.']]);
+  assert.deepEqual([sentence.kind, sentence.sentences], ['empty', ['3 answers are stored with no counted score, so nothing counts yet.']]);
   assert.deepEqual(answer({ setups: [], cases: 6 }).sentences, ['No answers yet.']);
   const nothing = structuredClone(state);
   nothing.contexts[0].unscored_answers = {};
@@ -777,7 +797,7 @@ test('a stopped run with answers and no scores counts the unscored answers; a ru
   // One answer: the verb agrees.
   nothing.contexts[0].unscored_answers = { 'model-a__fake-1.0.0__default': 1 };
   setData(nothing);
-  assert.deepEqual(answer({ setups: shownSetups(), cases: 6 }).sentences, ['1 answer is stored with no score, so nothing counts yet.']);
+  assert.deepEqual(answer({ setups: shownSetups(), cases: 6 }).sentences, ['1 answer is stored with no counted score, so nothing counts yet.']);
 });
 
 test('a test with no scores shows no agreement line; with a score and no difference it does', (t) => {

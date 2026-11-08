@@ -45,9 +45,10 @@ function pickOther(chosen) {
   return null;
 }
 
-const whoText = (o) => {
+export const whoText = (o) => {
   const c = cfgOf(o.config_id);
-  return c ? `${c.display_name} · ${c.harness.name} ${c.harness.version}${c.effort ? ` · ${c.effort} effort` : ''} · try ${o.repeat + 1}` : o.config_id;
+  const setup = c?.setup_state && c.setup_state !== 'loaded' ? ` · user setup ${c.setup_state}` : '';
+  return c ? `${c.display_name} · ${c.harness.name} ${c.harness.version}${c.effort ? ` · ${c.effort} effort` : ''}${setup} · try ${o.repeat + 1}` : o.config_id;
 };
 
 function sideHtml(o, letter, reveal) {

@@ -373,6 +373,8 @@ export function ladderReport({ state, ladder, ladderCases, suite = null, runs = 
   const badCopies = new Map();
   for (const suiteId of kindOf.keys()) {
     const used = versions.find((item) => item.suite === suiteId);
+    // Its runs are not comparable, and no case set can be named for them.
+    if (used?.refused) continue;
     const onDisk = diskVersions?.get(suiteId);
     let frozen = used?.version != null && onDisk != null && String(onDisk) !== used.version ? frozenCopy?.(suiteId, used.version) ?? null : null;
     if (frozen) {

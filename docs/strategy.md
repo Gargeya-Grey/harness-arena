@@ -59,7 +59,7 @@ A run records the suite version and hash it used. A new version must not change 
 - `prompt_id` + `version` - e.g. `qa-basic`, `"1"`.
 - `run_id` - `YYYYMMDDTHHMMSSZ__<suite>__<experiment>__<rand6>` (e.g. `20261021T143000Z__smoke__smoke-baseline__a1b2c3`). Filesystem-safe on Windows, sorts chronologically.
 - `repeat` - 0-based index of repeated execution of the same case/model pair.
-- `config_id` - `<model_key>__<harness>-<version>__<effort|default>`, plus a suffix when the experiment asked to keep the user setup out: `__isolated` (kept out), `__isolated-partial` (partly kept out), `__isolated-leaked` (leaked) or `__isolated-unknown` (the flags prove nothing) (e.g. `claude-haiku-5.5__claude-code-2.1.306__default__isolated`). Derived from the run; never written by hand.
+- `config_id` - `<model_key>__<harness>-<version>__<effort|default>`, plus a suffix when the experiment asked to keep the user setup out: `__isolated` (kept out), `__isolated-partial` (partly kept out), `__isolated-leaked` (leaked) or `__isolated-unknown` (the flags prove nothing) (e.g. `claude-haiku-5.5__claude-code-2.1.306__default__isolated`). An old pair rating stores the opponent's id but not its run, so an opponent from another run keeps the id that was stored. Derived from the run; never written by hand.
 
 Every file loaded from disk is recorded with a SHA-256 in the manifest, so a run identifies the *bytes* it used, not just a label:
 
