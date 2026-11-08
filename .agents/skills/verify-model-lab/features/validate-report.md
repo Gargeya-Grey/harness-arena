@@ -22,7 +22,7 @@ Preconditions:
 
 - `ROOT=$(node .agents/skills/verify-model-lab/scripts/temp-root.mjs)`
 
-- **Clean.** Run `LAB_ROOT=$ROOT node lab validate`. Exit code `0`; the first line has `9 runs` and `77 rows`.
+- **Clean.** Run `LAB_ROOT=$ROOT node lab validate`. Exit code `0`; the first line has `14 runs` and `123 rows`.
 - **Fault.** Run `printf '{not json\n' >> $ROOT/results/$(ls $ROOT/results | head -1)/raw.jsonl` and validate again. Exit code `1`; one problem names that file and line.
 - **Ledger.** Run `LAB_ROOT=$ROOT node lab runs`. Nine run ids, each with `n/n rows`.
 - **Report.** Run `LAB_ROOT=$ROOT node lab report`. Three `##` context headings and a table whose first column holds labels such as `Claude Haiku 4.5 · claude-code 2.1.306`.
