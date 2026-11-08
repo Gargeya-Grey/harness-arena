@@ -7,7 +7,7 @@
 // - Every case has a plausible but wrong solution that scores below 1; an empty
 //   function scores 0.
 // - Ids and tests are unique, the spec names every edge case a test checks, and
-//   cases.jsonl is exactly what datasets/coding-hard/generate.mjs prints.
+//   cases.jsonl is exactly what datasets/archive/coding-hard/generate.mjs prints.
 //
 // The solutions live in tests/fixtures/coding-hard-solutions/:
 //   <case_id>.mjs         reference
@@ -23,10 +23,10 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { getEvaluator } from '../lab/evaluators/index.mjs';
 import { readJsonl } from '../lab/lib/fsutil.mjs';
-import { buildText } from '../datasets/coding-hard/generate.mjs';
+import { buildText } from '../datasets/archive/coding-hard/generate.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SUITE_DIR = path.join(HERE, '..', 'datasets', 'coding-hard');
+const SUITE_DIR = path.join(HERE, '..', 'datasets', 'archive', 'coding-hard');
 const SOLUTIONS = path.join(HERE, 'fixtures', 'coding-hard-solutions');
 const EVALUATOR_URL = pathToFileURL(path.join(HERE, '..', 'lab', 'evaluators', 'index.mjs')).href;
 
@@ -136,30 +136,35 @@ test('the spec of every case names each edge case that one of its tests checks',
   }
 });
 
+// CPU time of this process, so a busy machine does not fail a fast reference.
+const cpuMs = () => { const { user, system } = process.cpuUsage(); return (user + system) / 1000; };
+
+function referenceCpu(item) {
+  const source = solutionText(item.case_id);
+  return item.expected.tests.map((one) => {
+    const context = vm.createContext({});
+    vm.runInContext(source, context);
+    context.__fn = vm.runInContext(item.input.name, context);
+    context.__args = JSON.stringify(one.args);
+    const started = cpuMs();
+    vm.runInContext('JSON.stringify(__fn(...JSON.parse(__args)))', context, { timeout: PROCESS_LIMIT_MS });
+    return cpuMs() - started;
+  });
+}
+
 test('every reference solution scores 1 through the real evaluator, well inside the time limits', () => {
   for (const item of cases) {
-    const started = Date.now();
     const score = scoreHere(item, solutionText(item.case_id));
-    const took = Date.now() - started;
     assert.equal(score.value, 1, `${item.case_id}: ${failing(score).slice(0, 3).join(' | ')} ${score.details.error ?? ''}`);
-    assert.ok(took < PROCESS_LIMIT_MS / 3, `${item.case_id}: the reference run took ${took} ms`);
+    const took = referenceCpu(item).reduce((sum, ms) => sum + ms, 0);
+    assert.ok(took < PROCESS_LIMIT_MS / 3, `${item.case_id}: the reference needs ${took.toFixed(0)} ms of CPU for all tests`);
   }
 });
 
 test('the efficiency references need less than a third of the per-test limit on every test', () => {
   for (const item of efficiency) {
-    const source = solutionText(item.case_id);
-    let slowest = 0;
-    for (const one of item.expected.tests) {
-      const context = vm.createContext({});
-      vm.runInContext(source, context);
-      context.__fn = vm.runInContext(item.input.name, context);
-      context.__args = JSON.stringify(one.args);
-      const started = performance.now();
-      vm.runInContext('JSON.stringify(__fn(...JSON.parse(__args)))', context, { timeout: TEST_LIMIT_MS });
-      slowest = Math.max(slowest, performance.now() - started);
-    }
-    assert.ok(slowest < TEST_LIMIT_MS / 3, `${item.case_id}: slowest test ${slowest.toFixed(0)} ms`);
+    const slowest = Math.max(0, ...referenceCpu(item));
+    assert.ok(slowest < TEST_LIMIT_MS / 3, `${item.case_id}: slowest test ${slowest.toFixed(0)} ms of CPU`);
   }
 });
 

@@ -12,7 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { getEvaluator } from '../lab/evaluators/index.mjs';
 import { readJsonl } from '../lab/lib/fsutil.mjs';
-import { FAMILIES, RENDER, lines as generatedLines } from '../datasets/reasoning-hard/generate.mjs';
+import { FAMILIES, RENDER, lines as generatedLines } from '../datasets/archive/reasoning-hard/generate.mjs';
 import {
   fastLattice,
   fastMst,
@@ -27,10 +27,10 @@ import {
   holdsClue,
   statementTruth,
   toIso,
-} from '../datasets/reasoning-hard/solvers.mjs';
+} from '../datasets/archive/reasoning-hard/solvers.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SUITE = path.join(HERE, '..', 'datasets', 'reasoning-hard');
+const SUITE = path.join(HERE, '..', 'datasets', 'archive', 'reasoning-hard');
 const finalAnswer = getEvaluator('final-answer', '1');
 const rows = readJsonl(path.join(SUITE, 'cases.jsonl')).rows;
 const reply = (text) => ({ response: { text } });

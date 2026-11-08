@@ -1,0 +1,32 @@
+id: ladder-agent
+description: >
+  The agent tasks of the difficulty ladder (docs/difficulty.md), all five tiers,
+  through four harnesses, one small model each plus one frontier model (Claude
+  Opus 5.5) through Claude Code, with the user setup kept out where the
+  harness allows it. Descriptive: model and harness both vary. The pilot that
+  calibrates the tiers runs it with --repeats 1.
+suite: ladder-agent
+prompt: agent-task
+repeats: 3
+
+targets:
+  - model: claude-haiku-5.5
+    harness: claude-code
+  - model: claude-opus-5.5
+    harness: claude-code
+  - model: gpt-6-luna-low
+    harness: codex
+  - model: deepseek-v4.1-flash-max
+    harness: command-code
+  - model: beam-free
+    harness: opencode
+
+workdir: isolated
+user_config: isolated
+access: edit
+timeout_s: 3600
+
+evaluators:
+  - id: workspace-tests
+    version: "2"
+    dimension: quality

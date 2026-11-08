@@ -1,0 +1,31 @@
+{
+  "probes": {
+    "keeps nothing allowed by default, an allow, and the shape of explain": [{"allowed":true,"decision":"allow","by":["read"]},{"allowed":false,"decision":"default","by":[]},{"allowed":false,"decision":"default","by":[]},true],
+    "any deny beats every allow, in whatever order the statements were added": [[{"allowed":false,"decision":"deny","by":["no"]},{"allowed":true,"decision":"allow","by":["yes"]}],[{"allowed":false,"decision":"deny","by":["no"]},{"allowed":true,"decision":"allow","by":["yes"]}],[{"allowed":false,"decision":"deny","by":["no"]},{"allowed":true,"decision":"allow","by":["yes"]}],[{"allowed":true,"decision":"allow","by":["yes"]},{"allowed":true,"decision":"allow","by":["yes"]}]],
+    "explain names every statement of the winning effect, sorted by id": [{"allowed":true,"decision":"allow","by":["a","b","c"]},{"allowed":false,"decision":"deny","by":["m","z"]},{"allowed":false,"decision":"deny","by":["z"]},{"allowed":false,"decision":"deny","by":["m","skip","z"]},{"allowed":true,"decision":"allow","by":["a","other"]}],
+    "keeps a role inheriting through any number of parents, denies included": {"u1":[true,true,false],"u3":[true,false,false],"u4":[true,false,true],"u5":[true,true,false],"u6":[false,false,true],"roles":[["r1","r2","r3","r4","viewer"],["left","r1","right","tip"],[]]},
+    "a role cannot inherit from itself, directly or through other roles, and a refused role changes nothing": {"direct":"CycleError","fresh":"CycleError","indirect":"CycleError","middle":"CycleError","unknown":"PolicyError","star":"PolicyError","empty":"PolicyError","rolesAfter":["p","q","s"],"redefine":"ok","rolesRedefined":["q","s"],"unknownStillMissing":"PolicyError"},
+    "a change of a role or a group reaches the users at once": {"first":[false,false],"second":[true,false,["plain","viewer"]],"third":[true,["auditor","plain","viewer"]],"fourth":[]},
+    "direct roles and group roles add up, and unknown roles and groups are refused": {"fay":[["auditor","viewer"],true,true],"gus":[["auditor"],true,false],"badGroup":"PolicyError","badUserRole":"PolicyError","badUserGroup":"PolicyError","badId":"PolicyError"},
+    "a statement covers its folder and everything below, on whole segments only": [true,true,false,false,false,false,false,true,false],
+    "keeps exact covering only the resource itself, with slashes normalized": {"exact":[true,true,true,false,false],"root":[true,true,true]},
+    "one star is one segment, two stars are zero or more segments": {"one":[true,false,false,false],"many":[true,true,true,false,false],"tail":[true,true,false],"mid":[true,true,false,false]},
+    "keeps resources absolute and free of dot segments, in a request and in a pattern": {"requests":["PolicyError","PolicyError","PolicyError","PolicyError","PolicyError","PolicyError","PolicyError","PolicyError"],"patterns":["PolicyError","PolicyError","PolicyError","PolicyError","PolicyError","PolicyError"],"dotsInNames":true},
+    "the user variable is one literal segment and never widens a pattern": {"ann":[true,true,false,false,false],"star":[false,true,true],"starStar":[false,true],"slash":[false,false,false],"dot":[false,false,true,true,true,false]},
+    "actions match by exact name, by namespace or by star, and notActions covers all the others": {"ns":[true,true,false,false],"exact":[true,false,false,false],"all":[true,true],"notActions":[true,true,false,false],"viewer":[false]},
+    "keeps bad actions, bad action patterns and statements with both kinds of actions refused": {"requests":["PolicyError","PolicyError","PolicyError","PolicyError","PolicyError","PolicyError","PolicyError","PolicyError"],"patterns":["PolicyError","PolicyError","PolicyError","PolicyError","PolicyError"],"both":"PolicyError","none":"PolicyError","empty":"PolicyError"},
+    "a condition that cannot be told for a missing attribute denies, and allows nothing": {"denyDept":[true,false,false,true],"denyMfa":[false,false,true,false],"denyOwner":[false,false,true],"allowOwner":[false,true,false],"allowMfa":[false,true,false],"allowDept":[true,false,false]},
+    "all conditions of a statement must hold, and one that fails settles it even when another cannot be told": {"write":[true,false,true,false,false],"remove":[false,false,true,true,false],"own":[true,false,false,false]},
+    "between starts at from and ends before to": {"0":[false,false],"49":[false,false],"50":[false,true],"99":[false,true],"100":[true,true],"199":[true,true],"200":[false,true],"201":[false,true]},
+    "keeps attributes compared strictly": [[true,false,false,false],[false,false,false,false],[true,false,false,false],[true,true,true,true]],
+    "keeps bad conditions and bad statements refused": ["PolicyError","PolicyError","PolicyError","PolicyError","PolicyError","PolicyError","PolicyError","PolicyError","PolicyError","PolicyError","PolicyError","PolicyError","PolicyError"],
+    "a statement id is unique, and a removed statement stops counting at once": {"duplicate":"PolicyError","before":[{"allowed":false,"decision":"deny","by":["d"]},false],"removeDeny":true,"afterDeny":{"allowed":true,"decision":"allow","by":["a"]},"removeAgain":false,"removeAllow":true,"afterAllow":{"allowed":false,"decision":"default","by":[]},"reuse":"ok","reused":[true,false],"unknownRemove":false},
+    "an unknown user is denied and is not an error, and a star role reaches every known user": {"unknown":[{"allowed":false,"decision":"default","by":[]},false,[]],"known":[true,true,true,true],"noRoles":[true,false,[]],"badRequest":["PolicyError","PolicyError"]},
+    "a scripted matrix of users, actions and resources": ["5:ann:ynnnnnyyn","5:bob:ynnnnnyny","5:cy:ynnnnnynn","5:dee:nnnnynnnn","5:gil:ynnnnnynn","5:ghost:nnnnnnnnn","50:ann:yynnnnyyn","50:bob:ynnnnnyny","50:cy:yyynnnynn","50:dee:nnnnynnnn","50:gil:ynnnnnynn","50:ghost:nnnnnnnnn"]
+  },
+  "files": {
+    "test/conditions.test.mjs": {"same_as_starter":true},
+    "test/decision.test.mjs": {"same_as_starter":true},
+    "test/resource.test.mjs": {"same_as_starter":true}
+  }
+}

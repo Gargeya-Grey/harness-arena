@@ -51,7 +51,8 @@ export const letterOf = (id) => {
   const i = S.sel.indexOf(id);
   return i < 0 ? '' : String.fromCharCode(65 + i);
 };
-export const caseOf = (id) => (S.data && S.data.cases ? S.data.cases[id] : null) || null;
+// The test's own text of a case (an older suite version) comes first. Default: the open test.
+export const caseOf = (id, c = ctx()) => c?.case_data?.[id] || (S.data && S.data.cases ? S.data.cases[id] : null) || null;
 
 export function cellObs(caseId, cfgId, key = S.ctxKey) {
   const i = index.get(key);

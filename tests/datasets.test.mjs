@@ -17,8 +17,12 @@ import { snapshotWorkspace } from '../lab/lib/workspace.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATASETS = path.join(HERE, '..', 'datasets');
-const casesOf = (suite) => readJsonl(path.join(DATASETS, suite, 'cases.jsonl')).rows;
-const SUITES = fs.readdirSync(DATASETS, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+// Retired suites sit in datasets/archive/<id>/; the suites listed here are the active ones and the retired ones.
+const ARCHIVE = path.join(DATASETS, 'archive');
+const folders = (dir) => fs.readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+const SUITES = [...folders(DATASETS).filter((name) => name !== 'archive'), ...folders(ARCHIVE)];
+const dirOf = (suite) => (fs.existsSync(path.join(DATASETS, suite)) ? path.join(DATASETS, suite) : path.join(ARCHIVE, suite));
+const casesOf = (suite) => readJsonl(path.join(dirOf(suite), 'cases.jsonl')).rows;
 
 test('case_ids are unique in every suite and start with the suite id', () => {
   for (const suite of SUITES) {
@@ -29,7 +33,7 @@ test('case_ids are unique in every suite and start with the suite id', () => {
 });
 
 test('the reasoning generator is deterministic and its output is what cases.jsonl holds', () => {
-  const generator = path.join(DATASETS, 'reasoning', 'generate.mjs');
+  const generator = path.join(ARCHIVE, 'reasoning', 'generate.mjs');
   const run = () => spawnSync(process.execPath, [generator], { encoding: 'utf8' });
   const first = run();
   const second = run();
@@ -48,7 +52,7 @@ test('the reasoning generator is deterministic and its output is what cases.json
     assert.ok(item.input.question.length > 40, `${item.case_id}: question`);
   }
 
-  const lines = fs.readFileSync(path.join(DATASETS, 'reasoning', 'cases.jsonl'), 'utf8').split(/\r?\n/).filter(Boolean);
+  const lines = fs.readFileSync(path.join(ARCHIVE, 'reasoning', 'cases.jsonl'), 'utf8').split(/\r?\n/).filter(Boolean);
   assert.deepEqual(lines.slice(-generated.length), generated, 'the last lines of cases.jsonl must be the generator output, byte for byte');
   const handWritten = lines.slice(0, -generated.length).map((line) => JSON.parse(line).case_id);
   for (const item of parsed) assert.ok(!handWritten.includes(item.case_id), `${item.case_id} also appears among the hand-written cases`);
@@ -83,7 +87,7 @@ const SOLUTIONS = path.join(HERE, 'fixtures', 'agentic-solutions');
 // Lays `overlay` (a folder or null) over a copy of the starter, stores it like the
 // runner does, and runs the hidden check on it.
 function checkWith(name, overlay, tmp) {
-  const fixtureDir = path.join(DATASETS, 'agentic', 'workspaces', name);
+  const fixtureDir = path.join(ARCHIVE, 'agentic', 'workspaces', name);
   const workDir = path.join(tmp, 'work');
   fs.cpSync(fixtureDir, workDir, { recursive: true });
   if (overlay) fs.cpSync(overlay, workDir, { recursive: true });
@@ -91,7 +95,7 @@ function checkWith(name, overlay, tmp) {
   // In a real run the run folder exists before the snapshot (lab/lib/runwrite.mjs needs it).
   fs.mkdirSync(runDir, { recursive: true });
   const artifact = snapshotWorkspace({ fixtureDir, workDir, runDir, base: 'w', artifactId: 'x', createdAt: '2026-11-05T00:00:00Z' });
-  return runWorkspaceCheck({ fixtureDir, check: loadCheck(path.join(DATASETS, 'agentic', 'checks'), name), runDir, manifestPath: artifact.path });
+  return runWorkspaceCheck({ fixtureDir, check: loadCheck(path.join(ARCHIVE, 'agentic', 'checks'), name), runDir, manifestPath: artifact.path });
 }
 
 test('every agent task fails on its starter, passes on its known-good solution, and its probes match expected.json', async (t) => {
@@ -102,9 +106,9 @@ test('every agent task fails on its starter, passes on its known-good solution, 
     assert.equal(testCase.expected.check, name, `${testCase.case_id}: check and workspace share a name`);
     assert.ok(fs.existsSync(path.join(SOLUTIONS, name)), `${testCase.case_id}: missing tests/fixtures/agentic-solutions/${name}`);
 
-    const probeFile = path.join(DATASETS, 'agentic', 'checks', name, 'probe.mjs');
+    const probeFile = path.join(ARCHIVE, 'agentic', 'checks', name, 'probe.mjs');
     const { probes } = await import(pathToFileURL(probeFile).href);
-    const wanted = Object.keys(loadCheck(path.join(DATASETS, 'agentic', 'checks'), name).probes);
+    const wanted = Object.keys(loadCheck(path.join(ARCHIVE, 'agentic', 'checks'), name).probes);
     assert.deepEqual(probes.map((probe) => probe.name).sort(), wanted.sort(), `${name}: probe names and expected.json keys differ`);
 
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-datasets-'));

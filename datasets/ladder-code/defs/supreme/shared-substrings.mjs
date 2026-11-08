@@ -1,0 +1,57 @@
+import { t } from './_util.mjs';
+
+export default {
+  slug: 'shared-substrings',
+  tier: {
+    level: 5,
+    human_minutes: 150,
+    basis: 'The reference is about 60 lines: a suffix automaton with occurrence counts plus a second pass over the other string; an expert needs about 2.5 h to derive the counting rule, build it and debug the clone and count details.',
+  },
+  tags: ['efficiency'],
+  name: 'countSharedSubstrings',
+  signature: 'countSharedSubstrings(n, m, alphabet, seedA, seedB) -> number',
+  task: [
+    'Two strings A and B are built from a pseudo-random generator, so the input stays small.',
+    'For a seed s, the generator draws x_0 = s and x_(i+1) = (x_i * 48271 + 11) mod 2147483647 for i = 0, 1, 2, ... (exact integer arithmetic; every product is below 2^47).',
+    'A string over an alphabet of size a (1 <= a <= 26; the letters are "a", "b", "c", ... in order) with length L and seed s has as its i-th character (i = 1..L) the letter with index (x_i mod a).',
+    'A is built with length n and seed seedA. B is built with length m and seed seedB. Both use the same alphabet size.',
+    'When the alphabet size is 1, every character of both strings is "a".',
+    'Count the distinct non-empty strings w for which both of these hold: w occurs in A at least once, and w occurs in B at least twice.',
+    'Occurrences may overlap: the string "aa" occurs twice in "aaa". A string that occurs many times is still counted once, because only distinct strings count.',
+    'Return the count as a number (it can be larger than 2^32).',
+    'Limits: 1 <= n, m <= 200000; 1 <= seedA, seedB <= 2147483646.',
+    'The inputs are too large for any method that visits every pair of start and end positions.',
+  ].join(' '),
+  edges: {
+    overlap: 'occurrences may overlap',
+    'twice-in-b': 'at least twice',
+    'single-letter': 'alphabet size is 1',
+    distinct: 'distinct non-empty strings',
+    huge: '200000',
+  },
+  tests: [
+    // Hand-derived expected values. With one letter, A = a^n and B = a^m; a^j counts when j <= n and j <= m - 1.
+    // n = 12, m = 9: j = 1..8 -> 8.
+    t('overlap', [12, 9, 1, 4, 7], 8),
+    // Alphabet 2, parity of the draws: seed 1 gives A = "aabba" (48282 183136786 1153105965 949389933 700428874),
+    // seed 2 gives B = "baabaa" (96553 365742580 297017204 716626923 631614268 826994180).
+    // Substrings of B with two or more occurrences: a, b, ba, aa, baa. Those inside A: a, b, ba, aa -> 4
+    // ("ab" is in A but occurs once in B).
+    t('twice-in-b', [5, 6, 2, 1, 2], 4),
+    // n = 9, m = 3: j = 1..2 -> 2.
+    t('single-letter', [9, 3, 1, 2, 3], 2),
+    // Seed 3 gives A = "aaab", seed 4 gives B = "babbaa". Substrings of B that occur twice or more: a, b, ba.
+    // Inside A: a, b -> 2 ("a" occurs three times in A but counts once).
+    t('distinct', [4, 6, 2, 3, 4], 2),
+    t('huge', [120000, 120000, 2, 20260101, 20260202]),
+    t('huge', [200000, 200000, 1, 1, 2]),
+    t('huge', [100000, 150000, 4, 424242, 242424]),
+    t('huge', [150000, 100000, 3, 8675309, 3098675]),
+    t('huge', [120000, 120000, 26, 99, 1000003]),
+    t('huge', [140000, 140000, 2, 7, 7]),
+    t('huge', [200000, 60000, 2, 31, 41]),
+    t('huge', [60000, 150000, 5, 314, 159]),
+    t('huge', [199999, 200000, 1, 5, 6]),
+    t('huge', [140000, 110000, 8, 11, 13]),
+  ],
+};

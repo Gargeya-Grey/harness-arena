@@ -1,0 +1,6 @@
+{
+  "name": "sla-timer",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}

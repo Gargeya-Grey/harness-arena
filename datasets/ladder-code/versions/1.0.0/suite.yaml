@@ -1,0 +1,12 @@
+id: ladder-code
+version: "1.0.0"
+description: >
+  The code tasks of the difficulty ladder (docs/difficulty.md): one JavaScript
+  function per case, run against hidden tests in a sandboxed Node process, from
+  easy (under 2 minutes for an expert) to supreme (2 to 16 hours, with huge inputs
+  that rule out the naive method). Every expected value comes from a reference
+  solution in tests/fixtures/ladder-code-solutions/. The tier of each case is its
+  first tag and metadata.tier. cases.jsonl is written by generate.mjs from defs/.
+  Score is the share of tests passed.
+defaults:
+  repeats: 3

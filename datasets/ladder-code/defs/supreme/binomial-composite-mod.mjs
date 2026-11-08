@@ -1,0 +1,50 @@
+import { t } from './_util.mjs';
+
+export default {
+  slug: 'binomial-composite-mod',
+  tier: {
+    level: 5,
+    human_minutes: 180,
+    basis: 'The binomial coefficient modulo a prime power for n up to 10^18 needs the factorial-without-p technique, p-adic valuations, modular inverses, BigInt for the inputs and the Chinese remainder theorem. Plain Lucas is not enough for powers of primes. About 3 h for an expert who has not written it recently.',
+  },
+  tags: ['efficiency'],
+  name: 'binomialMod',
+  signature: 'binomialMod(n, k, m) -> number',
+  task: [
+    'Compute the binomial coefficient C(n, k) = n! / (k! (n-k)!) modulo m, and return the remainder as a number in the range 0..m-1.',
+    'n and k are given as decimal strings, because n can be as large as 10^18, which a double cannot hold. 0 <= k <= n <= 10^18. m is a normal number with 1 <= m <= 10^9.',
+    'm is not necessarily prime. Write m as a product of prime powers p^e, one for each prime p that divides m, where p^e divides m exactly. It is guaranteed that every such p^e is at most 2000000.',
+    'Examples of valid m: 1000 = 2^3 * 5^3; 360 = 2^3 * 3^2 * 5; 1048576 * 953 = 2^20 * 953; any prime below 2000000.',
+    'If m = 1 the result is 0. If k = 0 or k = n the result is 1 mod m.',
+    'The result must be the exact value of C(n, k) mod m: when a prime power p^e divides C(n, k), the result is 0 modulo p^e, and when p^e is a proper power of p the usual theorem for a prime modulus is not enough on its own.',
+    'The binomial coefficient itself can have far more than 10^17 digits, so it cannot be computed directly, and a loop that runs about min(k, n-k) times is too slow when that value is large.',
+  ].join(' '),
+  edges: {
+    'm-one': 'if m = 1 the result is 0',
+    'k-zero': 'k = 0',
+    'k-n': 'k = n',
+    'prime-power': 'proper power of p',
+    divides: 'divides c(n, k)',
+    huge: '10^18',
+  },
+  tests: [
+    // The five small tests carry hand-derived expected values (not computed by the reference):
+    // m = 1 gives 0, k = 0 and k = n give 1 mod m, C(6,3) = 20 and 20 mod 8 = 4 (a proper prime power),
+    // C(10,5) = 252 = 7 * 36, so both 4 and 9 divide it and the result mod 36 is 0.
+    t('m-one', ['1000', '500', 1], 0),
+    t('k-zero', ['57', '0', 100], 1),
+    t('k-n', ['57', '57', 100], 1),
+    t('prime-power', ['6', '3', 8], 4),
+    t('divides', ['10', '5', 36], 0),
+    t('huge', ['999999999999999999', '87969178777723506', 997514757]),
+    t('huge', ['1000000000000000000', '596760479739115676', 997996507]),
+    t('huge', ['999999999999999989', '90113987146026257', 800000000]),
+    t('huge', ['876543219876543210', '411564012155080303', 997002991]),
+    t('huge', ['1000000000000000000', '414489712407871488', 1048576]),
+    t('huge', ['576460752303423488', '288230376151711744', 800000000]),
+    t('huge', ['999999999999999999', '381974265306384112', 996451875]),
+    t('huge', ['1000000000000000000', '370907671545264147', 999476221]),
+    t('huge', ['900000000000000007', '84683902862993283', 998957659]),
+    t('huge', ['999999999999999937', '594640842113864641', 65536]),
+  ],
+};

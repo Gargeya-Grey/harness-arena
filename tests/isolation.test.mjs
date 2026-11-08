@@ -202,7 +202,8 @@ test('records show how isolation is done without a real path or file content', a
   assert.ok(ADAPTERS.opencode.isolation.args.some((arg) => arg.startsWith('XDG_DATA_HOME=<temp home>/')));
   // The env record never goes on the command line.
   assert.deepEqual(ADAPTERS.codex.isolation.flags, []);
-  assert.deepEqual(ADAPTERS['claude-code'].isolation.args, ADAPTERS['claude-code'].isolation.flags);
+  assert.deepEqual(ADAPTERS['claude-code'].isolation.flags, ['--setting-sources', 'project,local', '--strict-mcp-config', '--disable-slash-commands']);
+  assert.deepEqual(ADAPTERS['claude-code'].isolation.args, [...ADAPTERS['claude-code'].isolation.flags, 'CLAUDE_CODE_DISABLE_CLAUDE_MDS=1', 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1']);
 
   // A failing call puts the temp path in stderr; the returned error and stderr hold a label instead.
   const failed = await call(fakeAdapter(), 'fail', home);

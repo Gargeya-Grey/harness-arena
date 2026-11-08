@@ -24,6 +24,27 @@ export default defineCli({
   bin: BIN,
   supportsEffort: true,
   edit: { args: ['--auto'], note: 'Auto-approves permissions that are not explicitly denied.' },
+  // Without --auto, OpenCode 2.2.6 still runs shell, write and edit tools in `run` mode
+  // (seen in the ladder-answer pilot). Config from OPENCODE_CONFIG_CONTENT has the last
+  // word over the user's files; OpenCode reads `"*": "deny"` as one rule that denies
+  // every action (`opencode debug config` shows it, checked on 2.2.6).
+  answer: {
+    env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: { '*': 'deny' } }) },
+    note: 'OPENCODE_CONFIG_CONTENT denies every permission, so the model replies in text only.',
+    // A config the owner already passes in OPENCODE_CONFIG_CONTENT keeps every other setting;
+    // only `permission` is replaced. A value that is not a JSON object cannot be merged,
+    // and OpenCode could not read it either, so ours goes alone.
+    merge(key, current, ours) {
+      let base = null;
+      try {
+        base = JSON.parse(current);
+      } catch {
+        base = null;
+      }
+      if (!base || typeof base !== 'object' || Array.isArray(base)) return ours;
+      return JSON.stringify({ ...base, ...JSON.parse(ours) });
+    },
+  },
   // `opencode debug paths` shows the config, data, state and cache folders; XDG_* and the
   // home folder move all of them (checked on 2.2.5). The temp home holds the provider
   // sign-ins only (OAuth and keys): the rows of the database's credential table. opencode.json,

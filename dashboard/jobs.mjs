@@ -20,7 +20,7 @@ const RUN_ID = /^[A-Za-z0-9][\w.-]*$/;
 // eslint-disable-next-line no-control-regex
 const ANSI = /\u001b\[[0-9;?]*[A-Za-z]/g;
 
-export const COMMANDS = ['run', 'score', 'validate', 'doctor', 'runs', 'report'];
+export const COMMANDS = ['run', 'score', 'validate', 'doctor', 'runs', 'report', 'ladder'];
 
 const bad = (message) => Object.assign(new Error(message), { status: 400 });
 
@@ -46,7 +46,7 @@ export function buildArgs(root, body) {
   }
   if (command === 'run') {
     const file = String(body.experiment || '');
-    if (!FILE.test(file)) throw bad('Name an experiment file in experiments/, for example smoke-opencode.yaml');
+    if (!FILE.test(file)) throw bad('Name an experiment file in experiments/, for example smoke-harness-sweep.yaml');
     const abs = path.join(p.experiments, file);
     if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) throw bad(`No experiment named ${file}`);
     const args = ['run', abs];

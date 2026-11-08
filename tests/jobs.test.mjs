@@ -63,28 +63,29 @@ test.after(async () => {
 });
 
 test('buildArgs allows only the listed commands and checked arguments', () => {
-  const exp = path.join(root, 'experiments', 'smoke-opencode.yaml');
-  assert.deepEqual(buildArgs(root, { command: 'run', experiment: 'smoke-opencode.yaml', harness: 'opencode', models: ['a', 'b'], cases: 'smoke-001, smoke-002', repeats: 2, dry_run: true }), [
+  const exp = path.join(root, 'experiments', 'smoke-harness-sweep.yaml');
+  assert.deepEqual(buildArgs(root, { command: 'run', experiment: 'smoke-harness-sweep.yaml', harness: 'opencode', models: ['a', 'b'], cases: 'smoke-001, smoke-002', repeats: 2, dry_run: true }), [
     'run', exp, '--harness', 'opencode', '--models', 'a,b', '--cases', 'smoke-001,smoke-002', '--repeats', '2', '--dry-run',
   ]);
   assert.deepEqual(buildArgs(root, { command: 'validate', experiment: 'ignored' }), ['validate']);
+  assert.deepEqual(buildArgs(root, { command: 'ladder', calibrate: true }), ['ladder'], 'the ladder report takes no argument from a request');
   assert.deepEqual(buildArgs(root, { command: 'score', all: true, force: true }), ['score', '--all', '--force']);
   const runId = fs.readdirSync(path.join(root, 'results')).find((name) => fs.existsSync(path.join(root, 'results', name, 'run.json')));
   assert.deepEqual(buildArgs(root, { command: 'run', resume: runId }), ['run', '--resume', runId]);
-  for (const body of [{ command: 'run', resume: '../../etc' }, { command: 'run', resume: 'no-such-run' }, { command: 'run', resume: runId, experiment: 'smoke-opencode.yaml' }]) {
+  for (const body of [{ command: 'run', resume: '../../etc' }, { command: 'run', resume: 'no-such-run' }, { command: 'run', resume: runId, experiment: 'smoke-harness-sweep.yaml' }]) {
     assert.throws(() => buildArgs(root, body), (error) => error.status === 400, JSON.stringify(body));
   }
   const refused = [
     { command: 'dashboard' },
     { command: 'run; rm -rf /' },
     { command: 'run', experiment: '../configs/models.yaml' },
-    { command: 'run', experiment: path.join(root, 'experiments', 'smoke-opencode.yaml') },
+    { command: 'run', experiment: path.join(root, 'experiments', 'smoke-harness-sweep.yaml') },
     { command: 'run', experiment: 'missing.yaml' },
-    { command: 'run', experiment: 'smoke-opencode.yaml', models: ['--dry-run'] },
-    { command: 'run', experiment: 'smoke-opencode.yaml', cases: ['-x'] },
-    { command: 'run', experiment: 'smoke-opencode.yaml', harness: '--force' },
-    { command: 'run', experiment: 'smoke-opencode.yaml', repeats: 0 },
-    { command: 'run', experiment: 'smoke-opencode.yaml', repeats: 1.5 },
+    { command: 'run', experiment: 'smoke-harness-sweep.yaml', models: ['--dry-run'] },
+    { command: 'run', experiment: 'smoke-harness-sweep.yaml', cases: ['-x'] },
+    { command: 'run', experiment: 'smoke-harness-sweep.yaml', harness: '--force' },
+    { command: 'run', experiment: 'smoke-harness-sweep.yaml', repeats: 0 },
+    { command: 'run', experiment: 'smoke-harness-sweep.yaml', repeats: 1.5 },
     { command: 'score' },
     { command: 'score', run_ids: ['../x'] },
     { command: 'score', run_ids: ['no-such-run'] },
@@ -92,19 +93,35 @@ test('buildArgs allows only the listed commands and checked arguments', () => {
   for (const body of refused) assert.throws(() => buildArgs(root, body), (error) => error.status === 400, JSON.stringify(body));
 });
 
-test('catalog lists experiments with targets and suite case ids, plus harnesses and model keys', () => {
+test('catalog lists the active experiments with targets and suite case ids, plus harnesses and model keys', () => {
   const cat = catalog(root);
-  const exp = cat.experiments.find((item) => item.file === 'opencode-agentic.yaml');
-  assert.equal(exp.suite, 'agentic');
+  const exp = cat.experiments.find((item) => item.file === 'ladder-agent.yaml');
+  assert.equal(exp.suite, 'ladder-agent');
   assert.equal(exp.access, 'edit');
-  assert.ok(exp.targets.some((t) => t.model === 'pulse-alpha-free' && t.harness === 'opencode'));
-  assert.ok(exp.case_ids.includes('agentic-slugify-bug'));
+  assert.ok(exp.targets.some((t) => t.model === 'beam-free' && t.harness === 'opencode'));
+  assert.ok(exp.case_ids.length > 0 && exp.case_ids.every((id) => id.startsWith('ladder-agent-')));
   assert.ok(cat.harnesses.some((h) => h.name === 'opencode'));
-  assert.ok(cat.models.includes('pulse-alpha-free'));
+  assert.ok(cat.models.includes('beam-free'));
   // The older format (one harness, a models list) gives the same target shape.
-  const legacy = cat.experiments.find((item) => item.file === 'smoke-command-code.yaml');
-  assert.deepEqual(legacy.targets, [{ model: 'deepseek-v4.1-flash-max', harness: 'command-code', effort: null }]);
-  assert.deepEqual(legacy.problems, []);
+  const file = path.join(root, 'experiments', 'legacy-format.yaml');
+  fs.writeFileSync(file, ['id: legacy-format', 'suite: smoke', 'prompt: qa-single-turn', 'repeats: 1', 'harness: command-code', 'models:', '  - deepseek-v4.1-flash-max', ''].join('\n'));
+  try {
+    const legacy = catalog(root).experiments.find((item) => item.file === 'legacy-format.yaml');
+    assert.deepEqual(legacy.targets, [{ model: 'deepseek-v4.1-flash-max', harness: 'command-code', effort: null }]);
+    assert.deepEqual(legacy.problems, []);
+  } finally {
+    fs.rmSync(file);
+  }
+});
+
+test('retired experiments (experiments/archive) are neither listed nor allowed as jobs', () => {
+  assert.ok(fs.existsSync(path.join(root, 'experiments', 'archive', 'opencode-agentic.yaml')), 'the temp root holds the archive');
+  const files = catalog(root).experiments.map((item) => item.file);
+  assert.ok(files.includes('smoke-harness-sweep.yaml'));
+  assert.deepEqual(files.filter((name) => fs.existsSync(path.join(root, 'experiments', 'archive', name))), []);
+  for (const experiment of ['opencode-agentic.yaml', 'archive/opencode-agentic.yaml', '../experiments/archive/opencode-agentic.yaml']) {
+    assert.throws(() => buildArgs(root, { command: 'run', experiment }), (error) => error.status === 400, experiment);
+  }
 });
 
 test('a validate job runs the real CLI on the data root and reports its output', async () => {
@@ -120,9 +137,10 @@ test('a validate job runs the real CLI on the data root and reports its output',
 
 test('a dry-run job shows the plan, calls nothing and writes no run', async () => {
   const before = fs.readdirSync(path.join(root, 'results')).length;
-  const res = await request(port, 'POST', '/api/jobs', { body: { command: 'run', experiment: 'opencode-agentic.yaml', cases: ['agentic-slugify-bug'], repeats: 1, dry_run: true } });
+  const firstCase = catalog(root).experiments.find((item) => item.file === 'ladder-agent.yaml').case_ids[0];
+  const res = await request(port, 'POST', '/api/jobs', { body: { command: 'run', experiment: 'ladder-agent.yaml', cases: [firstCase], repeats: 1, dry_run: true } });
   assert.equal(res.status, 202);
-  assert.equal(res.json.job.args[3], 'experiments/opencode-agentic.yaml');
+  assert.equal(res.json.job.args[3], 'experiments/ladder-agent.yaml');
   const end = await waitForEnd(port, res.json.job.id);
   assert.equal(end.job.status, 'passed', end.lines.join('\n'));
   assert.ok(end.lines.some((line) => line.includes('Dry run: nothing was called or written.')));
@@ -131,7 +149,7 @@ test('a dry-run job shows the plan, calls nothing and writes no run', async () =
 
 test('one job at a time; the first stop of a run asks on stdin, the second ends the process', async () => {
   // The stand-in CLI ignores its arguments, so this "live" run calls nothing.
-  const first = await request(fakePort, 'POST', '/api/jobs', { body: { command: 'run', experiment: 'smoke-opencode.yaml' } });
+  const first = await request(fakePort, 'POST', '/api/jobs', { body: { command: 'run', experiment: 'smoke-harness-sweep.yaml' } });
   assert.equal(first.status, 202);
   const busy = await request(fakePort, 'POST', '/api/jobs', { body: { command: 'validate' } });
   assert.equal(busy.status, 409);
@@ -204,7 +222,7 @@ test('a live run stopped once finishes its current call through the real CLI and
 });
 
 test('a dry run stops at once: it has no current call to finish', async () => {
-  const res = await request(fakePort, 'POST', '/api/jobs', { body: { command: 'run', experiment: 'smoke-opencode.yaml', dry_run: true } });
+  const res = await request(fakePort, 'POST', '/api/jobs', { body: { command: 'run', experiment: 'smoke-harness-sweep.yaml', dry_run: true } });
   assert.equal(res.status, 202);
   const stop = await request(fakePort, 'POST', `/api/jobs/${res.json.job.id}/cancel`, { body: {} });
   assert.notEqual(stop.json.job.status, 'stopping');

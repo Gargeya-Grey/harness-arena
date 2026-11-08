@@ -262,6 +262,9 @@ export function loadLedger(file) {
 
 // Hashing every stored file on every dashboard request is slow on a big store. A file
 // keeps its hash while its size, times and file id stay the same; one entry per path.
+// A file changed in the last seconds is not cached: an edit of the same size inside one tick
+// of the file clock (15.6 ms on Windows) leaves its times the same.
+const RECENT_MS = 2000;
 const hashCache = new Map();
 function fileSha(file) {
   const stat = fs.lstatSync(file);
@@ -270,6 +273,10 @@ function fileSha(file) {
   const cached = hashCache.get(file);
   if (cached?.key === key) return cached.sha;
   const sha = sha256(fs.readFileSync(file));
+  if (Date.now() - Math.max(stat.mtimeMs, stat.ctimeMs) < RECENT_MS) {
+    hashCache.delete(file);
+    return sha;
+  }
   hashCache.set(file, { key, sha });
   return sha;
 }

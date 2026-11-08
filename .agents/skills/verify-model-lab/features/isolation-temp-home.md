@@ -22,7 +22,7 @@ Preconditions:
 - For the live step only: the owner approved the calls; each call spends subscription quota.
 
 - **Doctor.** Run `node lab doctor`. After the table there is an `isolation by harness:` block. `codex`, `gemini-cli` and `opencode` say `temp home available`, or `temp home NOT available, sign-in file missing: <name>`. No path and no token is printed.
-- **Dry run.** Run `LAB_ROOT=$ROOT node lab run $ROOT/experiments/smoke-opencode.yaml --dry-run`. The `codex` and `opencode` lines say `user setup skipped (HOME=<temp home> ...)`.
+- **Dry run.** Run `LAB_ROOT=$ROOT node lab run $ROOT/experiments/archive/smoke-opencode.yaml --dry-run`. The `codex` and `opencode` lines say `user setup skipped (HOME=<temp home> ...)`.
 - **No live call.** `node --test tests/isolation.test.mjs` proves these points. Only the sign-in is copied; a fake `config.toml`, `AGENTS.md`, `GEMINI.md`, `settings.json` and skills are not. The folder is deleted after success, failure, timeout and a throwing adapter. A missing sign-in gives `auth` and never uses the real home. The env points at the temp home. Records hold no real path or content. A changed valid token goes back; an invalid or raced one does not. The test uses a fake home and never reads real credential files.
 - **Live, one case per harness.** Make a temp experiment with `user_config: isolated` and one target for the harness, then `LAB_ROOT=$ROOT node lab run <file> --repeats 1 --cases smoke-001`. Proof: `raw.jsonl` has no error (or a provider error such as a usage limit), `harness_extra.temp_home.removed` is `true`, and input tokens are lower than a stored `loaded` row of the same model and case (Codex: about 15,400 against about 26,000). The OS temp folder holds no `lab-home-*` folder afterwards.
 

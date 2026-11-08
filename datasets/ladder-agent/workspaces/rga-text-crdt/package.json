@@ -1,0 +1,6 @@
+{
+  "name": "rga-text-crdt",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}

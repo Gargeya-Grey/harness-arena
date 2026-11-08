@@ -30,7 +30,7 @@ function tempRoot(t, { agentic = false } = {}) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.cpSync(FIXTURES, root, { recursive: true });
   if (agentic) {
-    fs.cpSync(path.join(REPO, 'datasets', 'agentic'), path.join(root, 'datasets', 'agentic'), { recursive: true });
+    fs.cpSync(path.join(REPO, 'datasets', 'archive', 'agentic'), path.join(root, 'datasets', 'agentic'), { recursive: true });
     fs.cpSync(path.join(REPO, 'prompts', 'agent-task'), path.join(root, 'prompts', 'agent-task'), { recursive: true });
   }
   fs.mkdirSync(path.join(root, 'experiments'), { recursive: true });
@@ -222,6 +222,40 @@ test('a resume is refused when the run is live or its suite changed', async (t) 
   writeJson(path.join(result.runDir, 'run.json'), { ...manifest, status: 'running', runner: { pid: process.pid, heartbeat_at: '2026-01-01T00:00:00.000Z' } });
   fs.appendFileSync(path.join(root, 'datasets', 'smoke', 'cases.jsonl'), '{"case_id":"smoke-new","input":{"question":"q"},"expected":"a"}\n');
   await assert.rejects(resumeCommand(root, result.runId, { log: () => {} }), /suite smoke changed/);
+});
+
+// Review round 1 (Codex): an OpenCode answer run from before its tools were turned off must
+// not continue under the new policy, or one run would mix rows with and without tools.
+test('a resume is refused when the harness\'s answer access flags changed since the run', async (t) => {
+  const root = tempRoot(t);
+  fake(t, 'fake-access', (question) => answer(question));
+  const file = experiment(root, 'access', ['repeats: 1', 'cases: [smoke-001, smoke-002]', 'harness: fake-access', 'models: [claude-haiku]']);
+  const [result] = await runCommand(root, file, { log: () => {} });
+  assert.equal(readJson(path.join(result.runDir, 'run.json')).harness.settings.access_flags, undefined, 'a harness with no answer env records no flags');
+  const rawFile = path.join(result.runDir, 'raw.jsonl');
+  fs.writeFileSync(rawFile, `${fs.readFileSync(rawFile, 'utf8').split('\n')[0]}\n`);
+  fs.rmSync(path.join(result.runDir, 'scores'), { recursive: true, force: true });
+  crashInLedger(root, result.runId, 1);
+  const manifest = readJson(path.join(result.runDir, 'run.json'));
+  writeJson(path.join(result.runDir, 'run.json'), { ...manifest, status: 'running', finished_at: null, runner: { pid: manifest.runner.pid, heartbeat_at: '2026-01-01T00:00:00.000Z' } });
+  ADAPTERS['fake-access'].answer = { env: { FAKE_TOOLS: 'off' }, note: 'tools off' };
+  await assert.rejects(resumeCommand(root, result.runId, { log: () => {} }), /access flags are now \[FAKE_TOOLS=off\]; the run used \[\]/);
+  delete ADAPTERS['fake-access'].answer;
+  const [resumed] = await resumeCommand(root, result.runId, { log: () => {} });
+  assert.equal(resumed.status, 'completed', 'the same policy resumes');
+});
+
+test('an answer run with the harness\'s tools turned off is its own configuration', async (t) => {
+  const root = tempRoot(t);
+  fake(t, 'fake-tools', (question) => answer(question));
+  const file = experiment(root, 'tools', ['repeats: 1', 'cases: [smoke-001]', 'harness: fake-tools', 'models: [claude-haiku]']);
+  const [before] = await runCommand(root, file, { log: () => {} });
+  ADAPTERS['fake-tools'].answer = { env: { FAKE_TOOLS: 'off' }, note: 'tools off' };
+  const [after] = await runCommand(root, file, { log: () => {} });
+  assert.deepEqual(readJson(path.join(after.runDir, 'run.json')).harness.settings.access_flags, ['FAKE_TOOLS=off']);
+  const configs = Object.keys(buildState(root).configs).filter((id) => id.includes('fake-tools')).sort();
+  assert.deepEqual(configs, ['claude-haiku__fake-tools-0.0.1__default', 'claude-haiku__fake-tools-0.0.1__default__no-tools']);
+  assert.ok(before.runId !== after.runId);
 });
 
 test('a run the user stops is marked interrupted and can be resumed', async (t) => {

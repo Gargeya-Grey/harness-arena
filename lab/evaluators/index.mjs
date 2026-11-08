@@ -183,6 +183,147 @@ export function runJsTests({ sources, name, tests }) {
   return { loaded: Boolean(out.loaded), ...(out.error ? { error: String(out.error).slice(0, 300) } : {}), results };
 }
 
+// ---- Version 2: the limits are CPU time, so a busy machine does not change a verdict. ----
+// js-function@1 and workspace-tests@1 (above and below) stay as they are: stored scores name
+// their version, and scores of different versions are never compared.
+
+/** The limits of js-function@2 and workspace-tests@2, in ms of CPU time. `cap` bounds the wall-clock backstop. */
+export const CPU_LIMITS = Object.freeze({ testCpuMs: 2000, caseCpuMs: 30000, checkCpuMs: 60000, probeMs: 5000, cap: 10 });
+
+const SANDBOX_V2 = fileURLToPath(new URL('./js-sandbox-v2.cjs', import.meta.url));
+const WORKSPACE_CHECK_V2 = fileURLToPath(new URL('./workspace-check-v2.mjs', import.meta.url));
+
+let spinSink = 0;
+/**
+ * Wall time per CPU time that this process gets right now (1 to `cap`): a busy loop of about
+ * 60 ms of CPU (the clock ticks every 15.6 ms on Windows), or 700 ms of wall time when the
+ * machine is very busy. It only runs after a backstop has fired, so an idle run never pays for it.
+ */
+export function wallPerCpu(cap = CPU_LIMITS.cap) {
+  const cpuNow = () => {
+    const { user, system } = process.cpuUsage();
+    return (user + system) / 1000;
+  };
+  const wall0 = performance.now();
+  const cpu0 = cpuNow();
+  for (;;) {
+    for (let i = 0; i < 20000; i += 1) spinSink += Math.sqrt(i);
+    const cpu = cpuNow() - cpu0;
+    const wall = performance.now() - wall0;
+    if (cpu >= 62 || wall >= 700) {
+      const seen = cpu > 1 ? wall / cpu : cap;
+      return seen < 1.1 ? 1 : Math.min(cap, seen);
+    }
+  }
+}
+
+/**
+ * Runs a child process with a wall-clock backstop that follows the load. The first try gets
+ * `baseMs`. If the backstop stops it, the machine is measured: when the process was starved
+ * (ratio over 1.2) it runs again with `baseMs x ratio`, at most `cap` times the base.
+ */
+function withBackstop(run, baseMs, cap) {
+  let result = run(baseMs);
+  if (result.error?.code === 'ETIMEDOUT') {
+    const ratio = wallPerCpu(cap);
+    if (ratio > 1.2) result = run(Math.round(baseMs * ratio));
+  }
+  return result;
+}
+
+const limitsOf = (limits) => ({ ...CPU_LIMITS, ...(limits || {}) });
+
+/** One sandbox process: { out } with its result line, or { error, died } (died: it ended without one). */
+function sandboxV2({ sources, name, tests, lim, caseCpuMs }) {
+  const nonce = crypto.randomUUID();
+  const env = process.platform === 'win32' ? { SYSTEMROOT: process.env.SYSTEMROOT } : {};
+  const input = JSON.stringify({ nonce, sources, name, tests: tests.map((test) => ({ args: test.args })), limits: { testCpuMs: lim.testCpuMs, caseCpuMs, cap: lim.cap } });
+  const result = spawnSync(process.execPath, [...SANDBOX_FLAGS, `--allow-fs-read=${SANDBOX_V2}`, '--max-old-space-size=256', SANDBOX_V2], {
+    input,
+    encoding: 'utf8',
+    timeout: lim.wallMs ?? caseCpuMs * lim.cap,
+    maxBuffer: 8 * 1024 * 1024,
+    env,
+    windowsHide: true,
+  });
+  if (result.error) return { error: result.error.code === 'ETIMEDOUT' ? 'sandbox stopped by its wall-clock backstop' : result.error.message };
+  let out = null;
+  for (const line of String(result.stdout).split('\n')) {
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed && parsed.nonce === nonce) out = parsed;
+    } catch {
+      // Not the sandbox's line.
+    }
+  }
+  if (out) return { out };
+  const stderr = String(result.stderr);
+  const why = /FATAL ERROR:[^\r\n]*/.exec(stderr)?.[0] ?? stderr.trim().split('\n').at(-1) ?? '';
+  return { error: `sandbox gave no result (exit ${result.status}): ${why.slice(0, 200)}`, died: true };
+}
+
+/** Every test in its own process, sharing the CPU budget of the case. A test whose process dies is charged its full CPU limit. */
+function oneProcessEach(run, tests, lim) {
+  const results = [];
+  let spent = 0;
+  let loaded = false;
+  let firstError = null;
+  for (const test of tests) {
+    if (spent >= lim.caseCpuMs) {
+      results.push({ error: `the CPU budget of ${lim.caseCpuMs} ms for the case was spent before this test` });
+      continue;
+    }
+    const one = run([test], lim.caseCpuMs - spent);
+    if (one.out) {
+      spent += Number.isFinite(one.out.cpu_ms) ? one.out.cpu_ms : 0;
+      loaded ||= Boolean(one.out.loaded);
+      firstError ??= one.out.error ?? null;
+      results.push(one.out.results?.[0] ?? { error: 'no result for this test' });
+    } else {
+      spent += lim.testCpuMs;
+      firstError ??= one.error;
+      results.push({ error: `this test stopped the sandbox process. ${one.error}` });
+    }
+  }
+  return loaded ? { out: { loaded: true, cpu_ms: Math.round(spent), results } } : { error: firstError };
+}
+
+/**
+ * js-function@2: the same sandbox idea as runJsTests, judged by CPU time (js-sandbox-v2.cjs).
+ * A test fails over `testCpuMs` of CPU; the tests of a case share `caseCpuMs`. The sandbox
+ * always ends by itself (every step has a CPU-based backstop and the case has a CPU budget),
+ * so the process wall limit only stops a sandbox that hangs. It must be longer than any
+ * honest case on the busiest machine: caseCpuMs x cap (300 s). `limits.wallMs` replaces it
+ * (for tests that need a short one).
+ *
+ * Code that fills the heap aborts the whole process (V8 exit 134), and whether the heap limit or
+ * the CPU limit comes first varies from run to run. So a process that dies gives no verdict: the
+ * tests run again, one process each. The test that kills its process fails alone.
+ */
+export function runJsTestsV2({ sources, name, tests, limits }) {
+  const lim = limitsOf(limits);
+  const fail = (error) => ({ loaded: false, error, results: tests.map((test) => ({ args: test.args, expected: test.returns, ok: false })) });
+  const run = (some, caseCpuMs) => sandboxV2({ sources, name, tests: some, lim, caseCpuMs });
+  let done = run(tests, lim.caseCpuMs);
+  if (done.died && tests.length > 1) done = oneProcessEach(run, tests, lim);
+  if (!done.out) return fail(done.error);
+  const { out } = done;
+  const results = tests.map((test, index) => {
+    const item = out.results?.[index] || { error: 'no result for this test' };
+    const base = { args: test.args, expected: test.returns };
+    if (item.error) return { ...base, error: String(item.error).slice(0, 200), ok: false };
+    let actual = null;
+    try {
+      actual = item.undefined ? undefined : JSON.parse(item.actual_json);
+    } catch {
+      return { ...base, error: 'result is not JSON', ok: false };
+    }
+    const shown = actual === undefined ? null : JSON.stringify(actual).length > 4000 ? `${JSON.stringify(actual).slice(0, 4000)}…` : actual;
+    return { ...base, actual: shown, ok: isDeepStrictEqual(actual, test.returns) };
+  });
+  return { loaded: Boolean(out.loaded), ...(out.error ? { error: String(out.error).slice(0, 300) } : {}), ...(Number.isFinite(out.cpu_ms) ? { cpu_ms: out.cpu_ms } : {}), results };
+}
+
 const WORKSPACE_CHECK = fileURLToPath(new URL('./workspace-check.mjs', import.meta.url));
 
 /**
@@ -272,19 +413,100 @@ export function runWorkspaceCheck({ fixtureDir, check, runDir, manifestPath }) {
   }
 }
 
-function workspaceTests({ raw, testCase, suite, runDir }) {
+/**
+ * workspace-tests@2: the same rebuild, probes and comparison as runWorkspaceCheck, judged by
+ * CPU time (workspace-check-v2.mjs). The check has `checkCpuMs` of CPU, tested between probes;
+ * past it, the probes that have not started have no result and say why. The process wall
+ * limit is a backstop (2 x checkCpuMs, longer on a busy machine, `cap` x at most). When it
+ * stops the process, the probes that had finished keep their results.
+ * `limits.wallMs` replaces the backstop base (for tests that need a short one).
+ */
+export function runWorkspaceCheckV2({ fixtureDir, check, runDir, manifestPath, limits }) {
+  const lim = limitsOf(limits);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-check-'));
+  try {
+    const workspace = path.join(dir, 'ws');
+    const manifest = rebuildWorkspace({ fixtureDir, runDir, manifestPath, dest: workspace });
+    const results = [];
+    for (const [rel, rule] of Object.entries(check.files)) {
+      const problem = fileRule(rule, readOrNull(path.join(workspace, ...rel.split('/'))), readOrNull(path.join(fixtureDir, ...rel.split('/'))));
+      results.push({ name: `file ${rel}`, ok: !problem, ...(problem ? { error: problem } : {}) });
+    }
+    const probe = `.lab-probe-${crypto.randomUUID()}.mjs`;
+    fs.copyFileSync(check.probeFile, path.join(workspace, probe)); // not a run folder: the scratch rebuild
+    const nonce = crypto.randomUUID();
+    const env = process.platform === 'win32' ? { SYSTEMROOT: process.env.SYSTEMROOT } : {};
+    const reads = [workspace, ...(NODE_MAJOR < 23 ? [path.join(workspace, '*')] : []), WORKSPACE_CHECK_V2].map((item) => `--allow-fs-read=${item}`);
+    const input = JSON.stringify({ nonce, workspace, probe, limits: { cpuMs: lim.checkCpuMs, probeMs: lim.probeMs, cap: lim.cap } });
+    const baseMs = lim.wallMs ?? 2 * lim.checkCpuMs;
+    const run = withBackstop(
+      (timeout) =>
+        spawnSync(process.execPath, [...SANDBOX_FLAGS, ...reads, '--max-old-space-size=256', WORKSPACE_CHECK_V2], {
+          input,
+          cwd: workspace,
+          encoding: 'utf8',
+          timeout,
+          maxBuffer: 8 * 1024 * 1024,
+          env,
+          windowsHide: true,
+        }),
+      baseMs,
+      lim.cap,
+    );
+    // The final line, or else the probe lines written before the process stopped.
+    let out = null;
+    const early = [];
+    for (const line of String(run.stdout ?? '').split('\n')) {
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed && parsed.nonce === nonce) {
+          if (parsed.probe) early.push(parsed.probe);
+          else out = parsed;
+        }
+      } catch {
+        // Not the runner's line.
+      }
+    }
+    let error = null;
+    if (run.error) error = run.error.code === 'ETIMEDOUT' ? 'check stopped by its wall-clock backstop' : run.error.message;
+    else if (!out) error = `check gave no result (exit ${run.status}): ${String(run.stderr).trim().split('\n').at(-1)?.slice(0, 200) ?? ''}`;
+    else if (out.error) error = String(out.error).slice(0, 300);
+    const observed = new Map((Array.isArray(out?.results) ? out.results : early).map((item) => [String(item?.name), item]));
+    for (const [name, want] of Object.entries(check.probes)) {
+      const got = observed.get(name);
+      if (!got) results.push({ name, ok: false, error: 'no result for this probe' });
+      else if (got.error != null) results.push({ name, ok: false, error: String(got.error).slice(0, 300) });
+      else {
+        let value;
+        try {
+          value = JSON.parse(String(got.json));
+        } catch {
+          value = undefined;
+        }
+        const ok = value !== undefined && isDeepStrictEqual(value, want);
+        results.push({ name, ok, ...(ok ? {} : { error: `expected ${JSON.stringify(want)}, got ${String(got.json).slice(0, 200)}` }) });
+      }
+    }
+    return { ...(error ? { error } : {}), ...(Number.isFinite(out?.cpu_ms) ? { cpu_ms: out.cpu_ms } : {}), skipped: manifest.skipped || [], results };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true }); // not a run folder: the scratch rebuild
+  }
+}
+
+function workspaceTests({ raw, testCase, suite, runDir }, runner = runWorkspaceCheck) {
   const checkName = testCase.expected?.check;
   if (!checkName || testCase.input?.workspace == null || !suite?.dir || !runDir) return null;
   const manifest = (raw.artifacts || []).find((item) => String(item.path || '').endsWith('/workspace.json'));
   if (!manifest) return { value: 0, passed: false, details: { check: checkName, error: 'no workspace was stored for this row' } };
-  const fixtureDir = path.join(suite.dir, 'workspaces', safeSegment(String(testCase.input.workspace)));
+  // A frozen suite version may keep its own workspaces/ and checks/ (lab/lib/repo.mjs loadSuite).
+  const fixtureDir = path.join(suite.workspacesDir ?? path.join(suite.dir, 'workspaces'), safeSegment(String(testCase.input.workspace)));
   let run;
   try {
     const stored = JSON.parse(fs.readFileSync(path.join(runDir, ...String(manifest.path).split('/')), 'utf8'));
     // The rebuild adds the agent's changes to today's starter. If the starter has
     // changed since the run, the rebuild would be a different workspace: no score.
     if (stored.fixture_sha256 !== treeHash(fixtureDir)) return { skip: 'its starter project changed since the run, so the rebuild would not be the workspace the agent left' };
-    run = runWorkspaceCheck({ fixtureDir, check: loadCheck(path.join(suite.dir, 'checks'), checkName), runDir, manifestPath: manifest.path });
+    run = runner({ fixtureDir, check: loadCheck(suite.checksDir ?? path.join(suite.dir, 'checks'), checkName), runDir, manifestPath: manifest.path });
   } catch (error) {
     run = { error: `check could not run: ${String(error?.message ?? error).slice(0, 300)}`, skipped: [], results: [] };
   }
@@ -298,11 +520,11 @@ function workspaceTests({ raw, testCase, suite, runDir }) {
   };
 }
 
-function jsFunction({ text, testCase }) {
+function jsFunction({ text, testCase }, runner = runJsTests) {
   const tests = testCase.expected?.tests;
   const name = testCase.input?.name;
   if (!Array.isArray(tests) || !tests.length || !name) return null;
-  const run = runJsTests({ sources: extractCodeBlocks(text), name, tests });
+  const run = runner({ sources: extractCodeBlocks(text), name, tests });
   const passedTests = run.results.filter((item) => item.ok).length;
   const value = Number((passedTests / tests.length).toFixed(4));
   return { value, passed: passedTests === tests.length, details: { function: name, loaded: run.loaded, passed_tests: passedTests, total_tests: tests.length, ...(run.error ? { error: run.error } : {}), results: run.results } };
@@ -314,7 +536,9 @@ export const EVALUATORS = {
   'svg-structure@1': { id: 'svg-structure', version: '1', dimension: 'format', score: ({ raw, testCase }) => svgStructure({ text: raw.response?.text, input: testCase.input }) },
   'final-answer@1': { id: 'final-answer', version: '1', dimension: 'quality', score: ({ raw, testCase }) => (testCase.expected == null ? null : finalAnswer({ text: raw.response?.text, expected: testCase.expected })) },
   'js-function@1': { id: 'js-function', version: '1', dimension: 'quality', score: ({ raw, testCase }) => jsFunction({ text: raw.response?.text, testCase }) },
+  'js-function@2': { id: 'js-function', version: '2', dimension: 'quality', score: ({ raw, testCase }) => jsFunction({ text: raw.response?.text, testCase }, runJsTestsV2) },
   'workspace-tests@1': { id: 'workspace-tests', version: '1', dimension: 'quality', score: ({ raw, testCase, suite, runDir }) => workspaceTests({ raw, testCase, suite, runDir }) },
+  'workspace-tests@2': { id: 'workspace-tests', version: '2', dimension: 'quality', score: ({ raw, testCase, suite, runDir }) => workspaceTests({ raw, testCase, suite, runDir }, runWorkspaceCheckV2) },
 };
 
 export function getEvaluator(id, version) {

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { listDirs, listFiles, readJson, readJsonl } from '../lib/fsutil.mjs';
 import { SchemaSet } from '../lib/schema.mjs';
-import { targetProblems as checkTargets, loadPrompt, loadRegistry, loadSuite, loadYamlFile, paths, resolveExperiment, runDirs } from '../lib/repo.mjs';
+import { ARCHIVE, VERSIONS_DIR, frozenVersions, targetProblems as checkTargets, loadPrompt, loadRegistry, loadSuite, loadYamlFile, paths, resolveExperiment, runDirs, suiteFolders } from '../lib/repo.mjs';
 import { harnessesFile, loadAdapters, readDeclared } from '../adapters/index.mjs';
 import { getEvaluator } from '../evaluators/index.mjs';
 import { listTree } from '../lib/workspace.mjs';
@@ -51,13 +51,21 @@ export function validateRepo(root) {
   }
 
   const suites = new Map();
-  for (const name of listDirs(p.datasets)) {
+  // datasets/<id>/ holds the active suites; datasets/archive/<id>/ the retired ones, which old runs still name.
+  // An id lives in one place, and datasets/archive/ itself is a folder of suites, not a suite.
+  if (fs.existsSync(path.join(p.datasetsArchive, 'suite.yaml'))) report(p.datasetsArchive, `datasets/${ARCHIVE}/ is the folder of retired suites, not a suite; remove its suite.yaml`);
+  const folders = suiteFolders(root);
+  for (const { id, archived } of folders) {
+    if (archived && folders.some((other) => !other.archived && other.id === id)) report(path.join(p.datasetsArchive, id), `suite "${id}" is in datasets/${id} and in datasets/${ARCHIVE}/${id}; keep it in one place`);
+  }
+  for (const { id: name, dir: suiteFolder, archived } of folders) {
+    if (archived && suites.has(name)) continue;
     try {
       const suite = loadSuite(root, name);
       suites.set(name, suite);
       counts.suites += 1;
       const seen = new Set();
-      const file = path.join(p.datasets, name, 'cases.jsonl');
+      const file = path.join(suiteFolder, 'cases.jsonl');
       suite.cases.forEach((item, index) => {
         counts.cases += 1;
         schemas.validate('case.schema.json', item).forEach((error) => report(file, `line ${index + 1}: ${error}`));
@@ -96,8 +104,40 @@ export function validateRepo(root) {
       });
       const scaffold = ['checks', 'workspaces'].flatMap((dir) => listTree(path.join(suite.dir, dir)).map((rel) => path.join(suite.dir, dir, ...rel.split('/'))));
       for (const hit of unfilled([file, ...scaffold])) report(hit.file, `line ${hit.line}: still holds ${FILL_IN}; write the real value`);
+      // Frozen copies of earlier versions (datasets/<suite>/versions/<version>/, lab/lib/repo.mjs loadSuite).
+      suite.frozenCopies = new Map();
+      const versionsDir = path.join(suiteFolder, VERSIONS_DIR);
+      const named = new Set(frozenVersions(suiteFolder));
+      for (const entry of fs.existsSync(versionsDir) ? fs.readdirSync(versionsDir) : []) {
+        if (!named.has(entry)) report(path.join(versionsDir, entry), `${VERSIONS_DIR}/ holds only folders named by a version, like 1.0.0`);
+      }
+      for (const old of named) {
+        const copyDir = path.join(versionsDir, old);
+        if (old === suite.version) {
+          report(copyDir, `version ${old} is the current version of ${name}; a frozen copy is only for an earlier one (after node lab freeze, bump the version in suite.yaml)`);
+          continue;
+        }
+        try {
+          const copy = loadSuite(root, name, { version: old });
+          if (!copy) {
+            report(copyDir, `a frozen copy needs suite.yaml and cases.jsonl`);
+            continue;
+          }
+          if (copy.id !== suite.id) report(path.join(copyDir, 'suite.yaml'), `id "${copy.id}" is not "${suite.id}"`);
+          if (copy.version !== old) report(path.join(copyDir, 'suite.yaml'), `version ${copy.version} does not match the folder name ${old}`);
+          const ids = new Set();
+          copy.cases.forEach((item, index) => {
+            schemas.validate('case.schema.json', item).forEach((error) => report(path.join(copyDir, 'cases.jsonl'), `line ${index + 1}: ${error}`));
+            if (ids.has(item.case_id)) report(path.join(copyDir, 'cases.jsonl'), `duplicate case_id ${item.case_id}`);
+            ids.add(item.case_id);
+          });
+          suite.frozenCopies.set(old, copy);
+        } catch (error) {
+          report(copyDir, error.message);
+        }
+      }
     } catch (error) {
-      report(path.join(p.datasets, name), error.message);
+      report(suiteFolder, error.message);
     }
   }
 
@@ -114,8 +154,8 @@ export function validateRepo(root) {
     }
   }
 
-  for (const file of listFiles(p.experiments, '.yaml')) {
-    const abs = path.join(p.experiments, file);
+  const experimentFiles = [...listFiles(p.experiments, '.yaml').map((file) => path.join(p.experiments, file)), ...listFiles(p.experimentsArchive, '.yaml').map((file) => path.join(p.experimentsArchive, file))];
+  for (const abs of experimentFiles) {
     counts.experiments += 1;
     try {
       const experiment = loadYamlFile(abs);
@@ -208,11 +248,27 @@ export function validateRepo(root) {
     if (manifest.status === 'completed') {
       // The suite's cases count only at the version the run recorded: a suite that grew
       // later does not make an older run look short. Unknown count: no check.
+      // The version may also be a frozen copy (datasets/<suite>/versions/<version>/).
       const suite = suites.get(manifest.suite?.id);
-      const sameSuite = suite && String(suite.version) === String(manifest.suite?.version);
-      const cases = manifest.experiment?.cases?.length || (sameSuite ? suite.cases.length : 0);
+      const recorded = String(manifest.suite?.version);
+      const atVersion = suite && (String(suite.version) === recorded ? suite : suite.frozenCopies?.get(recorded));
+      const cases = manifest.experiment?.cases?.length || (atVersion ? atVersion.cases.length : 0);
       const expected = (manifest.models || []).length * cases * (manifest.repeats || 1);
       if (expected && rows.length !== expected) report(rawFile, `completed run has ${rows.length} rows; expected ${expected} (models x cases x repeats)`);
+    }
+    // Scoring needs the exact suite the run used (lab/commands/score.mjs). A changed suite
+    // keeps its old version only in a frozen copy, so a change without one is caught here.
+    {
+      const suite = suites.get(manifest.suite?.id);
+      const recorded = String(manifest.suite?.version);
+      const atVersion = suite && (String(suite.version) === recorded ? suite : suite.frozenCopies?.get(recorded));
+      const where = `${manifest.suite?.id} ${recorded}`;
+      if (suite && !atVersion) warnings.push(`${rel(manifestFile)}: suite ${where} has no frozen copy in ${rel(path.join(suite.dir, VERSIONS_DIR, recorded))}/, so this run cannot be scored again; its stored scores still count`);
+      else if (atVersion && manifest.suite?.sha256 && atVersion.sha256 !== manifest.suite.sha256) {
+        report(manifestFile, atVersion === suite
+          ? `suite ${where} changed after this run (hash ${atVersion.sha256.slice(0, 12)}, the run recorded ${manifest.suite.sha256.slice(0, 12)}); restore it, or bump its version and freeze ${recorded} with the bytes this run used`
+          : `the frozen copy of suite ${where} is not the content this run used (hash ${atVersion.sha256.slice(0, 12)}, the run recorded ${manifest.suite.sha256.slice(0, 12)})`);
+      }
     }
     for (const file of listFiles(path.join(runDir, 'scores'), '.jsonl').filter((name) => scoreFileNames(manifest).has(`scores/${name}`))) {
       const scoreFile = path.join(runDir, 'scores', file);

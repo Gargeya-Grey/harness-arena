@@ -3,13 +3,14 @@
 
 import { parseArgs } from 'node:util';
 import path from 'node:path';
-import { labRoot } from './lib/repo.mjs';
+import { freezeSuite, labRoot } from './lib/repo.mjs';
 import { runCommand } from './commands/run.mjs';
 import { scoreCommand } from './commands/score.mjs';
 import { validateCommand } from './commands/validate.mjs';
 import { newCase } from './commands/new-case.mjs';
 import { doctorCommand, reportCommand, runsCommand } from './commands/info.mjs';
 import { adoptCommand } from './commands/adopt.mjs';
+import { ladderCommand } from './commands/ladder.mjs';
 
 const HELP = `Model Lab: run the same suite through any CLI harness, then compare.
 
@@ -26,6 +27,8 @@ Commands
                           only the missing rows run. --force for a run with no heartbeat
   new-case <suite> <slug> Add a case to a suite with every value to fill marked; --agent adds
                           a starter workspace and a hidden check; --prompt <id> names the fields
+  freeze <suite>          Copy the suite's current version to datasets/<suite>/versions/<version>/,
+                          so its runs still score and show after you change it; then bump the version
   score <run-id>... | --all   Recompute scores from raw.jsonl (no API calls); --force also scores a stopped run.
                           A run that does not match the evidence ledger is never scored
   adopt <run-id>... | --all   Vouch for runs as they are now in the evidence ledger (lab.ledger.jsonl):
@@ -35,6 +38,18 @@ Commands
   doctor                  Show which harnesses are installed here (built-in and configs/harnesses.yaml)
   runs                    List runs, newest first
   report [--write]        Markdown comparison per context (to stdout, or reports/comparison.md)
+  ladder                  The difficulty ladder per configuration: solved / tasks and mean score per tier
+      --calibrate           Per task: panel mean, tier band, verdict (in band, move to <tier>, rework)
+                            and a flag for negative discrimination: of two configurations that ran
+                            the task, the one with the higher mean on the other tasks both ran scored
+                            under 0.5 on every repeat, and the other scored 1 on every repeat
+      --suite <id>          Only ladder-answer, ladder-code or ladder-agent
+      --suite-version <suite>@<version>
+                            Use this version of a suite (repeat, or comma-separate, for several).
+                            Default: per suite, the newest version that has counted runs. A suite
+                            version whose counted runs mix prompt versions is refused (use --runs)
+      --runs <id,...>       Only these runs (a run id, or part of one)
+      --json                The same data as JSON
   dashboard [--port n]    Start the local dashboard (default http://127.0.0.1:4317)
 
 Environment
@@ -60,6 +75,11 @@ async function main(argv) {
       force: { type: 'boolean' },
       write: { type: 'boolean' },
       port: { type: 'string' },
+      calibrate: { type: 'boolean' },
+      json: { type: 'boolean' },
+      suite: { type: 'string' },
+      runs: { type: 'string' },
+      'suite-version': { type: 'string', multiple: true },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -92,6 +112,12 @@ async function main(argv) {
     case 'new-case':
       newCase(root, positionals[0], positionals[1], { agent: values.agent, prompt: values.prompt });
       return 0;
+    case 'freeze': {
+      if (positionals.length !== 1) throw new Error('Usage: node lab freeze <suite>');
+      const frozen = freezeSuite(root, positionals[0]);
+      console.log(`${path.relative(root, frozen.dir).replace(/\\/g, '/')}/: ${frozen.created ? 'frozen' : 'already frozen, same content'}. Now bump the version in suite.yaml before you change the suite.`);
+      return 0;
+    }
     case 'adopt':
       adoptCommand(root, positionals, { all: values.all });
       return 0;
@@ -105,6 +131,9 @@ async function main(argv) {
       return 0;
     case 'report':
       reportCommand(root, { write: values.write });
+      return 0;
+    case 'ladder':
+      ladderCommand(root, { calibrate: values.calibrate, json: values.json, suite: values.suite, suiteVersions: values['suite-version']?.flatMap((item) => item.split(',')).map((item) => item.trim()).filter(Boolean), runs: values.runs ? values.runs.split(',').map((item) => item.trim()).filter(Boolean) : null });
       return 0;
     case 'dashboard': {
       const { startServer } = await import('../dashboard/server.mjs');

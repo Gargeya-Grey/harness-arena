@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ADAPTERS, getAdapter } from '../lab/adapters/index.mjs';
 import { flattenMessages, stderrError } from '../lab/adapters/process.mjs';
+import { defineCli } from '../lab/adapters/cli.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = (name) => fs.readFileSync(path.join(here, 'fixtures', 'harness', name), 'utf8');
@@ -32,6 +33,23 @@ test('command-code: parses the result line', () => {
   assert.equal(out.error, null);
   assert.equal(out.text, '4');
   assert.deepEqual(out.usage, { input_tokens: 18488, output_tokens: 64, cache_read_tokens: 0, cache_write_tokens: 0 });
+});
+
+// A real Command Code 1.88.5 agent stream (text, thinking and trace events removed, paths replaced). Each of
+// its 8 tool calls sends tool_queued, tool_running and tool_completed (one ends in tool_errored instead).
+test('command-code 1.88: counts each tool call once, by its id', () => {
+  const stdout = fixture('command-code-1.88.stdout.jsonl');
+  const out = getAdapter('command-code').parse({ stdout, stderr: '', code: 0 });
+  assert.equal(out.error, null);
+  assert.match(out.text, /^All 3 tests pass\./);
+  assert.equal(out.tool_calls, 8);
+  assert.equal(out.turn_count, 6);
+  assert.equal(out.model_reported, 'deepseek/deepseek-v4.1-flash');
+  assert.equal(out.effort_reported, 'max');
+  // A tool_use with the same id as a queued call (a streamed content block) is not a second call.
+  const first = JSON.parse(stdout.split('\n').find((line) => line.includes('"tool_queued"')));
+  const repeat = JSON.stringify({ type: 'event', event: { type: 'tool_use', id: first.event.toolCallId, name: first.event.toolName } });
+  assert.equal(getAdapter('command-code').parse({ stdout: `${repeat}\n${stdout}`, stderr: '', code: 0 }).tool_calls, 8);
 });
 
 test('gemini-cli: parses JSON after a log line; thinking counts as output', () => {
@@ -106,4 +124,46 @@ test('opencode: private server, provider/model#effort, prompt as one argument', 
   assert.deepEqual(args, ['run', '--standalone', '--format', 'json', '-m', 'openai/gpt-6-luna#low', '--', 'a "quoted"\nprompt']);
   assert.equal(getAdapter('opencode').args({ model: 'opencode/beam-free', prompt: '-x' })[5], 'opencode/beam-free');
   assert.deepEqual(getAdapter('opencode').args({ model: 'm', prompt: '-x' }).slice(-2), ['--', '-x'], 'a prompt that starts with a dash is never a flag');
+});
+
+// The ladder-answer pilot found OpenCode running shell, write and edit tools in answer mode.
+test('opencode: answer mode denies every permission through OPENCODE_CONFIG_CONTENT', () => {
+  const answer = getAdapter('opencode').answer;
+  assert.deepEqual(JSON.parse(answer.env.OPENCODE_CONFIG_CONTENT), { permission: { '*': 'deny' } });
+  assert.match(answer.note, /text only/);
+});
+
+test('defineCli: answer env reaches an answer call and stays out of an edit call', async () => {
+  const echoEnv = defineCli({
+    name: 'echo-env',
+    bin: 'node', // a bare name: the lab finds harness binaries on PATH
+    answer: { env: { LAB_TEST_ANSWER: 'deny' }, note: 'test' },
+    edit: { args: [] },
+    args: () => ['-e', 'process.stdout.write(process.env.LAB_TEST_ANSWER || "unset")'],
+    parse: ({ stdout }) => ({ text: stdout, error: null }),
+  });
+  const messages = [{ role: 'user', content: 'hi' }];
+  assert.equal((await echoEnv.call({ messages, timeoutMs: 30000 })).text, 'deny');
+  assert.equal((await echoEnv.call({ messages, timeoutMs: 30000, access: 'edit' })).text, 'unset');
+});
+
+// Review round 1 (Codex): an owner's own OPENCODE_CONFIG_CONTENT was replaced, not merged.
+test('answer env: a value the caller already set is merged by the harness, and OpenCode keeps every other setting', async () => {
+  const merged = defineCli({
+    name: 'merge-env',
+    bin: 'node',
+    answer: { env: { LAB_TEST_ANSWER: 'ours' }, note: 'test', merge: (key, current, ours) => `${current}+${ours}` },
+    args: () => ['-e', 'process.stdout.write(process.env.LAB_TEST_ANSWER || "unset")'],
+    parse: ({ stdout }) => ({ text: stdout, error: null }),
+  });
+  const messages = [{ role: 'user', content: 'hi' }];
+  assert.equal((await merged.call({ messages, timeoutMs: 30000, env: { LAB_TEST_ANSWER: 'theirs' } })).text, 'theirs+ours');
+  assert.equal((await merged.call({ messages, timeoutMs: 30000 })).text, 'ours', 'nothing to merge');
+
+  const opencode = getAdapter('opencode');
+  const own = JSON.stringify({ provider: { x: { name: 'X' } }, permission: { bash: 'allow' }, instructions: ['a.md'] });
+  const out = JSON.parse(opencode.answerEnv({ OPENCODE_CONFIG_CONTENT: own }).OPENCODE_CONFIG_CONTENT);
+  assert.deepEqual(out, { provider: { x: { name: 'X' } }, permission: { '*': 'deny' }, instructions: ['a.md'] }, 'only permission is replaced');
+  assert.deepEqual(JSON.parse(opencode.answerEnv({ OPENCODE_CONFIG_CONTENT: 'not json' }).OPENCODE_CONFIG_CONTENT), { permission: { '*': 'deny' } });
+  assert.deepEqual(JSON.parse(opencode.answerEnv({}).OPENCODE_CONFIG_CONTENT), { permission: { '*': 'deny' } });
 });

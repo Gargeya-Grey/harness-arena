@@ -1,0 +1,47 @@
+# The difficulty ladder: five tiers, three task kinds. docs/difficulty.md explains
+# every number here. lab/lib/ladder.mjs checks each ladder case against this file.
+#
+# minutes: expert time without AI, [more than, at most]. A task at the lower edge
+#          belongs to the tier below.
+# band:    target mean score across the pilot panel, [low, high].
+# kinds:   how many tasks of each suite the tier holds; they add up to `tasks`.
+
+id: ladder
+version: "1.0.0"
+
+suites:
+  answer: ladder-answer
+  code: ladder-code
+  agent: ladder-agent
+
+tiers:
+  - level: 1
+    name: easy
+    tasks: 5
+    minutes: [0, 2]
+    band: [0.9, 1]
+    kinds: { answer: 2, code: 2, agent: 1 }
+  - level: 2
+    name: medium
+    tasks: 10
+    minutes: [2, 8]
+    band: [0.65, 0.95]
+    kinds: { answer: 3, code: 4, agent: 3 }
+  - level: 3
+    name: hard
+    tasks: 15
+    minutes: [8, 30]
+    band: [0.35, 0.75]
+    kinds: { answer: 5, code: 5, agent: 5 }
+  - level: 4
+    name: extra-hard
+    tasks: 20
+    minutes: [30, 120]
+    band: [0.1, 0.45]
+    kinds: { answer: 6, code: 7, agent: 7 }
+  - level: 5
+    name: supreme
+    tasks: 30
+    minutes: [120, 960]
+    band: [0, 0.2]
+    kinds: { answer: 8, code: 10, agent: 12 }

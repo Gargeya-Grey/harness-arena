@@ -48,6 +48,15 @@ models:
       input_per_1m: 0.10
       output_per_1m: 0.50
 
+  claude-opus-5.5:
+    provider: anthropic
+    model: claude-opus-5-5
+    display_name: Claude Opus 5.5
+    # The ladder's frontier reference (docs/difficulty.md, Calibration).
+    # No pricing: not read from a source yet, so cost shows as n/a.
+    params:
+      max_tokens: 1024
+
   gpt-6-luna-low:
     provider: openai
     model: gpt-6-luna

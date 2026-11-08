@@ -1,0 +1,21 @@
+{
+  "probes": {
+    "a one night stay is 1 night": 1,
+    "nights across a leap day": 3,
+    "nights across new year": 3,
+    "back to back stays do not overlap, in either order": [false, false],
+    "partly shared, nested and identical stays overlap": [true, true, true, true],
+    "separate stays do not overlap": false,
+    "a one night stay overlaps the stay that holds its night": [true, false],
+    "findConflicts keeps the same room and the input order": ["b1", "b3"],
+    "a cancelled booking never conflicts": [0, true],
+    "a booking can start the day another one ends": true,
+    "a clash in the same room blocks the booking": false,
+    "a clash in another room does not block it": true,
+    "a request with no nights or reversed dates is refused": [false, false],
+    "totalNights skips cancelled bookings and other rooms": [5, 2, 0]
+  },
+  "files": {
+    "test/bookings.test.mjs": { "same_as_starter": true }
+  }
+}

@@ -37,7 +37,7 @@ function tempRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-agentic-'));
   rootOf.current = root;
   fs.cpSync(FIXTURES, root, { recursive: true });
-  fs.cpSync(path.join(REPO, 'datasets', 'agentic'), path.join(root, 'datasets', 'agentic'), { recursive: true });
+  fs.cpSync(path.join(REPO, 'datasets', 'archive', 'agentic'), path.join(root, 'datasets', 'agentic'), { recursive: true });
   fs.cpSync(path.join(REPO, 'prompts', 'agent-task'), path.join(root, 'prompts', 'agent-task'), { recursive: true });
   fs.mkdirSync(path.join(root, 'experiments'), { recursive: true });
   return root;
@@ -315,8 +315,9 @@ test('a changed starter is reported when scoring, and a link in a starter is ref
   const { root, result } = await runWith(t, 'fake-fixer3', ({ cwd }) => fs.writeFileSync(path.join(cwd, 'src', 'slugify.mjs'), GOOD_SLUGIFY));
   fs.appendFileSync(path.join(root, 'datasets', 'agentic', 'workspaces', 'slugify-bug', 'package.json'), '\n');
   const lines = [];
-  scoreRun(root, result.runDir, { log: (line) => lines.push(line) });
-  assert.match(lines.join('\n'), /not scored, its starter project changed/);
+  // The starter is part of the suite hash, so the whole run is refused (lab/commands/score.mjs).
+  assert.deepEqual(scoreRun(root, result.runDir, { log: (line) => lines.push(line) }), []);
+  assert.match(lines.join('\n'), /suite agentic \S+ is not the content this run used/);
   const starter = path.join(root, 'datasets', 'agentic', 'workspaces', 'slugify-bug');
   try {
     fs.symlinkSync(path.join(starter, 'package.json'), path.join(starter, 'link.json'), 'file');
@@ -427,9 +428,13 @@ test('agent code that patches globals cannot turn a wrong answer into a pass', a
 
 test('a starter project changed since the run gives no score, not a wrong one', async (t) => {
   const { root, result } = await runWith(t, 'fake-fixer2', ({ cwd }) => fs.writeFileSync(path.join(cwd, 'src', 'slugify.mjs'), GOOD_SLUGIFY));
+  const scoresDir = path.join(result.runDir, 'scores');
+  const before = Object.fromEntries(fs.readdirSync(scoresDir).map((name) => [name, fs.readFileSync(path.join(scoresDir, name), 'utf8')]));
+  assert.ok(Object.keys(before).length > 0);
   fs.appendFileSync(path.join(root, 'datasets', 'agentic', 'workspaces', 'slugify-bug', 'package.json'), '\n');
-  const [written] = scoreRun(root, result.runDir);
-  assert.equal(written.count, 0);
+  assert.deepEqual(scoreRun(root, result.runDir, { log: () => {} }), []);
+  const after = Object.fromEntries(fs.readdirSync(scoresDir).map((name) => [name, fs.readFileSync(path.join(scoresDir, name), 'utf8')]));
+  assert.deepEqual(after, before, 'the scores from the unchanged starter stay as they are');
 });
 
 test('an agent whose tools name the lab repository gets a left_workdir error', async (t) => {

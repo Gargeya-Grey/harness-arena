@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { listDirs, listFiles, readJson, readJsonl, resolveInside, safeSegment, isoNow } from './fsutil.mjs';
-import { paths, loadRegistry, loadCases, runDirs } from './repo.mjs';
+import { paths, loadRegistry, loadSuite, runDirs } from './repo.mjs';
 import { SchemaSet } from './schema.mjs';
 import { clusteredInterval, mean, percentile, sum, variance } from './metrics.mjs';
 import { errorClass, modelCheck, runLiveness } from './checks.mjs';
@@ -24,20 +24,32 @@ export function humanizeModel(value) {
 
 /**
  * `<model_key>__<harness>-<version>__<effort or default>`, plus `__isolated` when the
- * harness ran without the user's own setup. Computed, never stored.
+ * harness ran without the user's own setup, plus `__no-tools` when an answer run turned the
+ * harness's tools off through its config. Computed, never stored.
  */
-export function configId(modelKey, harness, effort, userConfig = 'loaded') {
+export function configId(modelKey, harness, effort, userConfig = 'loaded', answerTools = 'default') {
   return [
     safeSegment(modelKey),
     `${safeSegment(harness?.name)}-${safeSegment(harness?.version)}`,
     safeSegment(effort || 'default'),
     ...(userConfig === 'isolated' ? ['isolated'] : []),
+    ...(answerTools === 'off' ? ['no-tools'] : []),
   ].join('__');
 }
 
 /** Runs written before the setting existed loaded the user's setup. */
 export function userConfigOf(manifest) {
   return manifest?.harness?.settings?.user_config === 'isolated' ? 'isolated' : 'loaded';
+}
+
+/**
+ * "off" when an answer run recorded access flags: the env vars that turn the harness's tools
+ * off (OpenCode). Such a run is not a repeat of an earlier run of the same harness that
+ * could use tools, so it gets its own configuration. Edit runs and older runs: "default".
+ */
+export function answerToolsOf(manifest) {
+  const settings = manifest?.harness?.settings || {};
+  return settings.access !== 'edit' && (settings.access_flags || []).length ? 'off' : 'default';
 }
 
 export function contextKey(manifest, caseIds) {
@@ -65,6 +77,7 @@ export function comparisonMode(configs) {
   if (varies((c) => c.effort || 'default')) axes.push('effort');
   if (varies((c) => `${c.params?.temperature ?? ''}|${c.params?.max_tokens ?? ''}`)) axes.push('decoding');
   if (varies((c) => c.user_config || 'loaded')) axes.push('setup');
+  if (varies((c) => c.answer_tools || 'default')) axes.push('answer tools');
   if (!axes.length) return { mode: 'replicate', axes };
   return { mode: axes.length === 1 ? 'controlled' : 'descriptive', axes };
 }
@@ -76,15 +89,17 @@ function buildConfig(manifest, modelKey, raw, registry) {
   const effort = entry.reasoning_effort || raw?.request?.params?.reasoning_effort || null;
   const displayName = registered.display_name || humanizeModel(entry.model || modelKey);
   const userConfig = userConfigOf(manifest);
-  const setup = userConfig === 'isolated' ? ' · isolated' : '';
+  const answerTools = answerToolsOf(manifest);
+  const setup = `${userConfig === 'isolated' ? ' · isolated' : ''}${answerTools === 'off' ? ' · no tools' : ''}`;
   return {
-    id: configId(modelKey, harness, effort, userConfig),
+    id: configId(modelKey, harness, effort, userConfig, answerTools),
     model_key: modelKey,
     display_name: displayName,
     short_label: `${displayName} · ${harness.name || 'unknown'}${effort ? ` · ${effort}` : ''}${setup}`,
     label: `${displayName} · ${harness.name || 'unknown'} ${harness.version || ''}${effort ? ` · ${effort}` : ''}${setup}`.replace(/\s+/g, ' ').trim(),
     user_config: userConfig,
     user_config_flags: harness.settings?.user_config_flags || [],
+    answer_tools: answerTools,
     provider: entry.provider || registered.provider || 'unknown',
     model: entry.model || registered.model || modelKey,
     harness: {
@@ -165,7 +180,7 @@ function observationStatus(raw, quality) {
  * is still running, or was never scored (halted by the guard), counts nothing: its
  * answers have no score yet, so its errors alone would pull the mean down.
  */
-function countedRows(rows, hasQuality) {
+export function countedRows(rows, hasQuality) {
   if (!hasQuality) return [];
   return rows.flatMap((row) => {
     if (!row.run_scored) return [];
@@ -315,6 +330,31 @@ export function buildState(root, { validate = true } = {}) {
   const runs = [];
   const suitesSeen = new Set();
   const cases = {};
+  // One load per suite version for the whole build: an agent suite load reads every workspace file.
+  const suiteLoads = new Map();
+  const suiteAt = (suiteId, version) => {
+    const key = `${suiteId}@${version ?? ''}`;
+    if (!suiteLoads.has(key)) {
+      let suite = null;
+      try {
+        suite = loadSuite(root, suiteId, { version });
+      } catch {
+        // Unknown or unreadable suite: no cases.
+      }
+      suiteLoads.set(key, suite);
+    }
+    return suiteLoads.get(key);
+  };
+  const casesAt = (suiteId, version) => suiteAt(suiteId, version)?.cases ?? [];
+  // A frozen copy speaks for a run only when it is the content the run recorded.
+  const runCases = (suite) => {
+    const at = suiteAt(suite.id, suite.version);
+    if (at?.frozen && at.sha256 !== suite.sha256) {
+      note(path.join(at.dir, 'cases.jsonl'), `the frozen copy of suite ${suite.id} ${suite.version} is not the content its runs used; its cases are not shown`);
+      return [];
+    }
+    return at?.cases ?? [];
+  };
 
   // The evidence ledger (lab/lib/ledger.mjs): a run that does not match it is listed,
   // flagged, and its scores do not count.
@@ -369,22 +409,35 @@ export function buildState(root, { validate = true } = {}) {
 
     const declared = Array.isArray(manifest.experiment?.cases) ? manifest.experiment.cases : [];
     let caseIds = declared;
+    // The case list of the version the run recorded: the suite now, or its frozen copy
+    // (datasets/<suite>/versions/<version>/). Neither: the cases the run has rows for.
+    const versionCases = runCases(manifest.suite);
     if (!caseIds.length) {
-      const suiteCases = loadCases(root, manifest.suite.id).map((item) => item.case_id);
+      const suiteCases = versionCases.map((item) => item.case_id);
       caseIds = suiteCases.length ? suiteCases : [...new Set(rawRows.map((row) => row.case_id))].sort();
     }
     if (!suitesSeen.has(manifest.suite.id)) {
       suitesSeen.add(manifest.suite.id);
-      for (const item of loadCases(root, manifest.suite.id)) cases[item.case_id] = { ...item, suite: manifest.suite.id };
+      for (const item of casesAt(manifest.suite.id)) cases[item.case_id] = { ...item, suite: manifest.suite.id };
     }
+    // A case only an older version has (a retired task) keeps its text from that version's copy.
+    for (const item of versionCases) if (!cases[item.case_id]) cases[item.case_id] = { ...item, suite: manifest.suite.id };
 
     const key = contextKey(manifest, caseIds);
     if (!contexts.has(key)) {
+      // `cases` holds one entry per case id. A context (one suite version) whose own text of a case
+      // differs from that entry carries it in `case_data`, so an old run shows the case it answered.
+      const caseData = {};
+      for (const item of versionCases) {
+        const own = { ...item, suite: manifest.suite.id };
+        if (JSON.stringify(own) !== JSON.stringify(cases[item.case_id])) caseData[item.case_id] = own;
+      }
       contexts.set(key, {
         key,
         suite: manifest.suite,
         prompt: manifest.prompt,
         cases: [...caseIds],
+        case_data: caseData,
         repeats: manifest.repeats,
         evaluators: manifest.evaluators || [],
         partial: declared.length > 0,
