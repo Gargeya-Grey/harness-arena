@@ -35,7 +35,7 @@ const cap = (text) => (text ? text.charAt(0).toUpperCase() + text.slice(1) : tex
 const isNum = (value) => typeof value === 'number' && Number.isFinite(value);
 
 /* ---------- Words and numbers, as the CLI prints them ---------- */
-export const fixed = (value) => (isNum(value) ? value.toFixed(2) : 'n/a');
+const fixed = (value) => (isNum(value) ? value.toFixed(2) : 'n/a');
 // `node lab ladder` prints p under 0.005 as "< 0.01"; so does the page.
 export const pText = (value) => (value < 0.005 ? '< 0.01' : fixed(value));
 const scoreText = (value) => (value === 1 ? '1' : value === 0 ? '0' : fixed(value));
@@ -114,13 +114,13 @@ export function headline(ladder) {
   return { say: `${d} of ${n} tasks ${d === 1 ? 'shows' : 'show'} a real disagreement. ${o} ${o === 1 ? 'has' : 'have'} only one setup.`, more, pairs: pairsSentence(ladder) };
 }
 
-export function renderAnswer(ladder) {
+function renderAnswer(ladder) {
   const h = headline(ladder);
   if (!h) return '';
   return String(html`<p class="ld-say">${h.say}</p>${h.pairs ? html`<p class="ld-more ld-pairs-say">${h.pairs}</p>` : ''}${h.more.length ? html`<p class="ld-more">${h.more.join(' ')}</p>` : ''}<div class="ld-foot"><span class="fair"><span class="mark-s info" aria-hidden="true"></span><span>A tier is an estimate of expert time, not a measured difficulty. Only the stored runs speak about models, and only for the tasks they ran. The p values are not corrected for the number of pairs.</span></span></div>`);
 }
 
-export function renderMeta(ladder) {
+function renderMeta(ladder) {
   const n = allTasks(ladder).length;
   if (!n) return '';
   const suites = (ladder.suites || []).filter((suite) => suite.cases?.length).length;
@@ -160,7 +160,7 @@ export function renderEmpty(data, error = null) {
 /* ---------- Tiers ---------- */
 const tierEntry = (ladder, level) => (ladder?.tiers || []).find((tier) => tier.level === level);
 // Every tier value carries the word "estimate": it is expert time, not a result.
-export const tierValue = (level, name, line) => html`<span class="ld-tierv" data-tier="${level ?? 'none'}"><span class="v">${level == null ? 'No tier' : cap(name || `Tier ${level}`)}</span><span class="sub">${line}</span></span>`;
+const tierValue = (level, name, line) => html`<span class="ld-tierv" data-tier="${level ?? 'none'}"><span class="v">${level == null ? 'No tier' : cap(name || `Tier ${level}`)}</span><span class="sub">${line}</span></span>`;
 
 /* ---------- Setups ---------- */
 function stateMark(config) {
@@ -187,7 +187,7 @@ export function renderSetups(ladder) {
 }
 
 /* ---------- Pairs ---------- */
-export const readingText = (pair) => (pair.sign_p < ALPHA ? 'Can tell apart' : 'Cannot tell apart');
+const readingText = (pair) => (pair.sign_p < ALPHA ? 'Can tell apart' : 'Cannot tell apart');
 
 export function renderPairs(ladder, ui = {}) {
   const pairs = ladder?.pairs || [];
@@ -200,7 +200,7 @@ export function renderPairs(ladder, ui = {}) {
 }
 
 /** Which letter is which setup, above the task table, where the columns show only the letter. */
-export function renderKey(ladder) {
+function renderKey(ladder) {
   const letters = letterMap(ladder);
   if (!configsOf(ladder).length) return '';
   return String(html`<ul class="ld-key" aria-label="Setup letters">${configsOf(ladder).map((config) => html`<li><span class="lt" aria-hidden="true">${letters.get(config.config_id)}</span><span class="col-name">${config.label}</span></li>`)}</ul>`);
@@ -312,7 +312,7 @@ export function renderTasks(ladder, cases, ui) {
   return String(html`<table class="ld-tbl ld-tasks"><thead><tr><th scope="col" class="c-task">Task</th><th scope="col" class="c-tier">Tier and expert time</th><th scope="col" class="c-info">What the runs show</th>${configs.map((config) => html`<th scope="col" class="c-score${config.config_id === ui.a || config.config_id === ui.b ? ' is-pick' : ''}" title="${config.label}"><span class="lt" aria-hidden="true">${letters.get(config.config_id)}</span><span class="sr">${config.label}</span></th>`)}</tr></thead><tbody>${tasks.map((task) => taskRow(task, ladder, cases, ui))}</tbody></table>`);
 }
 
-export function renderTasksNote(ladder, ui) {
+function renderTasksNote(ladder, ui) {
   const total = allTasks(ladder).length;
   const shown = visibleTasks(ladder, ui).length;
   const filtered = Boolean(ui.kind || ui.tier || ui.info || (ui.split && ui.a && ui.b));
@@ -320,7 +320,7 @@ export function renderTasksNote(ladder, ui) {
 }
 
 /* ---------- What the page reads ---------- */
-export function renderEvidence(ladder) {
+function renderEvidence(ladder) {
   const versions = ladder?.versions || [];
   const parts = [];
   if (versions.length) {
@@ -356,7 +356,7 @@ export function selectDefs(ladder, ui) {
   ];
 }
 
-export const renderToolbar = (ladder, ui, scope) => String(selectDefs(ladder, ui).filter((def) => def.scope === scope).map(field).join(''));
+const renderToolbar = (ladder, ui, scope) => String(selectDefs(ladder, ui).filter((def) => def.scope === scope).map(field).join(''));
 
 /* ---------- The page ---------- */
 /** Every block of the page as HTML text. */
@@ -556,7 +556,7 @@ function onKey(event) {
   }
 }
 
-export async function boot() {
+async function boot() {
   const shell = await import('./shell.js');
   shell.mountShell({ current: 'ladder' });
   shell.watchJobs();
