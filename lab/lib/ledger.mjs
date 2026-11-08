@@ -42,16 +42,34 @@ export function ledgerPath(root) {
   return path.join(mainCheckout(root) ?? root, LEDGER_FILE);
 }
 
+const HASH_CHUNK = 1 << 20;
+
+/** The byte count and sha256 of the first `limit` bytes of a file (all by default), read in chunks: a file of hundreds of MB is never held whole. */
+function hashFile(file, limit = Infinity) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const hash = crypto.createHash('sha256');
+    const chunk = Buffer.allocUnsafe(HASH_CHUNK);
+    let size = 0;
+    while (size < limit) {
+      const got = fs.readSync(fd, chunk, 0, Math.min(HASH_CHUNK, limit - size), null);
+      if (!got) break;
+      hash.update(chunk.subarray(0, got));
+      size += got;
+    }
+    return { size, sha256: hash.digest('hex') };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /** The size and sha256 of the first `size` bytes of harness-events.ndjson (all by default). */
 export function eventsState(runDir, size = null) {
-  let bytes = Buffer.alloc(0);
   try {
-    bytes = fs.readFileSync(path.join(runDir, 'harness-events.ndjson'));
+    return hashFile(path.join(runDir, 'harness-events.ndjson'), size ?? Infinity);
   } catch {
-    bytes = Buffer.alloc(0);
+    return { size: 0, sha256: sha256(Buffer.alloc(0)) };
   }
-  const part = size == null ? bytes : bytes.subarray(0, size);
-  return { size: part.length, sha256: sha256(part) };
 }
 
 /** The exact line appendJsonl writes for a record, so the ledger can hash a row. */
@@ -272,7 +290,7 @@ function fileSha(file) {
   const key = `${stat.size}|${stat.mtimeMs}|${stat.ctimeMs}|${stat.ino}`;
   const cached = hashCache.get(file);
   if (cached?.key === key) return cached.sha;
-  const sha = sha256(fs.readFileSync(file));
+  const { sha256: sha } = hashFile(file);
   if (Date.now() - Math.max(stat.mtimeMs, stat.ctimeMs) < RECENT_MS) {
     hashCache.delete(file);
     return sha;
