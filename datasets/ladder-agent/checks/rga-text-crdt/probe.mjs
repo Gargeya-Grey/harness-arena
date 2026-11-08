@@ -756,8 +756,10 @@ export const probes = [
       const { createReplica } = await lib(load);
       const t0 = cpuMs();
       const a = createReplica('ann');
-      a.insertAt(0, 'x'.repeat(8000));
-      const gone = a.deleteAt(100, 7000);
+      // Sized so a range delete that is not linear misses the limit by a wide margin (one element at a
+      // time with array copies: about 21 s of CPU here), while the reference needs about 0.4 s.
+      a.insertAt(0, 'x'.repeat(16000));
+      const gone = a.deleteAt(100, 14000);
       const b = createReplica('bob');
       const applied = b.receive(a.opsSince({})).length;
       return { fast: cpuMs() - t0 < 3500, length: a.length, gone: gone.length, first: gone[0], last: gone[gone.length - 1], tombstones: a.tombstoneCount(), applied, bLength: b.length, vector: b.stateVector() };

@@ -221,9 +221,16 @@ const SLOW = [
   {
     slug: 'rga-text-crdt',
     overlay: 'rga-text-crdt--slow',
-    fails: ['rg33 ten thousand local inserts, three thousand in the middle, a thousand deletes', 'rg36 deleting a very long range in one call'],
+    fails: ['rg36 deleting a very long range in one call'],
     // rg34 and rg35 stay within 1.2 times their limits with this slow method, so they may fail here and are not claimed.
-    maybe: ['rg34 five thousand operations delivered one at a time in reverse', 'rg35 three replicas typing at the start and the end thousands of times'],
+    // rg33 too: the reference is itself quadratic there (0.34 s at this size, 1.4 s at twice the size), so no size
+    // separates this slow method by a wide margin without also failing correct solutions that are a constant
+    // factor slower. The slow method used 3.5 to 4.1 s of CPU against the 3.5 s limit here, and passed on CI.
+    maybe: [
+      'rg33 ten thousand local inserts, three thousand in the middle, a thousand deletes',
+      'rg34 five thousand operations delivered one at a time in reverse',
+      'rg35 three replicas typing at the start and the end thousands of times',
+    ],
   },
   {
     slug: 'spreadsheet-engine',

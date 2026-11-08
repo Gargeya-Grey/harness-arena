@@ -48,12 +48,15 @@ export default {
     t('huge', [13000, 700, 200, 20, 1000, 20260101]),
     t('huge', [12000, 6000, 200, 80, 3, 424242]),
     t('huge', [12000, 11000, 200, 5, 1000000000, 777]),
-    t('huge', [13000, 12, 200, 50, 0, 31337]),
+    // Few groups, but not so few that a quadratic DP per group finishes: the naive O(k n^2) needs
+    // about k n^2 / 2 steps, and this machine does about 2.2e8 of them per CPU second (CI about 2x
+    // faster). Each huge test keeps that count at 2e10 or more: 90 s here, far over the 2 s limit.
+    t('huge', [13000, 250, 200, 50, 0, 31337]),
     t('huge', [12000, 4000, 1, 70, 20, 99]),
     t('huge', [8000, 8000, 200, 0, 123, 5]),
-    t('huge', [12000, 40, 200, 10, 500000, 2468]),
+    t('huge', [12000, 300, 200, 10, 500000, 2468]),
     t('huge', [12000, 1500, 50, 95, 7, 1357]),
-    t('huge', [10000, 100, 5, 0, 0, 86420]),
+    t('huge', [10000, 400, 5, 0, 0, 86420]),
     t('huge', [13000, 2500, 120, 30, 2000000, 97531]),
   ],
 };

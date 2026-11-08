@@ -35,6 +35,23 @@ test('command-code: parses the result line', () => {
   assert.deepEqual(out.usage, { input_tokens: 18488, output_tokens: 64, cache_read_tokens: 0, cache_write_tokens: 0 });
 });
 
+// A real Command Code 1.88.5 agent stream (text, thinking and trace events removed, paths replaced). Each of
+// its 8 tool calls sends tool_queued, tool_running and tool_completed (one ends in tool_errored instead).
+test('command-code 1.88: counts each tool call once, by its id', () => {
+  const stdout = fixture('command-code-1.88.stdout.jsonl');
+  const out = getAdapter('command-code').parse({ stdout, stderr: '', code: 0 });
+  assert.equal(out.error, null);
+  assert.match(out.text, /^All 3 tests pass\./);
+  assert.equal(out.tool_calls, 8);
+  assert.equal(out.turn_count, 6);
+  assert.equal(out.model_reported, 'deepseek/deepseek-v4.1-flash');
+  assert.equal(out.effort_reported, 'max');
+  // A tool_use with the same id as a queued call (a streamed content block) is not a second call.
+  const first = JSON.parse(stdout.split('\n').find((line) => line.includes('"tool_queued"')));
+  const repeat = JSON.stringify({ type: 'event', event: { type: 'tool_use', id: first.event.toolCallId, name: first.event.toolName } });
+  assert.equal(getAdapter('command-code').parse({ stdout: `${repeat}\n${stdout}`, stderr: '', code: 0 }).tool_calls, 8);
+});
+
 test('gemini-cli: parses JSON after a log line; thinking counts as output', () => {
   const out = getAdapter('gemini-cli').parse({ stdout: fixture('gemini-cli.synthetic.stdout.txt'), stderr: '', code: 0 });
   assert.equal(out.error, null);

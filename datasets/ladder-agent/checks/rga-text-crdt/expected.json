@@ -35,7 +35,7 @@
     "rg33 ten thousand local inserts, three thousand in the middle, a thousand deletes": {"fast":true,"length":12000,"hash":1445112660,"tombstones":1000,"ops":14000,"vector":{"ann":14000}},
     "rg34 five thousand operations delivered one at a time in reverse": {"fast":true,"same":true,"pending":0,"lastBatch":5000,"others":true,"log":true},
     "rg35 three replicas typing at the start and the end thousands of times": {"fast":true,"texts":[7500,7500,7500],"same":true,"head":"210210210210210210210210210210210210210210210210210210210210","pending":[0,0,0]},
-    "rg36 deleting a very long range in one call": {"fast":true,"length":1000,"gone":7000,"first":{"type":"delete","site":"ann","seq":8001,"clock":8001,"target":"ann@101"},"last":{"type":"delete","site":"ann","seq":15000,"clock":15000,"target":"ann@7100"},"tombstones":7000,"applied":15000,"bLength":1000,"vector":{"ann":15000}}
+    "rg36 deleting a very long range in one call": {"fast":true,"length":2000,"gone":14000,"first":{"type":"delete","site":"ann","seq":16001,"clock":16001,"target":"ann@101"},"last":{"type":"delete","site":"ann","seq":30000,"clock":30000,"target":"ann@14100"},"tombstones":14000,"applied":30000,"bLength":2000,"vector":{"ann":30000}}
   },
   "files": {"SPEC.md":{"same_as_starter":true},"test/local.test.mjs":{"same_as_starter":true},"test/sync.test.mjs":{"same_as_starter":true}}
 }

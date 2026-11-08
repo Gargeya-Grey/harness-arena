@@ -26,6 +26,7 @@ export default defineCli({
     const result = [...lines].reverse().find((line) => line.type === 'result') || null;
     const events = lines.filter((line) => line.type === 'event').map((line) => line.event);
     let toolCalls = 0;
+    const seenTools = new Set();
     let requestMs = 0;
     let requestOpen = null;
     let model = null;
@@ -43,7 +44,16 @@ export default defineCli({
         if (typeof event.durationMs === 'number') requestMs += event.durationMs;
         else if (requestOpen && event.timestamp) requestMs += Date.parse(event.timestamp) - Date.parse(requestOpen);
       }
-      if (/^tool_(call_)?start$/.test(event.type) || event.type === 'tool_use') toolCalls += 1;
+      // Older versions send tool_start or tool_use; 1.88 sends tool_queued, tool_running and
+      // tool_completed (or tool_errored) for each call. Count each call once, by its id.
+      if (/^tool_((call_)?start|queued)$/.test(event.type) || event.type === 'tool_use') {
+        const id = event.toolCallId ?? event.id ?? null;
+        if (id === null) toolCalls += 1;
+        else if (!seenTools.has(id)) {
+          seenTools.add(id);
+          toolCalls += 1;
+        }
+      }
       if (event.type === 'run_end') turns = event.result?.turnCount ?? turns;
     }
     const usage = result?.usage || {};
