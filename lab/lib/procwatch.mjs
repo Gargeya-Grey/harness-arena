@@ -91,8 +91,12 @@ while ($null -ne ($request = [Console]::In.ReadLine())) {
         # A child the harness started before it was in the job is outside it. Windows
         # itself starts System32\conhost.exe for every console program; that one is not.
         $console = Join-Path $env:SystemRoot 'System32\conhost.exe'
-        $outside = @(Get-CimInstance -ClassName Win32_Process -Filter "ParentProcessId = $id" | Where-Object { $_.ExecutablePath -ne $console -and -not [LabJob]::InJob($job, [uint32]$_.ProcessId) } | ForEach-Object { "$($_.Name):$($_.ProcessId)" })
-        if ($outside.Count) { $answer = 'escaped ' + ($outside -join ',') }
+        $outside = @(Get-CimInstance -ClassName Win32_Process -Filter "ParentProcessId = $id" | Where-Object { $_.ExecutablePath -ne $console -and -not [LabJob]::InJob($job, [uint32]$_.ProcessId) } | ForEach-Object { "$($_.Name):$($_.ProcessId):$($_.CreationDate.ToUniversalTime().Ticks)" })
+        if ($outside.Count) {
+          $self = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $id"
+          $started = if ($self) { $self.CreationDate.ToUniversalTime().Ticks } else { 0 }
+          $answer = "children $started " + ($outside -join ',')
+        }
       }
     } elseif ($parts[0] -eq 'list') {
       $names = foreach ($p in [LabJob]::Pids($job)) { $n = (Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName; "$($n):$p" }
@@ -170,6 +174,19 @@ function lineHelper(command, args) {
   };
 }
 
+/**
+ * The real children in the helper's answer `children <start ticks> <name:pid:start ticks>,...`, as
+ * name:pid. Windows keeps a parent id after that parent has ended, and reuses ids: a process older
+ * than the new process only has its number. A start of 0 means unknown, and then every child counts.
+ */
+export function escapedChildren(answer) {
+  const [, started, list] = /^children (\d+) (.*)$/.exec(answer);
+  return list.split(',').flatMap((item) => {
+    const cut = item.lastIndexOf(':');
+    return BigInt(item.slice(cut + 1)) >= BigInt(started) ? [item.slice(0, cut)] : [];
+  });
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const parsePids = (answer) => (answer.startsWith('pids ') ? answer.slice(5).split(',').filter(Boolean) : null);
 
@@ -190,7 +207,9 @@ export async function jobWatch({ settleMs = 300 } = {}) {
       const work = (async () => {
         const answer = await helper.ask(`assign ${pid}`).catch((error) => `fail ${error.message}`);
         if (answer === 'ok') return;
-        failure = failure || (answer.startsWith('escaped ') ? `the harness started a process before the job held it (${answer.slice(8)})` : `a harness process could not be put in the job (${answer.slice(5)})`);
+        const children = answer.startsWith('children ') ? escapedChildren(answer) : null;
+        if (children?.length === 0) return;
+        failure = failure || (children ? `the harness started a process before the job held it (${children.join(',')})` : `a harness process could not be put in the job (${answer.slice(5)})`);
         throw new Error(failure);
       })();
       pending.add(work);
