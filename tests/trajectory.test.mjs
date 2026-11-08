@@ -11,8 +11,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { traceCommand } from '../lab/commands/trace.mjs';
-import { ensureLedger } from '../lab/lib/ledger.mjs';
-import { checkClaim, claimOf, cleanPath, hasStepParser, median, readShareBeforeFirstEdit, readTraceEvents, repeatedFailures, rowKey, saidDone, scrub, traceSteps } from '../lab/lib/trajectory.mjs';
+import { ensureLedger, eventsState, runFiles } from '../lab/lib/ledger.mjs';
+import { checkClaim, claimOf, cleanPath, forEachTraceRow, hasStepParser, median, readShareBeforeFirstEdit, repeatedFailures, rowKey, saidDone, scrub, testSummary, toolKind, traceSteps } from '../lab/lib/trajectory.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES = path.join(REPO, 'tests', 'fixtures', 'harness', 'trace');
@@ -25,19 +25,19 @@ const step = (i, kind, ok, extra = {}) => ({ i, kind, ok, path: null, command: n
 
 test('Claude Code: tool_use blocks are steps, and the matching tool_result gives ok', () => {
   assert.deepEqual(traceSteps('claude-code', eventsOf('claude-code')), [
-    step(0, 'shell', true, { command: 'cd "<workdir>" && ls -R src test && cat src/slugify.mjs && echo "-----" && cat test/*' }),
+    step(0, 'read', true, { command: 'cd "<workdir>" && ls -R src test && cat src/slugify.mjs && echo "-----" && cat test/*' }),
     step(1, 'edit', true, { path: 'src/slugify.mjs' }),
     step(2, 'test', true, { command: 'cd "<workdir>" && node --test 2>&1 | tail -n 12' }),
   ]);
 });
 
-test('OpenCode: a failed shell command has ok false from its exit code; a tool the harness reports completed has ok true', () => {
+test('OpenCode: a failed test run has ok false from its exit code; a shell parse error is no test run; a tool the harness reports completed has ok true', () => {
   assert.deepEqual(traceSteps('opencode', eventsOf('opencode')), [
     step(0, 'read', true),
     step(1, 'read', true, { path: 'package.json' }),
     step(2, 'read', true, { path: 'test/slugify.test.mjs' }),
     step(3, 'read', true, { path: 'src/slugify.mjs' }),
-    step(4, 'test', false, { command: 'cd <workdir> && node --test' }),
+    step(4, 'shell', false, { command: 'cd <workdir> && node --test' }),
     step(5, 'test', false, { command: 'node --test' }),
     step(6, 'edit', true, { path: 'src/slugify.mjs' }),
     step(7, 'test', true, { command: 'node --test' }),
@@ -62,7 +62,7 @@ test('Command Code: tool_queued is the step; tool_errored gives ok false; stream
 test('Command Code: a shell command with "Exit code: N" at the top of its output failed, and one without it did not', () => {
   const queued = (id, command) => ({ type: 'event', event: { type: 'tool_queued', toolCallId: id, toolName: 'shell_command', input: { command } } });
   const completed = (id, text) => ({ type: 'event', event: { type: 'tool_completed', toolCallId: id, toolName: 'shell_command', result: [{ type: 'text', text }] } });
-  const steps = traceSteps('command-code', [queued('a', 'node --test'), completed('a', 'Exit code: 1\n✖ plain numbers'), queued('b', 'node --test'), completed('b', '✔ plain numbers\nℹ fail 0\n'), queued('c', 'ls'), completed('c', 'Exit code: 0\nx')]);
+  const steps = traceSteps('command-code', [queued('a', 'node --test'), completed('a', 'Exit code: 1\n✖ plain numbers'), queued('b', 'node --test'), completed('b', '✔ plain numbers\nℹ fail 0\n'), queued('c', 'mkdir out'), completed('c', 'Exit code: 0\nx')]);
   assert.deepEqual(steps.map((item) => [item.kind, item.ok]), [['test', false], ['test', true], ['shell', true]]);
 });
 
@@ -72,14 +72,95 @@ test('Codex real sample: the row has no tool event, so it gives no step (the sam
   assert.deepEqual(traceSteps('codex', events), []);
 });
 
-test('Codex synthetic sample: command_execution takes ok from exit_code, file_change gives an edit per path, item.started and unknown items give nothing', () => {
+test('Codex synthetic sample: command_execution takes ok from exit_code, one file_change is one tool call, item.started and unknown items give nothing', () => {
   assert.deepEqual(traceSteps('codex', eventsOf('codex.synthetic')), [
     step(0, 'test', false, { command: 'node --test' }),
     step(1, 'edit', true, { path: 'src/slugify.mjs' }),
-    step(2, 'edit', true, { path: 'src/digits.mjs' }),
-    step(3, 'shell', null, { command: 'Get-Content src/slugify.mjs' }),
-    step(4, 'test', true, { command: 'node --test' }),
+    step(2, 'read', null, { command: 'Get-Content src/slugify.mjs' }),
+    step(3, 'test', true, { command: 'node --test' }),
   ]);
+});
+
+// ---- Review round 1: what a step may say about a command ----------------------------------
+
+const claudeCall = (id, name, input, content, isError) => [
+  { type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } },
+  { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content, ...(isError === undefined ? {} : { is_error: isError }) }] } },
+];
+const bash = (id, command, output, isError = false) => claudeCall(id, 'Bash', { command }, output, isError);
+const FAIL_OUTPUT = '✖ keeps digits (1.2ms)\nℹ tests 3\nℹ suites 0\nℹ pass 2\nℹ fail 1\nℹ cancelled 0';
+
+test('a test piped to another command: the exit status says nothing, the summary in the output does', () => {
+  const piped = 'node --test 2>&1 | tail -n 12';
+  const run = (output, isError) => traceSteps('claude-code', bash('t', piped, output, isError))[0];
+  assert.deepEqual(run(FAIL_OUTPUT, false), step(0, 'test', false, { command: piped }), 'one failure in the summary, although the pipeline exited 0');
+  assert.equal(run('ℹ pass 3\nℹ fail 0', true).ok, true, 'an explicit 0 failed, although the pipeline reported an error');
+  assert.equal(run('3 failed, 2 passed in 0.4s').ok, false);
+  assert.equal(run('lines without any summary').ok, null);
+  assert.equal(run(undefined).ok, null);
+  assert.equal(traceSteps('claude-code', bash('t', 'node --test', 'lines without any summary', true))[0].ok, false, 'a test that is not piped takes ok from its own exit status');
+  assert.equal(traceSteps('claude-code', bash('t', 'node --test && echo done', 'ℹ fail 0', false))[0].ok, true);
+  assert.equal(traceSteps('claude-code', bash('t', 'node --test; echo done', 'lines without any summary', false))[0].ok, null, 'a command after ; hides the exit status of the test');
+  assert.deepEqual(checkClaim('All tests pass.', traceSteps('claude-code', bash('t', piped, FAIL_OUTPUT))), { claim: 'pass', status: 'contradicted' });
+});
+
+test('a test summary: a failed count above 0 is a failure, an explicit 0 is a pass, anything else is unknown', () => {
+  assert.equal(testSummary('ℹ pass 2\nℹ fail 1'), false);
+  assert.equal(testSummary('# fail 0'), true);
+  assert.equal(testSummary('=== 1 failed, 4 passed in 0.2s ==='), false);
+  assert.equal(testSummary('test result: ok. 3 passed; 0 failed; 0 ignored'), true);
+  assert.equal(testSummary('Tests: 0 failed, 3 passed'), true);
+  assert.equal(testSummary('3 passed in 0.1s'), null);
+  assert.equal(testSummary(''), null);
+  assert.equal(testSummary(null), null);
+});
+
+test('a test runner counts only in command position; echo and a shell parse error do not', () => {
+  const kind = (command) => toolKind('Bash', command);
+  for (const command of ['echo npm test', 'echo "run: npm test && done"', 'echo pytest', 'npm run build', 'git commit -m "npm test"']) assert.equal(kind(command), 'shell', command);
+  for (const command of ['npm test', 'cd app && npm test', 'FOO=1 npx jest --ci', 'git status; pytest -q', 'cat package.json | jest', 'python -m pytest tests', 'ls tests && cargo test', 'a || node --test']) assert.equal(kind(command), 'test', command);
+  assert.equal(kind('grep -rn "node --test" src'), 'read');
+  const error = bash('p', 'cd <workdir> && node --test', 'At line:1 char:22\r\nThe token && is not a valid statement separator.\r\n    + FullyQualifiedErrorId : InvalidEndOfLine\r\n    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException', true);
+  assert.deepEqual(traceSteps('claude-code', error), [step(0, 'shell', false, { command: 'cd <workdir> && node --test' })]);
+  assert.deepEqual(traceSteps('claude-code', bash('r', 'node --test', 'ℹ pass 2\nℹ fail 1', true)).map((item) => [item.kind, item.ok]), [['test', false]], 'a test that ran and failed is still a test run');
+  assert.equal(traceSteps('opencode', eventsOf('opencode')).filter((item) => item.kind === 'test').length, 2, 'the OpenCode sample: two test runs, not three');
+});
+
+test('a shell call that reads files is a read step; a test in the chain wins; the first verb decides a mixed chain', () => {
+  const cases = [
+    ['ls -la', 'read'], ['cat a.mjs', 'read'], ['head -n 5 a.mjs', 'read'], ['tail a.log', 'read'], ['less a.log', 'read'], ['type a.txt', 'read'], ['dir', 'read'],
+    ['find . -name x', 'read'], ['grep -n x a.mjs', 'read'], ['rg foo src', 'read'], ['sed -n 1,5p a.mjs', 'read'], ['Get-Content a.mjs', 'read'],
+    ['Get-ChildItem -Recurse', 'read'], ['Select-String -Path a.mjs -Pattern x', 'read'], ['cd x && head -n 5 a && tail b', 'read'],
+    ['sed -i s/a/b/ a.mjs', 'shell'], ['mkdir x', 'shell'], ['echo hi && cat a.mjs', 'shell'], ['cd x', 'shell'], ['', 'shell'], ['cat a.mjs && node --test', 'test'],
+  ];
+  for (const [command, kind] of cases) assert.equal(toolKind('Bash', command), kind, command);
+  assert.equal(readShareBeforeFirstEdit(traceSteps('claude-code', eventsOf('claude-code'))), 1, 'the ls and cat call is the only read, and it comes before the edit');
+});
+
+test('Command Code older events: tool_start, tool_call_start and tool_use are steps, once per call id, with the result merged in', () => {
+  const wrap = (event) => ({ type: 'event', event });
+  const events = [
+    wrap({ type: 'tool_start', toolCallId: 'a', toolName: 'read_file', input: { file_path: 'a.mjs' } }),
+    wrap({ type: 'tool_completed', toolCallId: 'a', toolName: 'read_file', result: [{ type: 'text', text: 'x' }] }),
+    wrap({ type: 'tool_use', id: 'b', name: 'shell_command', input: {} }),
+    wrap({ type: 'tool_queued', toolCallId: 'b', toolName: 'shell_command', input: { command: 'node --test' } }),
+    wrap({ type: 'tool_errored', toolCallId: 'b', toolName: 'shell_command' }),
+    wrap({ type: 'tool_call_start', toolCallId: 'c', toolName: 'write_file', input: { file_path: 'b.mjs' } }),
+    wrap({ type: 'tool_use', name: 'list_directory', input: { path: '.' } }),
+  ];
+  assert.deepEqual(traceSteps('command-code', events), [
+    step(0, 'read', true, { path: 'a.mjs' }),
+    step(1, 'test', false, { command: 'node --test' }),
+    step(2, 'edit', null, { path: 'b.mjs' }),
+    step(3, 'read', null, { path: '.' }),
+  ]);
+});
+
+test('a command is classified whole; only the copy kept for display is cut', () => {
+  const command = `echo ${'x'.repeat(2500)} && node --test`;
+  const [only] = traceSteps('claude-code', bash('l', command, 'ℹ fail 0'));
+  assert.equal(only.kind, 'test');
+  assert.equal(only.command, `${command.slice(0, 1000)}… [${command.length} chars]`);
 });
 
 // ---- Failure cases -----------------------------------------------------------------------
@@ -96,8 +177,8 @@ test('an unknown event gives no step and does not crash', () => {
 test('an unknown tool name is a step of kind other; a tool event the harness left without a result has ok null', () => {
   const use = { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'TodoWrite', input: { todos: [] } }, { type: 'tool_use', id: 't2', name: 'Read', input: { file_path: 'a.mjs' } }] } };
   assert.deepEqual(traceSteps('claude-code', [use]), [step(0, 'other', null), step(1, 'read', null, { path: 'a.mjs' })]);
-  const open = { type: 'tool_use', part: { id: 'p', type: 'tool', tool: 'shell', state: { status: 'completed', input: { command: 'dir' } } } };
-  assert.deepEqual(traceSteps('opencode', [open]), [step(0, 'shell', null, { command: 'dir' })], 'a shell tool with no exit code does not state its result');
+  const open = { type: 'tool_use', part: { id: 'p', type: 'tool', tool: 'shell', state: { status: 'completed', input: { command: 'mkdir out' } } } };
+  assert.deepEqual(traceSteps('opencode', [open]), [step(0, 'shell', null, { command: 'mkdir out' })], 'a shell tool with no exit code does not state its result');
 });
 
 test('a tool step in a home folder reports the path inside the call folder, or only the file name', () => {
@@ -156,6 +237,27 @@ test('a message without a test result is no claim; a message that says it could 
   assert.equal(claimOf('3 tests pass but lint fails.'), null, 'a sentence that gives both results is not read');
 });
 
+test('the claim reads the last test run overall, or the command the message names', () => {
+  const run = (command, ok) => step(0, 'test', ok, { command });
+  assert.deepEqual(checkClaim('All tests pass.', [run('node --test', false), run('node --test', null)]), { claim: 'pass', status: 'unknown' }, 'a later run with an unknown result is the last run');
+  assert.deepEqual(checkClaim('npm test passed.', [run('npm test', true), run('pytest', false)]), { claim: 'pass', status: 'consistent' }, 'the named command, not the last run');
+  assert.deepEqual(checkClaim('All tests pass.', [run('npm test', true), run('pytest', false)]), { claim: 'pass', status: 'contradicted' }, 'no named command: the last run overall');
+  assert.deepEqual(checkClaim('`pytest` fails.', [run('npm test', true)]), { claim: 'fail', status: 'unknown' }, 'the named command never ran');
+  assert.deepEqual(checkClaim('npm run test passes.', [run('npm test', false)]), { claim: 'pass', status: 'contradicted' }, 'npm run test and npm test are one command');
+  assert.deepEqual(checkClaim('npm test and pytest pass.', [run('npm test', true), run('pytest', null)]), { claim: 'pass', status: 'unknown' });
+  assert.deepEqual(checkClaim('npm test and pytest pass.', [run('npm test', true), run('pytest', true)]), { claim: 'pass', status: 'consistent' });
+});
+
+test('a negated claim is not read as a positive one', () => {
+  for (const text of ['No tests passed.', 'Not all tests pass yet.', 'The tests are not passing.', 'There is no passing test.', 'The tests don’t pass.']) assert.equal(claimOf(text), null, text);
+  assert.equal(claimOf('No issues, all tests pass.'), 'pass');
+  assert.equal(claimOf('All tests pass, with no failures.'), 'pass');
+  assert.equal(saidDone('Not done.'), false);
+  assert.equal(saidDone('Nothing was fixed.'), false);
+  assert.equal(saidDone('I have not implemented it.'), false);
+  assert.equal(saidDone('Fixed the bug. Not all edge cases are covered.'), true);
+});
+
 test('said done is a separate fact: finished work in the message, and not a blocked agent', () => {
   assert.equal(saidDone('Done. All 30 tests pass (13 existing untouched, 17 new).'), true);
   assert.equal(saidDone('Implemented the change.'), true);
@@ -169,11 +271,18 @@ test('said done is a separate fact: finished work in the message, and not a bloc
 
 const line = (caseId, model, repeat, event) => `${JSON.stringify({ case_id: caseId, model_key: model, repeat, event })}\n`;
 
-test('events are read line by line: only the wanted rows, streamed noise counted but not kept, a bad line skipped', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-trace-read-'));
+const tempDir = (t, name) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), name));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const file = path.join(dir, 'harness-events.ndjson');
+  return dir;
+};
+
+test('events are read one row at a time: only the wanted rows, streamed noise counted but not kept, a bad line skipped, a command never cut', async (t) => {
+  const file = path.join(tempDir(t, 'lab-trace-read-'), 'harness-events.ndjson');
   const tool = { type: 'event', event: { type: 'tool_queued', toolCallId: 'x', toolName: 'read_file', input: { file_path: 'a'.repeat(5000) } } };
+  const longCommand = `echo ${'y'.repeat(3000)} && node --test | tail -n 5`;
+  const shellTool = { type: 'event', event: { type: 'tool_queued', toolCallId: 'y', toolName: 'shell_command', input: { command: longCommand } } };
+  const output = { type: 'event', event: { type: 'tool_completed', toolCallId: 'y', toolName: 'shell_command', result: [{ type: 'text', text: `${'z'.repeat(5000)}\nℹ pass 2\nℹ fail 1\nmore output` }] } };
   fs.writeFileSync(file, [
     line('c1', 'm', 0, { type: 'event', event: { type: 'thinking_delta', delta: 'hm' } }),
     line('c1', 'm', 0, tool),
@@ -181,14 +290,54 @@ test('events are read line by line: only the wanted rows, streamed noise counted
     line('c2', 'm', 0, tool),
     line('c1', 'm', 1, { type: 'event', event: { type: 'text_delta', delta: 'hi' } }),
     line('c"quoted', 'm', 0, tool),
+    line('c"quoted', 'm', 0, shellTool),
+    line('c"quoted', 'm', 0, output),
   ].join(''));
-  const rows = await readTraceEvents(file, new Set([rowKey('c1', 'm', 0), rowKey('c1', 'm', 1), rowKey('c"quoted', 'm', 0), rowKey('missing', 'm', 0)]));
-  assert.deepEqual([...rows.keys()].sort(), ['c"quoted|m|0', 'c1|m|0', 'c1|m|1']);
+  const seen = [];
+  const handed = await forEachTraceRow(file, new Set([rowKey('c1', 'm', 0), rowKey('c1', 'm', 1), rowKey('c"quoted', 'm', 0), rowKey('missing', 'm', 0)]), (key, row) => seen.push([key, row]));
+  assert.equal(handed, 3, 'the missing row is not handed over');
+  assert.deepEqual(seen.map(([key]) => key), ['c1|m|0', 'c1|m|1', 'c"quoted|m|0'], 'one row at a time, in file order');
+  const rows = new Map(seen);
   assert.equal(rows.get('c1|m|0').lines, 2);
   assert.equal(rows.get('c1|m|0').events.length, 1, 'the thinking delta is counted, not kept');
   assert.equal(rows.get('c1|m|0').events[0].event.input.file_path.length, 600, 'long text is cut');
   assert.deepEqual(rows.get('c1|m|1'), { lines: 1, events: [] }, 'a row with events and no tool step is present with zero steps');
-  assert.equal((await readTraceEvents(path.join(dir, 'none.ndjson'), new Set(['x']))).size, 0);
+  const quoted = rows.get('c"quoted|m|0');
+  assert.equal(quoted.events[1].event.input.command, longCommand, 'a command is never cut');
+  assert.deepEqual(traceSteps('command-code', quoted.events).map((item) => [item.kind, item.ok]), [['read', null], ['test', false]], 'a long output keeps its test summary: 1 failed');
+  assert.equal(await forEachTraceRow(path.join(path.dirname(file), 'none.ndjson'), new Set(['x']), () => assert.fail('no row')), 0);
+});
+
+test('rows that are not contiguous in the file are still handed over whole, and the last hand-over of a row is the complete one', async (t) => {
+  const file = path.join(tempDir(t, 'lab-trace-mixed-'), 'harness-events.ndjson');
+  const call = (id) => ({ type: 'event', event: { type: 'tool_queued', toolCallId: id, toolName: 'read_file', input: { file_path: `${id}.mjs` } } });
+  fs.writeFileSync(file, [line('r1', 'm', 0, call('a')), line('r2', 'm', 0, call('b')), line('r1', 'm', 0, call('c'))].join(''));
+  const rows = new Map();
+  const handed = await forEachTraceRow(file, new Set([rowKey('r1', 'm', 0), rowKey('r2', 'm', 0)]), (key, row) => rows.set(key, row));
+  assert.equal(handed, 2);
+  assert.deepEqual(traceSteps('command-code', rows.get('r1|m|0').events).map((item) => item.path), ['a.mjs', 'c.mjs']);
+  assert.equal(rows.get('r1|m|0').lines, 2);
+  assert.deepEqual(traceSteps('command-code', rows.get('r2|m|0').events).map((item) => item.path), ['b.mjs']);
+});
+
+test('the ledger hashes an event file in chunks, with the same hash as hashing the whole file', (t) => {
+  const dir = tempDir(t, 'lab-trace-hash-');
+  const bytes = Buffer.alloc(3 * 1024 * 1024 + 17);
+  for (let i = 0; i < bytes.length; i += 1) bytes[i] = (i * 31 + 7) & 255;
+  fs.writeFileSync(path.join(dir, 'harness-events.ndjson'), bytes);
+  const whole = '27f3f0120d4a72b66e7b58152c631644bd689231ebd4487469b59226f1be13af'; // sha256 of these bytes, taken before the change
+  assert.equal(runFiles(dir).files['harness-events.ndjson'], whole);
+  assert.deepEqual(eventsState(dir), { size: 3145745, sha256: whole });
+  assert.deepEqual(eventsState(dir, 1048577), { size: 1048577, sha256: '0d09f3eabb5c78e5d435c41e3b3755f1c4d038657f739d0be0083c24e71235df' }, 'a prefix one byte past a chunk');
+  assert.deepEqual(eventsState(dir, 9999999), { size: 3145745, sha256: whole }, 'a prefix longer than the file is the file');
+  assert.deepEqual(eventsState(path.join(dir, 'none'), 5), { size: 0, sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' }, 'no file is an empty file');
+});
+
+test('the trace fixtures hold no credential, account, e-mail, home path or real session value', () => {
+  for (const name of fs.readdirSync(FIXTURES)) {
+    const text = fs.readFileSync(path.join(FIXTURES, name), 'utf8');
+    assert.doesNotMatch(text, /credential|expires_at|api[_-]?key|bearer|password|secret|[\w.+-]+@[\w-]+\.[a-z]{2,}|AppData|\b[A-Za-z]:\\\\|Users\\\\|\/Users\/|\/home\/|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i, name);
+  }
 });
 
 // ---- node lab trace, on a small data root ------------------------------------------------
@@ -210,7 +359,9 @@ const caseOf = (slug, level, minutes) => ({
 });
 const CASES = [caseOf('a1', 1, 1), caseOf('a2', 2, 5), caseOf('a3', 3, 20), caseOf('a4', 4, 60)];
 
-function manifest(runId, modelKey, harness, status) {
+const FORMAT = { id: 'svg-structure', version: '1', dimension: 'format' };
+
+function manifest(runId, modelKey, harness, status, evaluator = QUALITY, repeats = 1) {
   return {
     run_id: runId,
     created_at: '2026-11-01T10:00:00.000Z',
@@ -218,25 +369,27 @@ function manifest(runId, modelKey, harness, status) {
     status,
     suite: { id: 'ladder-agent', version: '1.0.0', sha256: 'a'.repeat(64) },
     prompt: { id: 'agent-task', version: '1', sha256: 'b'.repeat(64) },
-    experiment: { id: 'ladder-agent', suite: 'ladder-agent', prompt: 'agent-task', repeats: 1 },
+    experiment: { id: 'ladder-agent', suite: 'ladder-agent', prompt: 'agent-task', repeats },
     models: [{ model_key: modelKey, provider: 'fake', model: modelKey, params: {} }],
-    repeats: 1,
-    evaluators: [QUALITY],
+    repeats,
+    evaluators: [evaluator],
     harness: { name: harness, version: '1.0.0', entrypoint: 'headless', access_method: 'subscription', platform: 'win32', session_id: null, settings: {} },
     ...(status === 'running' ? { runner: { pid: 1, heartbeat_at: '2026-11-01T10:00:00.000Z' } } : {}),
   };
 }
 
-// rows: [{ slug, value, tokens, text, events }]; events null means the stream has no line for the row.
+// rows: [{ slug, value, tokens, text, events, repeat, ran }]; events null means the stream has no line for the row.
+// ran false: the hidden check did not run for the row (no workspace was stored), as workspace-tests records it.
 function writeRun(root, rand, modelKey, harness, rows, status = 'completed') {
   const runId = `20261101T100000Z__ladder-agent__ladder-agent__${rand}`;
   const dir = path.join(root, 'results', runId);
-  write(path.join(dir, 'run.json'), `${JSON.stringify(manifest(runId, modelKey, harness, status), null, 2)}\n`);
-  write(path.join(dir, 'raw.jsonl'), jsonl(rows.map(({ slug, tokens, text }) => ({
+  const repeats = Math.max(...rows.map((row) => (row.repeat ?? 0) + 1));
+  write(path.join(dir, 'run.json'), `${JSON.stringify(manifest(runId, modelKey, harness, status, QUALITY, repeats), null, 2)}\n`);
+  write(path.join(dir, 'raw.jsonl'), jsonl(rows.map(({ slug, tokens, text, repeat = 0 }) => ({
     run_id: runId,
     case_id: `ladder-agent-${slug}`,
     model_key: modelKey,
-    repeat: 0,
+    repeat,
     started_at: '2026-11-01T10:00:00.000Z',
     latency_ms: 1000,
     tool_calls: 0,
@@ -248,8 +401,33 @@ function writeRun(root, rand, modelKey, harness, rows, status = 'completed') {
     error: null,
     metadata: {},
   }))));
-  write(path.join(dir, 'scores', 'workspace-tests@1.jsonl'), jsonl(rows.map(({ slug, value }) => ({ run_id: runId, case_id: `ladder-agent-${slug}`, model_key: modelKey, repeat: 0, evaluator_id: 'workspace-tests', evaluator_version: '1', dimension: 'quality', value, passed: value === 1, details: {} }))));
-  write(path.join(dir, 'harness-events.ndjson'), rows.filter(({ events }) => events).flatMap(({ slug, events }) => events.map((event) => line(`ladder-agent-${slug}`, modelKey, 0, event))).join(''));
+  const details = ({ slug, value, ran = true }) => (ran ? { check: slug, passed_tests: value === 1 ? 1 : 0, total_tests: 1, results: [] } : { check: slug, error: 'no workspace was stored for this row' });
+  write(path.join(dir, 'scores', 'workspace-tests@1.jsonl'), jsonl(rows.map((row) => ({ run_id: runId, case_id: `ladder-agent-${row.slug}`, model_key: modelKey, repeat: row.repeat ?? 0, evaluator_id: 'workspace-tests', evaluator_version: '1', dimension: 'quality', value: row.value, passed: row.value === 1, details: details(row) }))));
+  write(path.join(dir, 'harness-events.ndjson'), rows.filter(({ events }) => events).flatMap(({ slug, events, repeat = 0 }) => events.map((event) => line(`ladder-agent-${slug}`, modelKey, repeat, event))).join(''));
+  return dir;
+}
+
+// A run that only checks the format. Its rows are errors, which count as failed rows with value 0 even without a quality evaluator.
+function writeFormatRun(root, rand, modelKey, harness, slugs) {
+  const runId = `20261102T100000Z__ladder-agent__svg-format__${rand}`;
+  const dir = path.join(root, 'results', runId);
+  write(path.join(dir, 'run.json'), `${JSON.stringify(manifest(runId, modelKey, harness, 'completed', FORMAT), null, 2)}\n`);
+  const key = (slug) => ({ run_id: runId, case_id: `ladder-agent-${slug}`, model_key: modelKey, repeat: 0 });
+  write(path.join(dir, 'raw.jsonl'), jsonl(slugs.map((slug) => ({
+    ...key(slug),
+    started_at: '2026-11-02T10:00:00.000Z',
+    latency_ms: 1000,
+    tool_calls: 0,
+    skills_used: [],
+    request: { prompt_id: 'agent-task', prompt_version: '1', messages: [], system_prompt: null, params: {} },
+    response: { text: null, finish_reason: null },
+    usage: { input_tokens: 1, output_tokens: 5 },
+    cost_usd: null,
+    error: { type: 'harness_error', message: 'the harness stopped' },
+    metadata: {},
+  }))));
+  write(path.join(dir, 'scores', 'svg-structure@1.jsonl'), jsonl(slugs.map((slug) => ({ ...key(slug), evaluator_id: 'svg-structure', evaluator_version: '1', dimension: 'format', value: 0, passed: false, details: {} }))));
+  write(path.join(dir, 'harness-events.ndjson'), '');
   return dir;
 }
 
@@ -259,12 +437,18 @@ const OPENCODE_FAILING = OPENCODE.filter((_, index) => index !== OPENCODE.map((e
 const COMMAND_CODE = eventsOf('command-code');
 const TEXT_ONLY = [{ type: 'text', part: { id: 'p', type: 'text', text: 'Updated the docs.' } }];
 
-function makeRoot(t) {
+function makeRoot(t, build = standardRuns) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-trace-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 5 }));
   fs.cpSync(path.join(REPO, 'configs', 'ladder.yaml'), path.join(root, 'configs', 'ladder.yaml'));
   write(path.join(root, 'datasets', 'ladder-agent', 'suite.yaml'), 'id: ladder-agent\nversion: "1.0.0"\n');
   write(path.join(root, 'datasets', 'ladder-agent', 'cases.jsonl'), jsonl(CASES));
+  build(root);
+  ensureLedger(root);
+  return root;
+}
+
+function standardRuns(root) {
   // model-a on OpenCode: a1 is true, a2 is contradicted (hidden check failed too), a3 has no events, a4 used no tool.
   writeRun(root, 'a00001', 'model-a', 'opencode', [
     { slug: 'a1', value: 1, tokens: 100, text: 'Fixed it. All tests pass.', events: OPENCODE },
@@ -281,8 +465,6 @@ function makeRoot(t) {
   ]);
   // A run that is still running counts nowhere, even with tool events.
   writeRun(root, 'b00001', 'model-running', 'opencode', [{ slug: 'a1', value: 1, tokens: 1, text: 'x', events: OPENCODE }], 'running');
-  ensureLedger(root);
-  return root;
 }
 
 async function trace(root, values = {}) {
@@ -304,10 +486,10 @@ test('per configuration: tool calls, tests run, reads before the first edit, rep
   assert.deepEqual(report.configs.map((config) => config.config_id.split('__')[0]).sort(), ['model-a', 'model-b'], 'a run that is still running counts nowhere');
   assert.equal(report.rows_counted, 8);
   const { 'model-a': a, 'model-b': b } = byModel(report);
-  // OpenCode sample: 8 steps (3 test runs); the failing copy: 7 steps (2 test runs); the text-only row: 0 steps.
+  // OpenCode sample: 8 steps (2 test runs; the third `node --test` was a shell parse error); the failing copy: 7 steps (1 test run); the text-only row: 0 steps.
   assert.deepEqual([a.rows, a.rows_with_events, a.rows_missing_events], [4, 3, 1]);
   assert.deepEqual(a.tool_calls, { total: 15, median_per_row: 7, rows: 3 });
-  assert.deepEqual(a.tests_run, { total: 5, rows_with_a_test: 2 });
+  assert.deepEqual(a.tests_run, { total: 3, rows_with_a_test: 2 });
   assert.deepEqual(a.reads_before_first_edit, { share: 1, rows: 2 });
   assert.equal(a.repeated_failing_commands, 0);
   assert.deepEqual(a.output_tokens, { median: 250, rows: 4 }, 'the median of 100, 200, 300 and 400');
@@ -345,9 +527,65 @@ test('output tokens per solved task reads the tasks both configurations solved',
   const report = await asJson(makeRoot(t));
   const [a, b] = ['model-a', 'model-b'].map((model) => byModel(report)[model].config_id);
   // model-a solved a1, a3, a4; model-b solved a1, a2, a3. Shared: a1 and a3.
-  assert.deepEqual(report.pairs, [{ a, b, tasks: 2, median_output_tokens: { [a]: 200, [b]: 70 } }]);
-  assert.deepEqual(report.shared_solved, { tasks: 2, medians: { [a]: 200, [b]: 70 } });
+  assert.deepEqual(report.pairs, [{ a, b, tasks: 2, left_out_no_tokens: 0, median_output_tokens: { [a]: 200, [b]: 70 } }]);
+  assert.deepEqual(report.shared_solved, { tasks: 2, left_out_no_tokens: 0, medians: { [a]: 200, [b]: 70 } });
   assert.equal(byModel(report)['model-a'].output_tokens.median, 250, 'the plain median reads every counted row, the shared one only shared tasks');
+});
+
+test('a task with a repeat that has no token value is left out of the paired cost, and the pair says how many', async (t) => {
+  const root = makeRoot(t, (dir) => {
+    writeRun(dir, 'c00001', 'model-c', 'opencode', [
+      { slug: 'a1', value: 1, tokens: 10, text: 'x', events: null },
+      { slug: 'a2', value: 1, tokens: 20, text: 'x', events: null, repeat: 0 },
+      { slug: 'a2', value: 1, tokens: null, text: 'x', events: null, repeat: 1 },
+      { slug: 'a3', value: 1, tokens: 30, text: 'x', events: null },
+    ]);
+    writeRun(dir, 'c00002', 'model-d', 'command-code', [
+      { slug: 'a1', value: 1, tokens: 40, text: 'x', events: null },
+      { slug: 'a2', value: 1, tokens: 50, text: 'x', events: null },
+      { slug: 'a3', value: 1, tokens: 60, text: 'x', events: null },
+    ]);
+  });
+  const report = await asJson(root);
+  const [c, d] = ['model-c', 'model-d'].map((model) => byModel(report)[model].config_id);
+  assert.deepEqual(report.pairs, [{ a: c, b: d, tasks: 2, left_out_no_tokens: 1, median_output_tokens: { [c]: 20, [d]: 50 } }], 'a1 and a3 are paired; a2 is solved by both but model-c has no tokens for one repeat');
+  assert.deepEqual(report.shared_solved, { tasks: 2, left_out_no_tokens: 1, medians: { [c]: 20, [d]: 50 } });
+  assert.match((await trace(root)).text, /model-c__\S+ and model-d__\S+: 1 task\(s\) solved by both are left out of the paired cost: a repeat has no output token count\./);
+});
+
+test('rows of a context with no quality evaluator do not enter the totals', async (t) => {
+  const root = makeRoot(t, (dir) => {
+    standardRuns(dir);
+    writeFormatRun(dir, 'f00001', 'model-a', 'opencode', ['a1', 'a2']);
+  });
+  const report = await asJson(root);
+  assert.equal(byModel(report)['model-a'].rows, 4, 'the format-only run adds no row to model-a');
+  assert.equal(report.rows_counted, 8);
+  assert.equal(report.runs, 2);
+});
+
+test('said done and the hidden check: a failed check that ran is counted; a check that did not run is a separate count and no failure', async (t) => {
+  const root = makeRoot(t, (dir) => {
+    writeRun(dir, 'd00001', 'model-a', 'opencode', [
+      { slug: 'a1', value: 0, tokens: 1, text: 'Fixed it.', events: TEXT_ONLY, ran: false },
+      { slug: 'a2', value: 0, tokens: 1, text: 'Done.', events: TEXT_ONLY },
+      { slug: 'a3', value: 1, tokens: 1, text: 'Done.', events: TEXT_ONLY },
+      { slug: 'a4', value: 0, tokens: 1, text: 'I could not change anything.', events: TEXT_ONLY, ran: false },
+    ]);
+  });
+  const report = await asJson(root);
+  const a = byModel(report)['model-a'];
+  assert.deepEqual(a.said_done_check_failed, { count: 1, rows_checked: 4 });
+  assert.deepEqual(a.said_done_check_not_run, { count: 1, rows_checked: 4 });
+  const text = (await trace(root)).text;
+  assert.match(text, /model-a__\S+: 1 row\(s\) said done, and the hidden check did not run for them\. They are not counted as a failed check\./);
+});
+
+test('one Codex file_change is one tool call: the synthetic sample reports four', async (t) => {
+  const root = makeRoot(t, (dir) => writeRun(dir, 'e00001', 'model-e', 'codex', [{ slug: 'a1', value: 1, tokens: 90, text: 'Fixed the digits case. All tests pass.', events: eventsOf('codex.synthetic') }]));
+  const e = byModel(await asJson(root))['model-e'];
+  assert.deepEqual(e.tool_calls, { total: 4, median_per_row: 4, rows: 1 });
+  assert.deepEqual(e.tests_run, { total: 2, rows_with_a_test: 1 });
 });
 
 test('--runs and --suite-version choose the rows; a bare version needs --suite', async (t) => {
@@ -368,7 +606,7 @@ test('the text report has the columns, the notes and no home path; --json parses
   assert.equal(code, 0);
   assert.match(text, /^Trace of 8 counted row\(s\) from 2 run\(s\)\./);
   assert.match(text, /rows with events {2}tool calls \(median\/row, total\) {2}tests run/);
-  assert.match(text, /model-a__\S+ +3\/4 +7, 15 +5 in 2 row\(s\) +1\.00 \(2 rows\) +0 +250 +1 \/ 1 \/ 1 +1\b/);
+  assert.match(text, /model-a__\S+ +3\/4 +7, 15 +3 in 2 row\(s\) +1\.00 \(2 rows\) +0 +250 +1 \/ 1 \/ 1 +1\b/);
   assert.match(text, /Median output tokens per solved task, on the tasks both configurations solved:/);
   assert.match(text, /It is not a claim of dishonesty\./);
   const json = (await trace(root, { json: true })).text;

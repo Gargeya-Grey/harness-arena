@@ -5,11 +5,16 @@ Each `<harness>.events.jsonl` file is one row of a real `harness-events.ndjson`:
 are redacted. The call folder is `<workdir>`, every session, message, tool-call and
 request id is a counter (`uuid-1`, `call-2`), long text is cut at 400 characters, and
 the setup events (`system/init`, plugin and skill lists), rate-limit events,
-signatures and message metadata are removed. The step list that `traceSteps` reads
-from each file does not change by this.
+signatures and message metadata are removed. So is every field that names an account, a
+credential or its expiry (the Claude Code result line had one), a billing plan, an
+e-mail address or a home folder. The step list that `traceSteps` reads from each file
+does not change by this. `tests/trajectory.test.mjs` scans every file in this folder for
+those values; add a field to its pattern when a new harness version adds one.
 
-- `claude-code.events.jsonl`: one `ls`/`cat`, one edit, one test run.
-- `opencode.events.jsonl`: reads, two failed `node --test` runs (exit 1), a write, a passing run.
+- `claude-code.events.jsonl`: one `ls`/`cat` call (a read), one edit, one test run piped to `tail`.
+- `opencode.events.jsonl`: reads, one `cd <workdir> && node --test` that PowerShell refused
+  (a parse error, exit 1: not a test run), one failed `node --test` run (exit 1), a write,
+  a passing run. Two test runs.
 - `command-code.events.jsonl`: tool events plus the streamed noise (`thinking_delta`,
   `text_delta`, `message_end`, `turn_end`) that gives no step. One `tool_errored`.
 - `codex.events.jsonl`: the real events of a Codex agent row. Codex could not read

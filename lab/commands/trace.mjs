@@ -7,7 +7,7 @@ import path from 'node:path';
 import { countedRows, buildState } from '../lib/state.mjs';
 import { findRunDir } from '../lib/repo.mjs';
 import { ladderCommand } from './ladder.mjs';
-import { checkClaim, hasStepParser, median, readShareBeforeFirstEdit, readTraceEvents, repeatedFailures, rowKey, saidDone, scrub, traceSteps } from '../lib/trajectory.mjs';
+import { checkClaim, forEachTraceRow, hasStepParser, median, readShareBeforeFirstEdit, repeatedFailures, rowKey, saidDone, scrub, traceSteps } from '../lib/trajectory.mjs';
 
 const EPS = 1e-9;
 const mean = (values) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null);
@@ -36,6 +36,8 @@ function perConfig(configId, label, rows, solvedBy) {
   for (const row of rows) if (row.claim?.status) claims[row.claim.status] += 1;
   const tokens = rows.map((row) => row.output_tokens).filter((value) => value != null);
   const agentRows = rows.filter((row) => row.kind === 'agent');
+  // A failed check needs a check that ran. A row whose check did not run (no workspace was stored) is counted apart.
+  const saidDoneRows = agentRows.filter((row) => row.said_done);
   return {
     config_id: configId,
     label,
@@ -49,15 +51,26 @@ function perConfig(configId, label, rows, solvedBy) {
     repeated_failing_commands: tools.length ? tools.reduce((sum, row) => sum + row.process.repeated_failing_commands, 0) : null,
     output_tokens: { median: median(tokens), rows: tokens.length },
     claims: { ...claims, rows_checked: agentRows.length },
-    said_done_check_failed: { count: agentRows.filter((row) => row.said_done && row.value < 1 - EPS).length, rows_checked: agentRows.length },
+    said_done_check_failed: { count: saidDoneRows.filter((row) => row.check_ran && row.value < 1 - EPS).length, rows_checked: agentRows.length },
+    said_done_check_not_run: { count: saidDoneRows.filter((row) => !row.check_ran).length, rows_checked: agentRows.length },
     tasks_solved: solvedBy.size,
   };
 }
 
-/** Median output tokens per solved task, on the tasks every given configuration solved. */
+/**
+ * Median output tokens per solved task, on the tasks every given configuration solved.
+ * A task with a repeat that has no token value has no cost: it is left out, and counted in left_out_no_tokens.
+ */
 function sharedSolved(tasksByConfig, ids) {
-  const shared = [...tasksByConfig.get(ids[0]).keys()].filter((caseId) => ids.every((id) => tasksByConfig.get(id).get(caseId)?.solved && tasksByConfig.get(id).get(caseId).tokens != null)).sort();
-  return { tasks: shared.length, medians: Object.fromEntries(ids.map((id) => [id, median(shared.map((caseId) => tasksByConfig.get(id).get(caseId).tokens))])) };
+  const solvedByAll = [...tasksByConfig.get(ids[0]).keys()].filter((caseId) => ids.every((id) => tasksByConfig.get(id).get(caseId)?.solved)).sort();
+  const shared = solvedByAll.filter((caseId) => ids.every((id) => tasksByConfig.get(id).get(caseId).tokens != null));
+  return { tasks: shared.length, left_out_no_tokens: solvedByAll.length - shared.length, medians: Object.fromEntries(ids.map((id) => [id, median(shared.map((caseId) => tasksByConfig.get(id).get(caseId).tokens))])) };
+}
+
+/** Did the hidden check run for this row? Only a quality score that records tests tells it: an error or no score means it did not. */
+function checkRan(row) {
+  const details = row.scores?.find((score) => score.dimension === 'quality')?.details;
+  return Boolean(details) && !details.error && Number(details.total_tests) > 0;
 }
 
 export async function buildTrace(root, { suite = null, suiteVersions = null, runs = null, harness = null, models = null } = {}) {
@@ -77,10 +90,13 @@ export async function buildTrace(root, { suite = null, suiteVersions = null, run
   const kindOf = new Map(report.cases.map((entry) => [entry.case_id, entry.kind]));
   const counted = new Set(report.cases.flatMap((entry) => entry.per_config.map((item) => `${item.config_id}|${entry.case_id}`)));
   const wantConfig = (id) => (!models || models.includes(state.configs[id]?.model_key)) && (!harness || state.configs[id]?.harness?.name === harness || state.configs[id]?.harness === harness);
+  // The scope of the ladder report: only the rows of a context that has a quality evaluator. A format-only run
+  // of the same configuration and case has error rows that countedRows would count as failed.
+  const withQuality = new Set((state.contexts || []).filter((ctx) => (ctx.evaluators || []).some((item) => item.dimension === 'quality')).map((ctx) => ctx.key));
 
   const picked = state.observations.filter((row) => {
     const run = runOf.get(row.run_id);
-    return row.trusted !== false && run && String(run.suite?.version) === String(versionOf.get(run.suite?.id))
+    return row.trusted !== false && run && withQuality.has(row.context_key) && String(run.suite?.version) === String(versionOf.get(run.suite?.id))
       && (!runSet || runSet.has(row.run_id)) && counted.has(`${row.config_id}|${row.case_id}`) && wantConfig(row.config_id) && countedRows([row], true).length === 1;
   });
 
@@ -94,13 +110,21 @@ export async function buildTrace(root, { suite = null, suiteVersions = null, run
     const name = runOf.get(runId).harness?.name ?? null;
     const parser = hasStepParser(name);
     const dir = findRunDir(root, runId);
-    const wanted = new Set(list.map((row) => rowKey(row.case_id, row.model_key, row.repeat)));
-    const events = parser && dir ? await readTraceEvents(path.join(dir, 'harness-events.ndjson'), wanted) : new Map();
+    const byKey = new Map(list.map((row) => [rowKey(row.case_id, row.model_key, row.repeat), row]));
+    // Each row is read, summarized and dropped before the next one: the steps of a row are not kept.
+    const read = new Map();
+    if (parser && dir) {
+      await forEachTraceRow(path.join(dir, 'harness-events.ndjson'), new Set(byKey.keys()), (key, entry) => {
+        const row = byKey.get(key);
+        const steps = traceSteps(name, entry.events);
+        // The claim check is for agent tasks, where the message can name a command result.
+        read.set(key, { process: summarize(steps), claim: kindOf.get(row.case_id) === 'agent' ? checkClaim(row.response?.text, steps) : null });
+      });
+    }
     for (const row of list) {
-      const found = events.get(rowKey(row.case_id, row.model_key, row.repeat));
+      const found = read.get(rowKey(row.case_id, row.model_key, row.repeat));
       const kind = kindOf.get(row.case_id);
       const state_ = !parser ? 'no parser' : found ? 'present' : 'missing';
-      const steps = state_ === 'present' ? traceSteps(name, found.events) : null;
       const text = row.response?.text;
       rows.push({
         run_id: runId,
@@ -110,10 +134,10 @@ export async function buildTrace(root, { suite = null, suiteVersions = null, run
         kind,
         harness: name,
         events: state_,
-        process: summarize(steps),
-        // The claim check is for agent tasks, where the message can name a command result.
-        claim: kind === 'agent' ? checkClaim(text, steps ?? []) : null,
+        process: found?.process ?? null,
+        claim: kind !== 'agent' ? null : found ? found.claim : checkClaim(text, []),
         said_done: kind === 'agent' && saidDone(text),
+        check_ran: kind === 'agent' ? checkRan(row) : null,
         value: row.quality ?? 0,
         output_tokens: typeof row.usage?.output_tokens === 'number' ? row.usage.output_tokens : null,
       });
@@ -128,8 +152,9 @@ export async function buildTrace(root, { suite = null, suiteVersions = null, run
     for (const entry of report.cases) {
       const own = entry.per_config.find((item) => item.config_id === id);
       if (!own) continue;
-      const tokens = (rowsByConfig.get(id) || []).filter((row) => row.case_id === entry.case_id && row.output_tokens != null).map((row) => row.output_tokens);
-      tasks.set(entry.case_id, { solved: own.solved, tokens: mean(tokens) });
+      const ownRows = (rowsByConfig.get(id) || []).filter((row) => row.case_id === entry.case_id);
+      // A task has a cost only when every one of its repeats has a token value.
+      tasks.set(entry.case_id, { solved: own.solved, tokens: ownRows.length && ownRows.every((row) => row.output_tokens != null) ? mean(ownRows.map((row) => row.output_tokens)) : null });
     }
     tasksByConfig.set(id, tasks);
   }
@@ -138,7 +163,7 @@ export async function buildTrace(root, { suite = null, suiteVersions = null, run
   for (let a = 0; a < order.length; a += 1) {
     for (let b = a + 1; b < order.length; b += 1) {
       const shared = sharedSolved(tasksByConfig, [order[a], order[b]]);
-      if (shared.tasks) pairs.push({ a: order[a], b: order[b], tasks: shared.tasks, median_output_tokens: shared.medians });
+      if (shared.tasks || shared.left_out_no_tokens) pairs.push({ a: order[a], b: order[b], tasks: shared.tasks, left_out_no_tokens: shared.left_out_no_tokens, median_output_tokens: shared.medians });
     }
   }
   const all = order.length > 1 ? sharedSolved(tasksByConfig, order) : null;
@@ -182,18 +207,20 @@ export function formatTrace(trace) {
   ));
   const missing = trace.configs.filter((config) => config.rows_missing_events);
   for (const config of missing) lines.push(`${config.config_id}: ${config.rows_missing_events} row(s) have no events. They are missing from the process columns, not counted as zero.`);
+  for (const config of trace.configs.filter((item) => item.said_done_check_not_run.count)) lines.push(`${config.config_id}: ${config.said_done_check_not_run.count} row(s) said done, and the hidden check did not run for them. They are not counted as a failed check.`);
   if (trace.pairs.length) {
     lines.push('', 'Median output tokens per solved task, on the tasks both configurations solved:');
     lines.push(...table(['configuration A', 'configuration B', 'shared solved tasks', 'median A', 'median B'], trace.pairs.map((pair) => [pair.a, pair.b, pair.tasks, fixed(pair.median_output_tokens[pair.a], 1), fixed(pair.median_output_tokens[pair.b], 1)])));
-    if (trace.shared_solved && trace.configs.length > 2) lines.push(`Tasks solved by all ${trace.configs.length} configurations: ${trace.shared_solved.tasks}.`);
+    for (const pair of trace.pairs.filter((item) => item.left_out_no_tokens)) lines.push(`${pair.a} and ${pair.b}: ${pair.left_out_no_tokens} task(s) solved by both are left out of the paired cost: a repeat has no output token count.`);
+    if (trace.shared_solved && trace.configs.length > 2) lines.push(`Tasks solved by all ${trace.configs.length} configurations: ${trace.shared_solved.tasks}${trace.shared_solved.left_out_no_tokens ? ` (${trace.shared_solved.left_out_no_tokens} more left out: a repeat has no output token count)` : ''}.`);
   }
   lines.push(
     '',
     'Tool calls, tests, reads and failing commands come from the harness events. "-" means no event to read; "no parser" means this harness has no step parser.',
     'Reads before 1st edit: reads before the first edit as a share of all reads, mean over rows with at least one read and one edit.',
     'Repeated failing commands: a command that failed again after the same command had failed in the same row. A command counts as failed only when the harness states it.',
-    'Claims: a claim is contradicted only when the final message says tests pass (or fail) and the last test command in the events shows the other. No such command, or a result the harness does not state, gives unknown. Agent tasks only.',
-    'Said done, check failed: the final message reports finished work and the hidden check scored below 1. It is not a claim of dishonesty.',
+    'Claims: a claim is contradicted only when the final message says tests pass (or fail) and the events show the other: for the command the message names, or else for the last test run. No such run, or a last run with an unknown result, gives unknown. Agent tasks only.',
+    'Said done, check failed: the final message reports finished work and the hidden check ran and scored below 1. A row whose check did not run is not counted here. It is not a claim of dishonesty.',
   );
   return lines;
 }
