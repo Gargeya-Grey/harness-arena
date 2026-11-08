@@ -1,0 +1,30 @@
+{
+  "seed": 20261108,
+  "algorithm": "mulberry32 shuffle (Fisher-Yates from the end) of the pool sorted by case_id; the first 5",
+  "suite": "ladder-code",
+  "suite_version": "1.0.0",
+  "pool": [
+    "ladder-code-binomial-composite-mod",
+    "ladder-code-convex-clip",
+    "ladder-code-coupon-path",
+    "ladder-code-fee-partition-cost",
+    "ladder-code-forbidden-strings",
+    "ladder-code-gated-routes",
+    "ladder-code-lazy-range-ops",
+    "ladder-code-lumen-interpreter",
+    "ladder-code-offer-lifetimes",
+    "ladder-code-parse-counter",
+    "ladder-code-partition-valid-groups",
+    "ladder-code-rect-coverage",
+    "ladder-code-shared-substrings",
+    "ladder-code-sheet-engine",
+    "ladder-code-tree-path-ops"
+  ],
+  "drawn": [
+    "ladder-code-fee-partition-cost",
+    "ladder-code-parse-counter",
+    "ladder-code-coupon-path",
+    "ladder-code-offer-lifetimes",
+    "ladder-code-convex-clip"
+  ]
+}
