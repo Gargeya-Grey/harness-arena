@@ -73,6 +73,7 @@ To add any other model that OpenCode reaches (`opencode models` lists them), add
 | `node lab validate` | Checks every input and stored record against `schemas/`. |
 | `node lab runs` | Lists runs, newest first. |
 | `node lab ladder [--calibrate] [--suite <id>] [--suite-version <suite>@<version>] [--runs <id,...>] [--json]` | Prints the difficulty ladder per configuration: solved/tasks and mean score per tier, from one suite version per suite (the newest with counted runs, unless `--suite-version` says otherwise). `--calibrate` adds the information class for each task and the evidence for each pair. Reads counted evidence only; makes no model calls. |
+| `node lab signal <experiment.yaml> [--json] [--models a,b] [--cases x,y] [--repeats n]` | Before you spend calls: says whether the planned run can give a trustable signal (`worth running`, `low signal` or `unknown`), with the planned calls, the calls that repeat solved tasks, an output token estimate, the check quality and the reasons. An estimate from stored runs of the same suite version; makes no model call and writes nothing. The Run page shows the same result. |
 | `node lab report [--write]` | Prints a Markdown comparison per context, or writes `reports/comparison.md`. |
 | `node lab dashboard [--port n]` | Starts the local control page and comparison dashboard. |
 | `npm test` | Runs the test suite (`tests/*.test.mjs`). |
