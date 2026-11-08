@@ -218,7 +218,7 @@ function pairOf(a, b, cases, planned) {
 
 function pairReason(pair) {
   const names = `${pair.a_label} against ${pair.b_label}`;
-  const split = `${pair.a_only} only ${pair.a_label} solved, ${pair.b_only} only ${pair.b_label} solved`;
+  const split = `${count(pair.a_only, 'task')} only ${pair.a_label} solved, ${count(pair.b_only, 'task')} only ${pair.b_label} solved`;
   if (pair.status === 'confounded') return `${names}: a setup that cannot be shown to stay out may carry your own setup, so this pair cannot give a clean signal.`;
   if (!pair.shared) {
     return pair.status === 'unreachable'
@@ -227,7 +227,7 @@ function pairReason(pair) {
   }
   const head = `${names}: ${count(pair.shared, 'shared task')} with history, ${split}.`;
   if (pair.status === 'reachable') return `${head} That pattern gives p ${pair.sign_p}, under ${ALPHA}.`;
-  if (pair.status === 'unreachable') return `${head} Even if ${count(pair.unseen, 'task')} without history all went one way, p would stay at ${pair.best_case_p}, over ${ALPHA}.`;
+  if (pair.status === 'unreachable') return `${head} ${pair.unseen ? `Even if ${count(pair.unseen, 'task')} without history all went one way, p would stay at ${pair.best_case_p}` : `No planned task lacks history, and p stays at ${pair.best_case_p}`}, over ${ALPHA}.`;
   return `${head} p ${pair.sign_p}. ${count(pair.unseen, 'task')} ${pair.unseen === 1 ? 'has' : 'have'} no history for both, so a run could still reach ${NEEDED} disagreements.`;
 }
 

@@ -651,14 +651,16 @@ function paintSignal(r) {
     ['Planned calls', r.planned_calls],
     ['Little chance of new information', noHistory ? 'unknown' : r.calls_low_information],
     ['Output tokens (estimate)', tokenTotal(r.output_tokens)],
-    ['Disagreements a pair needs', r.pairs.length ? `${r.pairs[0].needed}, history predicts ${predicted.length ? Math.max(...predicted) : 'unknown'}` : 'no pair'],
+    ['Disagreements a pair needs', r.pairs.length ? r.pairs[0].needed : 'no pair'],
+    ['History predicts, best pair', r.pairs.length ? (predicted.length ? Math.max(...predicted) : 'unknown') : 'no pair'],
     ['Check quality', r.checks.state === 'audited' ? `audited${r.checks.kill_rate == null ? '' : `, ${Math.round(r.checks.kill_rate * 100)}% caught`}` : 'not audited'],
   ];
   const box = signalBox();
   box.hidden = false;
   box.classList.remove('busy');
   box.innerHTML = `<div class="signal-head"><span class="mark-s ${tone}" aria-hidden="true"></span><b>${esc(word)}</b></div>`
-    + `<ul class="signal-why">${r.reasons.map((reason) => `<li>${esc(reason)}</li>`).join('')}</ul>`
+    + `<ul class="signal-why">${r.reasons.slice(0, 2).map((reason) => `<li>${esc(reason)}</li>`).join('')}</ul>`
+    + (r.reasons.length > 2 ? `<details class="signal-more"><summary class="disclose">${esc(`${plural(r.reasons.length - 2, 'more reason')}`)}</summary><ul class="signal-why">${r.reasons.slice(2).map((reason) => `<li>${esc(reason)}</li>`).join('')}</ul></details>` : '')
     + `<dl class="plan-break">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="num">${esc(v)}</dd>`).join('')}</dl>`
     + `<p class="plan-foot">${esc(r.note)}</p>`;
 }

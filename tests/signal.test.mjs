@@ -177,7 +177,7 @@ test('a pair with 6 disagreements all one way is worth running; the same data wi
   const low = signalReport(five, addExperiment(five, A_B));
   assert.deepEqual([low.pairs[0].predicted_disagreements, low.pairs[0].sign_p, low.pairs[0].status], [5, 0.0625, 'unreachable']);
   assert.equal(low.result, 'low signal');
-  assert.match(low.reasons.join('\n'), /p would stay at 0\.0625/);
+  assert.match(low.reasons.join('\n'), /No planned task lacks history, and p stays at 0\.0625, over 0\.05\./);
 });
 
 test('a pair with too little history is open: the run could still reach 6, so the result is unknown', (t) => {
