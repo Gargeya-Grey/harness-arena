@@ -330,6 +330,13 @@ export function buildState(root, { validate = true } = {}) {
   const runs = [];
   const suitesSeen = new Set();
   const cases = {};
+  // One load per suite version for the whole build: an agent suite load reads every workspace file.
+  const suiteLoads = new Map();
+  const casesAt = (suiteId, version) => {
+    const key = `${suiteId}@${version ?? ''}`;
+    if (!suiteLoads.has(key)) suiteLoads.set(key, loadCases(root, suiteId, version));
+    return suiteLoads.get(key);
+  };
 
   // The evidence ledger (lab/lib/ledger.mjs): a run that does not match it is listed,
   // flagged, and its scores do not count.
@@ -386,25 +393,33 @@ export function buildState(root, { validate = true } = {}) {
     let caseIds = declared;
     // The case list of the version the run recorded: the suite now, or its frozen copy
     // (datasets/<suite>/versions/<version>/). Neither: the cases the run has rows for.
-    const versionCases = loadCases(root, manifest.suite.id, manifest.suite.version);
+    const versionCases = casesAt(manifest.suite.id, manifest.suite.version);
     if (!caseIds.length) {
       const suiteCases = versionCases.map((item) => item.case_id);
       caseIds = suiteCases.length ? suiteCases : [...new Set(rawRows.map((row) => row.case_id))].sort();
     }
     if (!suitesSeen.has(manifest.suite.id)) {
       suitesSeen.add(manifest.suite.id);
-      for (const item of loadCases(root, manifest.suite.id)) cases[item.case_id] = { ...item, suite: manifest.suite.id };
+      for (const item of casesAt(manifest.suite.id)) cases[item.case_id] = { ...item, suite: manifest.suite.id };
     }
     // A case only an older version has (a retired task) keeps its text from that version's copy.
     for (const item of versionCases) if (!cases[item.case_id]) cases[item.case_id] = { ...item, suite: manifest.suite.id };
 
     const key = contextKey(manifest, caseIds);
     if (!contexts.has(key)) {
+      // `cases` holds one entry per case id. A context (one suite version) whose own text of a case
+      // differs from that entry carries it in `case_data`, so an old run shows the case it answered.
+      const caseData = {};
+      for (const item of versionCases) {
+        const own = { ...item, suite: manifest.suite.id };
+        if (JSON.stringify(own) !== JSON.stringify(cases[item.case_id])) caseData[item.case_id] = own;
+      }
       contexts.set(key, {
         key,
         suite: manifest.suite,
         prompt: manifest.prompt,
         cases: [...caseIds],
+        case_data: caseData,
         repeats: manifest.repeats,
         evaluators: manifest.evaluators || [],
         partial: declared.length > 0,

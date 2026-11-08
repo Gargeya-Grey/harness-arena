@@ -3,7 +3,7 @@
 
 import { parseArgs } from 'node:util';
 import path from 'node:path';
-import { labRoot } from './lib/repo.mjs';
+import { freezeSuite, labRoot } from './lib/repo.mjs';
 import { runCommand } from './commands/run.mjs';
 import { scoreCommand } from './commands/score.mjs';
 import { validateCommand } from './commands/validate.mjs';
@@ -27,6 +27,8 @@ Commands
                           only the missing rows run. --force for a run with no heartbeat
   new-case <suite> <slug> Add a case to a suite with every value to fill marked; --agent adds
                           a starter workspace and a hidden check; --prompt <id> names the fields
+  freeze <suite>          Copy the suite's current version to datasets/<suite>/versions/<version>/,
+                          so its runs still score and show after you change it; then bump the version
   score <run-id>... | --all   Recompute scores from raw.jsonl (no API calls); --force also scores a stopped run.
                           A run that does not match the evidence ledger is never scored
   adopt <run-id>... | --all   Vouch for runs as they are now in the evidence ledger (lab.ledger.jsonl):
@@ -110,6 +112,12 @@ async function main(argv) {
     case 'new-case':
       newCase(root, positionals[0], positionals[1], { agent: values.agent, prompt: values.prompt });
       return 0;
+    case 'freeze': {
+      if (positionals.length !== 1) throw new Error('Usage: node lab freeze <suite>');
+      const frozen = freezeSuite(root, positionals[0]);
+      console.log(`${path.relative(root, frozen.dir).replace(/\\/g, '/')}/: ${frozen.created ? 'frozen' : 'already frozen, same content'}. Now bump the version in suite.yaml before you change the suite.`);
+      return 0;
+    }
     case 'adopt':
       adoptCommand(root, positionals, { all: values.all });
       return 0;

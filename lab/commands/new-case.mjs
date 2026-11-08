@@ -5,19 +5,19 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadPrompt, loadSuite, paths, suiteDir as findSuiteDir } from '../lib/repo.mjs';
+import { freezeSuite, loadPrompt, loadSuite, paths, suiteDir as findSuiteDir } from '../lib/repo.mjs';
 
 export const FILL_IN = '<<FILL IN>>';
 
 const SLUG = /^[a-z0-9][a-z0-9-]*$/;
 
-function bumpPatch(file) {
+/** The patch bump of a suite.yaml, or null when its version is not x.y.z. */
+function patchBump(file) {
   const text = fs.readFileSync(file, 'utf8');
   const match = /^version:\s*"?(\d+)\.(\d+)\.(\d+)"?\s*$/m.exec(text);
   if (!match) return null;
   const next = `${match[1]}.${match[2]}.${Number(match[3]) + 1}`;
-  fs.writeFileSync(file, text.replace(match[0], `version: "${next}"`), 'utf8');
-  return { from: `${match[1]}.${match[2]}.${match[3]}`, to: next };
+  return { from: `${match[1]}.${match[2]}.${match[3]}`, to: next, text: text.replace(match[0], `version: "${next}"`) };
 }
 
 function write(file, text) {
@@ -50,6 +50,11 @@ export function newCase(root, suiteId, slug, { agent = false, prompt = null, log
 
   const rel = (file) => path.relative(root, file).replace(/\\/g, '/');
   const written = [];
+  // The old version is frozen before any file changes, so its runs still score and show.
+  const suiteFile = path.join(suiteDir, 'suite.yaml');
+  const bump = patchBump(suiteFile);
+  if (!bump) throw new Error(`${rel(suiteFile)}: version "${suite.version}" is not x.y.z, so new-case cannot bump it; add the case by hand and follow AGENTS.md`);
+  const frozen = freezeSuite(root, suiteId);
   const casesFile = path.join(suiteDir, 'cases.jsonl');
   const existing = fs.existsSync(casesFile) ? fs.readFileSync(casesFile, 'utf8') : '';
   fs.writeFileSync(casesFile, `${existing}${existing && !existing.endsWith('\n') ? '\n' : ''}${JSON.stringify(item)}\n`, 'utf8');
@@ -77,10 +82,11 @@ export function newCase(root, suiteId, slug, { agent = false, prompt = null, log
     write(path.join(check, 'expected.json'), `${JSON.stringify({ probes: { [FILL_IN]: FILL_IN }, files: {} }, null, 2)}\n`);
     written.push(rel(path.join(workspace, 'package.json')), rel(path.join(workspace, 'src', `${slug}.mjs`)), rel(path.join(check, 'probe.mjs')), rel(path.join(check, 'expected.json')));
   }
-  const bumped = bumpPatch(path.join(suiteDir, 'suite.yaml'));
+  fs.writeFileSync(suiteFile, bump.text, 'utf8');
   log(`Added ${caseId}${isAgent ? ' (agent task)' : ''}:`);
   for (const file of written) log(`  ${file}`);
-  if (bumped) log(`  datasets/${suiteId}/suite.yaml: version ${bumped.from} -> ${bumped.to}`);
+  log(`  ${rel(suiteFile)}: version ${bump.from} -> ${bump.to}`);
+  log(`  ${rel(frozen.dir)}/: ${frozen.created ? 'frozen copy' : 'frozen copy, already there'} of ${bump.from}`);
   log(`\nReplace every ${FILL_IN}, then run: node lab validate`);
   if (isAgent) log('Prove the case can be won: add a known-good solution under tests/fixtures/agentic-solutions/ and run npm test.');
   return written;

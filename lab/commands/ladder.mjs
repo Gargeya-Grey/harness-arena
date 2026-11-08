@@ -120,11 +120,12 @@ function selectVersions(observations, contextOf, chosen) {
  *   suite, runs   optional filters: a ladder suite id (or kind), and run ids
  *   suiteVersions optional ['<suite>@<version>', ...]: use that version of a suite instead of its newest
  *   diskVersions  optional Map suite id -> the suite version on disk (suite.yaml).
- *   versionCases  optional Map suite id -> Map version -> cases of that version's frozen copy
+ *   versionCases  optional Map suite id -> Map version -> { cases, sha256 } of that version's frozen copy
  *                 (datasets/<suite>/versions/<version>/). Tiers, tier sizes and the case set come from the
  *                 version the scores are from: the suite on disk, or the frozen copy of an older version
  *                 (`versions[].cases_from` says which). A run stores no case metadata, so an older version
- *                 without a copy falls back to the suite on disk, and `warnings` says so, one entry per suite.
+ *                 without a copy, or with a copy whose hash is not the one its runs recorded, falls back to
+ *                 the suite on disk, and `warnings` says so, one entry per suite.
  *
  * A task is solved by a configuration when its mean score over the configuration's counted
  * repeats is 1. A tier cell holds solved / counted tasks and the mean of those tasks' means.
@@ -145,7 +146,7 @@ export function ladderReport({ state, ladder, ladderCases, suite = null, runs = 
   // ones a run used; rows of every version a suite has are candidates until one version is chosen.
   const frozenOf = (suiteId, version) => versionCases?.get(suiteId)?.get(String(version)) ?? null;
   const candidateIds = new Set(onDiskScope.map((entry) => entry.item.case_id));
-  for (const suiteId of kindOf.keys()) for (const items of versionCases?.get(suiteId)?.values() ?? []) for (const item of items) candidateIds.add(item.case_id);
+  for (const suiteId of kindOf.keys()) for (const copy of versionCases?.get(suiteId)?.values() ?? []) for (const item of copy.cases) candidateIds.add(item.case_id);
   const withQuality = new Set((state.contexts || []).filter((ctx) => (ctx.evaluators || []).some((item) => item.dimension === 'quality')).map((ctx) => ctx.key));
   const runSet = runs ? new Set(runs) : null;
   const contextOf = new Map((state.contexts || []).map((ctx) => [ctx.key, ctx]));
@@ -162,13 +163,22 @@ export function ladderReport({ state, ladder, ladderCases, suite = null, runs = 
   const { versions } = selected;
   // Per suite, the case set and tiers of the version used: the suite on disk, or the frozen copy of
   // an older version. Without a copy the disk's case set stands, and `warnings` says so.
+  // A copy counts only when it is the content every chosen run of that suite recorded (its hash).
   const inScope = [];
+  const badCopies = new Map();
   for (const suiteId of kindOf.keys()) {
     const used = versions.find((item) => item.suite === suiteId);
     const onDisk = diskVersions?.get(suiteId);
-    const frozen = used?.version != null && onDisk != null && String(onDisk) !== used.version ? frozenOf(suiteId, used.version) : null;
+    let frozen = used?.version != null && onDisk != null && String(onDisk) !== used.version ? frozenOf(suiteId, used.version) : null;
+    if (frozen) {
+      const recorded = new Set(selected.rows.map((row) => contextOf.get(row.context_key)?.suite).filter((item) => item?.id === suiteId).map((item) => item.sha256));
+      if ([...recorded].some((sha) => sha !== frozen.sha256)) {
+        badCopies.set(suiteId, frozen.sha256);
+        frozen = null;
+      }
+    }
     if (used) used.cases_from = frozen ? 'frozen copy' : 'disk';
-    if (frozen) inScope.push(...frozen.map((item) => ({ kind: kindOf.get(suiteId), suite: suiteId, item })));
+    if (frozen) inScope.push(...frozen.cases.map((item) => ({ kind: kindOf.get(suiteId), suite: suiteId, item })));
     else inScope.push(...onDiskScope.filter((entry) => entry.suite === suiteId));
   }
   const caseIds = new Set(inScope.map((entry) => entry.item.case_id));
@@ -256,7 +266,7 @@ export function ladderReport({ state, ladder, ladderCases, suite = null, runs = 
       scored_version: item.version,
       disk_version: String(onDisk),
       tier_source: 'disk',
-      message: `${item.suite}: scores are from suite version ${item.version}, but the suite on disk is ${onDisk}. Tiers, tier sizes and the case set are those of ${onDisk}; the tiers of ${item.version} are not stored in a run, so a task that changed tier between them is judged against its new tier.`,
+      message: `${item.suite}: scores are from suite version ${item.version}, but the suite on disk is ${onDisk}. Tiers, tier sizes and the case set are those of ${onDisk}${badCopies.has(item.suite) ? `; the frozen copy of ${item.version} is not the content its runs used (hash ${badCopies.get(item.suite).slice(0, 12)}), so it is not read` : `; the tiers of ${item.version} are not stored in a run`}, so a task that changed tier between them is judged against its new tier.`,
     });
   }
 
@@ -357,7 +367,10 @@ export function ladderCommand(root, { calibrate = false, json = false, suite = n
     const version = fs.existsSync(file) ? loadYamlFile(file)?.version : null;
     if (version != null) diskVersions.set(id, String(version));
     const copies = new Map();
-    for (const old of frozenVersions(dir)) copies.set(old, loadSuite(root, id, { version: old })?.cases ?? []);
+    for (const old of frozenVersions(dir)) {
+      const copy = loadSuite(root, id, { version: old });
+      if (copy) copies.set(old, { cases: copy.cases, sha256: copy.sha256 });
+    }
     versionCases.set(id, copies);
   }
   const report = ladderReport({ state, ladder: status.ladder, ladderCases: status.cases, suite: chosen, runs: runIds, suiteVersions: versionRefs, diskVersions, versionCases });

@@ -7,10 +7,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { newCase } from '../lab/commands/new-case.mjs';
 import { scoreRun } from '../lab/commands/score.mjs';
 import { validateRepo } from '../lab/commands/validate.mjs';
 import { readJson } from '../lab/lib/fsutil.mjs';
-import { frozenVersions, loadCases, loadSuite } from '../lab/lib/repo.mjs';
+import { freezeSuite, frozenVersions, loadCases, loadSuite } from '../lab/lib/repo.mjs';
 import { buildState } from '../lab/lib/state.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -106,6 +107,56 @@ test('the state keeps a case that only the run\'s version has, with its text fro
   assert.ok(rows.length > 0 && rows.every((item) => item.quality != null), 'its scores still count');
 });
 
+test('a context of an older version carries its own text of a case that changed, and the current text stays shared', (t) => {
+  const root = tempRoot(t, [RUN]);
+  const dir = suiteFolder(root);
+  const id = 'reasoning-bat-ball';
+  const old = loadCases(root, 'reasoning', '1.0.0').find((item) => item.case_id === id);
+  const lines = fs.readFileSync(path.join(dir, 'cases.jsonl'), 'utf8').split('\n').map((line) => (line.includes(`"case_id":"${id}"`) ? JSON.stringify({ ...JSON.parse(line), input: { question: 'A new question?' } }) : line));
+  fs.writeFileSync(path.join(dir, 'cases.jsonl'), lines.join('\n'));
+  const state = buildState(root, { validate: false });
+  assert.equal(state.cases[id].input.question, 'A new question?', 'the shared entry is the suite now');
+  const context = state.contexts.find((item) => item.suite.version === '1.0.0');
+  assert.deepEqual(context.case_data[id].input, old.input, 'the 1.0.0 test shows the question its run answered');
+  assert.ok(!('reasoning-clock-angle' in context.case_data), 'an unchanged case is not repeated');
+});
+
+test('freezeSuite copies the current version with its parts, is safe to repeat, and refuses a copy that differs', (t) => {
+  const root = tempRoot(t, []);
+  const agentic = loadSuite(root, 'agentic');
+  const frozen = freezeSuite(root, 'agentic');
+  assert.deepEqual([frozen.created, frozen.version], [true, agentic.version]);
+  assert.ok(fs.existsSync(path.join(frozen.dir, 'workspaces')) && fs.existsSync(path.join(frozen.dir, 'checks')), 'a copy is complete');
+  assert.equal(freezeSuite(root, 'agentic').created, false);
+  // After the bump, the copy loads as the old version with the old hash, and later changes to the
+  // current checks do not reach it.
+  const yaml = path.join(agentic.dir, 'suite.yaml');
+  fs.writeFileSync(yaml, fs.readFileSync(yaml, 'utf8').replace(/^version: .*$/m, 'version: "9.0.0"'));
+  const check = fs.readdirSync(path.join(agentic.dir, 'checks'))[0];
+  fs.appendFileSync(path.join(agentic.dir, 'checks', check, 'expected.json'), '\n');
+  const copy = loadSuite(root, 'agentic', { version: agentic.version });
+  assert.deepEqual([copy.frozen, copy.sha256], [true, agentic.sha256]);
+  assert.equal(copy.checksDir, path.join(frozen.dir, 'checks'));
+  // A copy that is not the suite's content is refused.
+  const smoke = loadSuite(root, 'smoke');
+  fs.mkdirSync(path.join(smoke.dir, 'versions', smoke.version), { recursive: true });
+  fs.writeFileSync(path.join(smoke.dir, 'versions', smoke.version, 'suite.yaml'), 'id: smoke\n');
+  fs.writeFileSync(path.join(smoke.dir, 'versions', smoke.version, 'cases.jsonl'), '');
+  assert.throws(() => freezeSuite(root, 'smoke'), /exists and is not the current content of smoke/);
+});
+
+test('new-case freezes the old version before it adds the case and bumps the version', (t) => {
+  const root = tempRoot(t, [SMOKE_RUN]);
+  const before = loadSuite(root, 'smoke');
+  newCase(root, 'smoke', 'frozen-probe', { log: () => {} });
+  const after = loadSuite(root, 'smoke');
+  assert.notEqual(after.version, before.version);
+  const copy = loadSuite(root, 'smoke', { version: before.version });
+  assert.deepEqual([copy.frozen, copy.sha256], [true, before.sha256]);
+  const lines = [];
+  assert.equal(scoreRun(root, path.join(root, 'results', SMOKE_RUN), { log: (line) => lines.push(line) }).length > 0, true, lines.join('\n'));
+});
+
 test('validate checks every frozen copy: folder names, the current version, missing files, id and version', (t) => {
   const root = tempRoot(t, [RUN]);
   const versions = path.join(suiteFolder(root), 'versions');
@@ -113,6 +164,8 @@ test('validate checks every frozen copy: folder names, the current version, miss
   fs.writeFileSync(path.join(versions, 'notes.txt'), 'x');
   fs.cpSync(copyFolder(root), copyFolder(root, '1.1.0'), { recursive: true });
   fs.mkdirSync(copyFolder(root, '0.9.0'));
+  fs.cpSync(copyFolder(root), copyFolder(root, '0.7.0'), { recursive: true });
+  fs.rmSync(path.join(copyFolder(root, '0.7.0'), 'cases.jsonl'));
   fs.cpSync(copyFolder(root), copyFolder(root, '0.8.0'), { recursive: true });
   const file = path.join(copyFolder(root, '0.8.0'), 'suite.yaml');
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^id: .*$/m, 'id: other'));
@@ -121,6 +174,7 @@ test('validate checks every frozen copy: folder names, the current version, miss
   has(/versions[\\/]notes\.txt: versions\/ holds only folders named by a version/);
   has(/versions[\\/]1\.1\.0: version 1\.1\.0 is the current version of reasoning/);
   has(/versions[\\/]0\.9\.0: a frozen copy needs suite\.yaml and cases\.jsonl/);
+  has(/versions[\\/]0\.7\.0: a frozen copy needs suite\.yaml and cases\.jsonl/);
   has(/versions[\\/]0\.8\.0[\\/]suite\.yaml: id "other" is not "reasoning"/);
   has(/versions[\\/]0\.8\.0[\\/]suite\.yaml: version 1\.0\.0 does not match the folder name 0\.8\.0/);
 });

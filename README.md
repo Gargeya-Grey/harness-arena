@@ -68,7 +68,8 @@ To add any other model that OpenCode reaches (`opencode models` lists them), add
 | `  --dry-run` | Shows the plan: model id per harness, effort, whether the user setup loads. Calls nothing. |
 | `node lab run --resume <run-id>` | Continues a run that stopped before its last row: it crashed (`node lab runs` shows `stale`) or you stopped it. Only the missing rows run. It refuses when the suite, prompt, models or harness version changed. With `--dry-run` it lists what it would run and calls nothing. `--force` resumes a run written before the heartbeat existed. |
 | `node lab new-case <suite> <slug>` | Adds a case with every value to write marked `<<FILL IN>>`, and bumps the suite version. `--agent` also makes the starter workspace and the hidden check. `validate` fails until no marker is left. |
-| `node lab score <run-id> \| --all` | Computes scores again from `raw.jsonl`. Makes no model calls. |
+| `node lab freeze <suite>` | Copies the suite's current version to `datasets/<suite>/versions/<version>/`. Run it before you change a suite and bump its version, so old runs still score and show. `new-case` does it for you. |
+| `node lab score <run-id> \| --all` | Computes scores again from `raw.jsonl`, against the exact suite version the run used. Makes no model calls. |
 | `node lab validate` | Checks every input and stored record against `schemas/`. |
 | `node lab runs` | Lists runs, newest first. |
 | `node lab ladder [--calibrate] [--suite <id>] [--suite-version <suite>@<version>] [--runs <id,...>] [--json]` | Prints the difficulty ladder per configuration: solved/tasks and mean score per tier, from one suite version per suite (the newest with counted runs, unless `--suite-version` says otherwise). `--calibrate` adds the verdict for each task. Reads counted evidence only; makes no model calls. |

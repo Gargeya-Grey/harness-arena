@@ -190,9 +190,10 @@ export function suiteFolders(root) {
 }
 
 // A frozen copy of an earlier suite version: datasets/<suite>/versions/<version>/ holds that
-// version's suite.yaml and cases.jsonl, byte for byte, plus its workspaces/ or checks/ folder
-// only when it differs from the current one. Runs keep the version they recorded; scoring and
-// the derived views read the copy, so a new version never changes how an old run is judged.
+// version's suite.yaml and cases.jsonl, byte for byte, and its workspaces/ and checks/ when the
+// suite has them. A copy is complete: it never borrows a folder from a later version. Runs keep
+// the version they recorded; scoring and the derived views read the copy, so a new version
+// never changes how an old run is judged. freezeSuite makes one.
 export const VERSIONS_DIR = 'versions';
 const VERSION_NAME = /^[0-9A-Za-z][0-9A-Za-z.+-]*$/;
 
@@ -203,7 +204,7 @@ export function frozenVersions(dir) {
   return fs.readdirSync(base, { withFileTypes: true }).filter((entry) => entry.isDirectory() && VERSION_NAME.test(entry.name)).map((entry) => entry.name).sort();
 }
 
-function readSuiteAt(dir, partsFallback, suiteId) {
+function readSuiteAt(dir, suiteId) {
   const suiteFile = path.join(dir, 'suite.yaml');
   const casesFile = path.join(dir, 'cases.jsonl');
   if (!fs.existsSync(suiteFile)) throw new Error(`Suite "${suiteId}" not found: ${suiteFile}`);
@@ -213,20 +214,18 @@ function readSuiteAt(dir, partsFallback, suiteId) {
   const { rows: cases, problems } = readJsonl(casesFile);
   if (problems.length) throw new Error(`${casesFile}:${problems[0].line}: ${problems[0].message}`);
   // Agent suites also carry starter workspaces and hidden checks; their bytes are
-  // part of the suite's identity. Suites without them keep the old hash. A frozen copy
-  // without its own folder uses the current one (the hash says whether that is right).
-  const partDir = (name) => [dir, partsFallback].map((base) => path.join(base, name)).find((candidate) => fs.existsSync(candidate)) ?? null;
-  const workspacesDir = partDir('workspaces');
-  const checksDir = partDir('checks');
-  const extra = [['workspaces', workspacesDir], ['checks', checksDir]].filter(([, folder]) => folder).map(([name, folder]) => Buffer.from(`${name}:${treeHash(folder)}`));
+  // part of the suite's identity. Suites without them keep the old hash.
+  const workspacesDir = path.join(dir, 'workspaces');
+  const checksDir = path.join(dir, 'checks');
+  const extra = [['workspaces', workspacesDir], ['checks', checksDir]].filter(([, folder]) => fs.existsSync(folder)).map(([name, folder]) => Buffer.from(`${name}:${treeHash(folder)}`));
   return {
     id: meta.id ?? suiteId,
     version: String(meta.version),
     meta,
     cases,
     dir,
-    workspacesDir: workspacesDir ?? path.join(dir, 'workspaces'),
-    checksDir: checksDir ?? path.join(dir, 'checks'),
+    workspacesDir,
+    checksDir,
     // The stored hash covers suite.yaml followed by cases.jsonl, byte for byte,
     // then the hash of each workspaces/ and checks/ folder when present.
     sha256: sha256(Buffer.concat([suiteBytes, caseBytes, ...extra])),
@@ -240,12 +239,47 @@ function readSuiteAt(dir, partsFallback, suiteId) {
  */
 export function loadSuite(root, suiteId, { version } = {}) {
   const dir = suiteDir(root, suiteId) ?? path.join(paths(root).datasets, String(suiteId));
-  const current = readSuiteAt(dir, dir, suiteId);
+  const current = readSuiteAt(dir, suiteId);
   if (version === undefined || version === null || String(version) === current.version) return { ...current, frozen: false };
   if (!VERSION_NAME.test(String(version))) return null;
   const copy = path.join(dir, VERSIONS_DIR, String(version));
-  if (!fs.existsSync(path.join(copy, 'suite.yaml'))) return null;
-  return { ...readSuiteAt(copy, dir, suiteId), frozen: true };
+  if (!FROZEN_FILES.every((name) => fs.existsSync(path.join(copy, name)))) return null;
+  return { ...readSuiteAt(copy, suiteId), frozen: true };
+}
+
+/** The files every frozen copy has. */
+export const FROZEN_FILES = ['suite.yaml', 'cases.jsonl'];
+
+/**
+ * Freeze the current version of a suite before it changes: copy suite.yaml, cases.jsonl and,
+ * when present, workspaces/ and checks/ to versions/<version>/. Safe to repeat: an existing copy
+ * with the same hash is kept; one that differs is an error. Returns { dir, version, created }.
+ */
+export function freezeSuite(root, suiteId) {
+  const suite = loadSuite(root, suiteId);
+  if (!VERSION_NAME.test(suite.version)) throw new Error(`suite ${suiteId} version "${suite.version}" cannot name a folder; use a version like 1.0.0`);
+  const dest = path.join(suite.dir, VERSIONS_DIR, suite.version);
+  if (fs.existsSync(dest)) {
+    const existing = FROZEN_FILES.every((name) => fs.existsSync(path.join(dest, name))) ? readSuiteAt(dest, suiteId) : null;
+    if (existing?.sha256 === suite.sha256) return { dir: dest, version: suite.version, created: false };
+    throw new Error(`${dest} exists and is not the current content of ${suiteId} ${suite.version}; the suite changed without a new version, or the copy is broken`);
+  }
+  // Copy to a temporary folder, check the hash, then rename into place.
+  const temp = `${dest}.tmp-${process.pid}`;
+  fs.rmSync(temp, { recursive: true, force: true }); // not a run folder: a suite's versions/
+  fs.mkdirSync(temp, { recursive: true }); // not a run folder: a suite's versions/
+  try {
+    for (const name of FROZEN_FILES) fs.copyFileSync(path.join(suite.dir, name), path.join(temp, name)); // not a run folder: a suite's versions/
+    for (const name of ['workspaces', 'checks']) {
+      if (fs.existsSync(path.join(suite.dir, name))) fs.cpSync(path.join(suite.dir, name), path.join(temp, name), { recursive: true, verbatimSymlinks: true }); // not a run folder: a suite's versions/
+    }
+    const copy = readSuiteAt(temp, suiteId);
+    if (copy.sha256 !== suite.sha256) throw new Error(`the copy of ${suiteId} ${suite.version} does not hash like the suite; nothing was frozen`);
+    fs.renameSync(temp, dest); // not a run folder: a suite's versions/
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true }); // not a run folder: a suite's versions/
+  }
+  return { dir: dest, version: suite.version, created: true };
 }
 
 export function loadPrompt(root, promptId, version) {

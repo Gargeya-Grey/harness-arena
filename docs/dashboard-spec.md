@@ -273,6 +273,7 @@ Bind to `127.0.0.1` only. Reject requests with a non-local `Host` header, and an
 - Every `/api/state` request scans `results/*/run.json`, `raw.jsonl`, `scores/*.jsonl`, `annotations/*.jsonl` and `boards/*.json`.
 - Records that fail to parse or validate appear in `problems` instead of failing the whole dashboard.
 - Aggregates are computed on read. Nothing is materialized.
+- `cases` has one entry per case id: its text in the suite now, or, for a case the suite no longer has, its text in the version that last had it. A context is one suite version; when its own text of a case differs from that entry (read from the frozen copy in `datasets/<suite>/versions/<version>/`), the context carries it in `case_data`, and the Results page shows that text for that test.
 
 ### 5.5 Rendering boundary
 

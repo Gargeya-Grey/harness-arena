@@ -114,7 +114,7 @@ export function validateRepo(root) {
       for (const old of named) {
         const copyDir = path.join(versionsDir, old);
         if (old === suite.version) {
-          report(copyDir, `version ${old} is the current version of ${name}; a frozen copy is only for an earlier one`);
+          report(copyDir, `version ${old} is the current version of ${name}; a frozen copy is only for an earlier one (after node lab freeze, bump the version in suite.yaml)`);
           continue;
         }
         try {

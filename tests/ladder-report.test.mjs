@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { compareVersions, ladderCommand, ladderReport, verdictFor } from '../lab/commands/ladder.mjs';
 import { ensureLedger } from '../lab/lib/ledger.mjs';
 import { ladderStatus, loadLadder } from '../lab/lib/ladder.mjs';
+import { loadSuite } from '../lab/lib/repo.mjs';
 import { buildState } from '../lab/lib/state.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -50,13 +51,13 @@ const SCORES = {
   'model-c': { c1: [1, 1], c2: [0, 0], c3: [0, 0], c4: [1, 1], c5: [0, 0], c6: [0, 1] },
 };
 
-function manifest(runId, modelKey, { status = 'completed', suiteVersion = '1.0.0', promptVersion = '1', evaluatorVersion = '1' } = {}) {
+function manifest(runId, modelKey, { status = 'completed', suiteVersion = '1.0.0', suiteSha = 'a'.repeat(64), promptVersion = '1', evaluatorVersion = '1' } = {}) {
   return {
     run_id: runId,
     created_at: '2026-11-01T10:00:00.000Z',
     finished_at: status === 'completed' ? '2026-11-01T10:30:00.000Z' : null,
     status,
-    suite: { id: 'ladder-code', version: suiteVersion, sha256: 'a'.repeat(64) },
+    suite: { id: 'ladder-code', version: suiteVersion, sha256: suiteSha },
     prompt: { id: 'js-function', version: promptVersion, sha256: 'b'.repeat(64) },
     experiment: { id: 'ladder-code', suite: 'ladder-code', prompt: 'js-function', repeats: 2 },
     models: [{ model_key: modelKey, provider: 'fake', model: modelKey, params: {} }],
@@ -271,7 +272,8 @@ test('with no counted run the table is empty and nothing breaks; a root without 
 // Two suite versions of one task, one configuration: the old run scored 0, the reworked task scores 1.
 function versionedRoot(t) {
   const root = makeRoot(t);
-  writeRun(root, 'd00001', 'model-a', rowsOf({ c1: [0, 0], c2: [1, 1] }), { suiteVersion: '1.0.0' });
+  // The 1.0.0 run records the hash of the suite as it is on disk now (1.0.0).
+  writeRun(root, 'd00001', 'model-a', rowsOf({ c1: [0, 0], c2: [1, 1] }), { suiteVersion: '1.0.0', suiteSha: loadSuite(root, 'ladder-code').sha256 });
   writeRun(root, 'd00002', 'model-a', rowsOf({ c1: [1, 1] }), { suiteVersion: '1.1.0' });
   ensureLedger(root);
   return root;
@@ -303,6 +305,16 @@ test('an older suite version with a frozen copy is reported with its own cases a
   assert.equal(old.versions[0].cases_from, 'frozen copy');
   assert.deepEqual(old.warnings, []);
   assert.ok(lines.some((line) => line.startsWith('Suite versions used: ladder-code 1.0.0 (1 run; cases and tiers of its frozen copy).')), lines.join('\n'));
+  // A copy that is not the content the run used is not read: c5 moved to tier 1 in it.
+  const copyCases = path.join(dir, 'versions', '1.0.0', 'cases.jsonl');
+  const good = fs.readFileSync(copyCases, 'utf8');
+  write(copyCases, jsonl(CASES.map((item) => (item.case_id === 'ladder-code-c5' ? ladderCase('ladder-code', 'c5', 1, 1) : item))));
+  const tampered = ladderCommand(root, { calibrate: true, suiteVersions: ['ladder-code@1.0.0'], json: true, log: () => {} });
+  assert.equal(tampered.versions[0].cases_from, 'disk');
+  assert.equal(tampered.cases.find((entry) => entry.case_id === 'ladder-code-c5').tier, 5);
+  assert.equal(tampered.warnings.length, 1);
+  assert.match(tampered.warnings[0].message, /the frozen copy of 1\.0\.0 is not the content its runs used/);
+  write(copyCases, good);
   // Without the copy, the disk's case set stands and the warning says so.
   fs.rmSync(path.join(dir, 'versions'), { recursive: true, force: true });
   const bare = ladderCommand(root, { calibrate: true, suiteVersions: ['ladder-code@1.0.0'], json: true, log: () => {} });
