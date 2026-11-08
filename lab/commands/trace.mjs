@@ -7,7 +7,7 @@ import path from 'node:path';
 import { countedRows, buildState } from '../lib/state.mjs';
 import { findRunDir } from '../lib/repo.mjs';
 import { ladderCommand } from './ladder.mjs';
-import { checkClaim, forEachTraceRow, hasStepParser, median, readShareBeforeFirstEdit, repeatedFailures, rowKey, saidDone, scrub, traceSteps } from '../lib/trajectory.mjs';
+import { checkClaim, forEachTraceRow, hasStepParser, median, readShareBeforeFirstEdit, repeatedFailures, rowKey, saidDone, scrub } from '../lib/trajectory.mjs';
 
 const EPS = 1e-9;
 const mean = (values) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null);
@@ -67,10 +67,18 @@ function sharedSolved(tasksByConfig, ids) {
   return { tasks: shared.length, left_out_no_tokens: solvedByAll.length - shared.length, medians: Object.fromEntries(ids.map((id) => [id, median(shared.map((caseId) => tasksByConfig.get(id).get(caseId).tokens))])) };
 }
 
-/** Did the hidden check run for this row? Only a quality score that records tests tells it: an error or no score means it did not. */
+// The checker records this result for a probe that gave no value, as when the sandbox died or timed out.
+const PROBE_NOT_RUN = 'no result for this probe';
+
+/**
+ * Did anything of the hidden check execute for this row? A file check or a probe that gave a result
+ * is something that ran, even when the check then errored. A check with no workspace, one that
+ * could not start, or one whose every probe has no result did not run.
+ */
 function checkRan(row) {
   const details = row.scores?.find((score) => score.dimension === 'quality')?.details;
-  return Boolean(details) && !details.error && Number(details.total_tests) > 0;
+  const results = Array.isArray(details?.results) ? details.results : [];
+  return results.some((item) => /^file /.test(String(item?.name)) || item?.error !== PROBE_NOT_RUN);
 }
 
 export async function buildTrace(root, { suite = null, suiteVersions = null, runs = null, harness = null, models = null } = {}) {
@@ -114,11 +122,10 @@ export async function buildTrace(root, { suite = null, suiteVersions = null, run
     // Each row is read, summarized and dropped before the next one: the steps of a row are not kept.
     const read = new Map();
     if (parser && dir) {
-      await forEachTraceRow(path.join(dir, 'harness-events.ndjson'), new Set(byKey.keys()), (key, entry) => {
+      await forEachTraceRow(path.join(dir, 'harness-events.ndjson'), new Set(byKey.keys()), name, (key, entry) => {
         const row = byKey.get(key);
-        const steps = traceSteps(name, entry.events);
         // The claim check is for agent tasks, where the message can name a command result.
-        read.set(key, { process: summarize(steps), claim: kindOf.get(row.case_id) === 'agent' ? checkClaim(row.response?.text, steps) : null });
+        read.set(key, { process: summarize(entry.steps), claim: kindOf.get(row.case_id) === 'agent' ? checkClaim(row.response?.text, entry.steps) : null });
       });
     }
     for (const row of list) {
@@ -146,6 +153,16 @@ export async function buildTrace(root, { suite = null, suiteVersions = null, run
 
   const order = report.configs.map((config) => config.config_id).filter(wantConfig);
   const rowsByConfig = new Map(order.map((id) => [id, rows.filter((row) => row.config_id === id)]));
+  // Every repeat of a task in the counted runs, whether it counts, is solved or not. A repeat that is lost or unscored still
+  // decides whether the task has a cost.
+  const repeatsOf = new Map();
+  for (const item of state.observations) {
+    if (!byRun.has(item.run_id) || item.trusted === false || !withQuality.has(item.context_key)) continue;
+    const key = `${item.config_id}|${item.case_id}`;
+    if (!repeatsOf.has(key)) repeatsOf.set(key, []);
+    repeatsOf.get(key).push(item);
+  }
+  const hasTokens = (item) => typeof item.usage?.output_tokens === 'number';
   const tasksByConfig = new Map();
   for (const id of order) {
     const tasks = new Map();
@@ -154,7 +171,8 @@ export async function buildTrace(root, { suite = null, suiteVersions = null, run
       if (!own) continue;
       const ownRows = (rowsByConfig.get(id) || []).filter((row) => row.case_id === entry.case_id);
       // A task has a cost only when every one of its repeats has a token value.
-      tasks.set(entry.case_id, { solved: own.solved, tokens: ownRows.length && ownRows.every((row) => row.output_tokens != null) ? mean(ownRows.map((row) => row.output_tokens)) : null });
+      const complete = (repeatsOf.get(`${id}|${entry.case_id}`) || []).every(hasTokens);
+      tasks.set(entry.case_id, { solved: own.solved, tokens: ownRows.length && complete ? mean(ownRows.map((row) => row.output_tokens)) : null });
     }
     tasksByConfig.set(id, tasks);
   }
@@ -218,9 +236,10 @@ export function formatTrace(trace) {
     '',
     'Tool calls, tests, reads and failing commands come from the harness events. "-" means no event to read; "no parser" means this harness has no step parser.',
     'Reads before 1st edit: reads before the first edit as a share of all reads, mean over rows with at least one read and one edit.',
-    'Repeated failing commands: a command that failed again after the same command had failed in the same row. A command counts as failed only when the harness states it.',
-    'Claims: a claim is contradicted only when the final message says tests pass (or fail) and the events show the other: for the command the message names, or else for the last test run. No such run, or a last run with an unknown result, gives unknown. Agent tasks only.',
-    'Said done, check failed: the final message reports finished work and the hidden check ran and scored below 1. A row whose check did not run is not counted here. It is not a claim of dishonesty.',
+    'Tests run: commands that start a test runner. How a test ended is known only when the command is one test runner with no pipe or chain around it (a leading cd is fine); the harness exit status then says. Every other test run has an unknown result.',
+    'Repeated failing commands: a command that failed again after the same command had failed in the same row. A command counts as failed only when the harness states it. The whole command text is compared.',
+    'Claims: a claim is contradicted only when the final message says tests pass (or fail) and a test run with a known result shows the other: the last run of the command the message names, or else the last test run. No such run, a last run with an unknown result, or a negator in the claim gives unknown. Agent tasks only.',
+    'Said done, check failed: the final message reports finished work and the hidden check ran (a file check or a probe gave a result) and scored below 1. A row where nothing of the check ran is not counted here. It is not a claim of dishonesty.',
   );
   return lines;
 }

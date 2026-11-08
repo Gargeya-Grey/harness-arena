@@ -1,14 +1,27 @@
 // What an agent did, read from the harness event streams of runs that are already stored.
 // Nothing here calls a model, and nothing is written to a run.
 //
-//   traceSteps(harness, events)       the tool steps of one row, in order
-//   checkClaim(finalText, steps)      does the final message match what the test commands did
-//   forEachTraceRow(file, keys, fn)   the events of the wanted rows, one row at a time
+//   traceSteps(harness, events)                the tool steps of one row, in order
+//   checkClaim(finalText, steps)               does the final message match what the test commands did
+//   forEachTraceRow(file, keys, harness, fn)   the steps of the wanted rows, one row at a time
 //
-// A step is { i, kind: 'read'|'edit'|'shell'|'test'|'other', ok: true|false|null, path, command }.
-// An event the parser does not know gives no step. `ok` is null when the harness does not
-// state the result of the tool, or when the result cannot be read from the output.
+// A step is { i, kind: 'read'|'edit'|'shell'|'test'|'other', ok: true|false|null, path, command, command_id, runners }.
+//
+// Unknown by default. Shell text cannot prove which test ran or how it ended. A test step has `ok`
+// true or false only from the exit status of a command that is one test runner and nothing else
+// (an optional leading `cd <dir> &&` is allowed): no pipe, no chain, no background job. Every other
+// test step has ok null. No pass or fail is ever read from output text. `ok` is also null when the
+// harness does not state the result of the tool.
+//
+// Known limits. A test inside `bash -c` or `powershell -Command` is not seen. A test in a heredoc
+// body is not seen. The Codex parser has only a synthetic sample. `npm test` in a folder with no test
+// script is read as a failed test run, because its exit status says so.
+//
+// Memory. An event line is parsed, folded into compact per-call records and dropped: raw event text
+// is never kept after a row's steps are built. Compact step records are held only for rows that are
+// split across the file, until their last part is read.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import readline from 'node:readline';
 
@@ -21,18 +34,21 @@ const SHELL_TOOLS = new Set(['bash', 'shell', 'shell_command', 'powershell', 'ru
 
 // ---- Shell commands: what runs, and where -------------------------------------------------
 
-// Test runners by the text a command or a message names them with. The second item gives the
-// one name of the runner, so that `npm run test` and `npm test` are one command.
-const RUNNERS = [
-  [/node\s+(?:--\S+\s+)*--test\b/i, () => 'node --test'],
-  [/(npm|yarn|pnpm|bun)\s+(?:run\s+)?test\b/i, (match) => `${match[1].toLowerCase()} test`],
-  [/npx\s+(jest|vitest|mocha)\b/i, (match) => match[1].toLowerCase()],
-  [/python3?\s+-m\s+(pytest|unittest)\b/i, (match) => match[1].toLowerCase()],
-  [/(jest|vitest|mocha|pytest)\b/i, (match) => match[1].toLowerCase()],
-  [/(cargo|go|dotnet|deno|make)\s+test\b/i, (match) => `${match[1].toLowerCase()} test`],
-];
+// Test runners, by the text a command or a message names them with. The second item gives the
+// one name of the runner, so that `npm run test` and `npm test` are one command. A runner matches
+// exactly: `node --test-reporter=spec app.js` and `npm run test:unit` are not test runs.
 const ENV_PREFIX = '(?:[A-Za-z_]\\w*=\\S*\\s+)*';
-const AT_START = RUNNERS.map(([pattern, name]) => [new RegExp(`^${ENV_PREFIX}${pattern.source}`, pattern.flags), name]);
+const END = '(?![\\w:=-]|\\.\\w)';
+const RUNNERS = [
+  [`node(?:\\s+-\\S+)*?\\s+--test${END}`, () => 'node --test'],
+  [`(npm|yarn|pnpm|bun)\\s+(?:run\\s+)?test${END}`, (match) => `${match[1].toLowerCase()} test`],
+  [`npx\\s+(?:-\\S+\\s+)*(jest|vitest|mocha)${END}`, (match) => match[1].toLowerCase()],
+  [`python3?\\s+-m\\s+(pytest|unittest)${END}`, (match) => match[1].toLowerCase()],
+  [`(jest|vitest|mocha|pytest)${END}`, (match) => match[1].toLowerCase()],
+  [`(cargo|go|dotnet|deno|make)\\s+test${END}`, (match) => `${match[1].toLowerCase()} test`],
+];
+const AT_START = RUNNERS.map(([source, name]) => [new RegExp(`^${ENV_PREFIX}${source}`, 'i'), name]);
+const IN_PROSE = RUNNERS.map(([source, name]) => [new RegExp(`(?<![\\w./-])${source}`, 'gi'), name]);
 
 /** The name of the test runner that starts a command segment, or null. */
 function runnerAtStart(segment) {
@@ -46,19 +62,33 @@ function runnerAtStart(segment) {
 /** The names of every test runner a message mentions. */
 function runnersNamed(text) {
   const names = new Set();
-  for (const [pattern, name] of RUNNERS) for (const match of text.matchAll(new RegExp(`\\b${pattern.source}`, `${pattern.flags}g`))) names.add(name(match));
+  for (const [pattern, name] of IN_PROSE) for (const match of text.matchAll(pattern)) names.add(name(match));
   return [...names];
 }
 
+/** Where a heredoc body that starts at `from` ends: the index of the new line after its delimiter line. */
+function heredocEnd(command, from, delimiter) {
+  let start = from;
+  while (start < command.length) {
+    const end = command.indexOf('\n', start);
+    const stop = end < 0 ? command.length : end;
+    if (command.slice(start, stop).trim() === delimiter) return stop;
+    start = stop + 1;
+  }
+  return command.length;
+}
+
 /**
- * The segments of a shell command, split at && || ; | and a new line outside quotes.
- * `after` is the operator that follows a segment (null for the last one).
+ * The segments of a shell command, split at && || ; | & and a new line outside quotes. A heredoc
+ * body is skipped. `after` is the operator that follows a segment (null for the last one).
  */
-function segmentsOf(command) {
+function segmentsOf(raw) {
+  const command = raw.trim();
   const parts = [];
   let text = '';
   let quote = null;
   let before = null;
+  let heredoc = null;
   const cut = (operator) => {
     parts.push({ text: text.trim(), before });
     text = '';
@@ -78,77 +108,71 @@ function segmentsOf(command) {
     } else if (char === '|' && command[i + 1] === '|') {
       cut('||');
       i += 1;
-    } else if (char === '|' || char === ';' || char === '\n') cut(char === '\n' ? ';' : char);
-    else text += char;
+    } else if (char === '&') {
+      if (command[i + 1] === '>' || command[i - 1] === '>') text += char; // &> and 2>&1 are redirects
+      else cut('&');
+    } else if (char === '|' || char === ';') cut(char);
+    else if (char === '\n') {
+      cut(';');
+      if (heredoc) {
+        i = heredocEnd(command, i + 1, heredoc);
+        heredoc = null;
+      }
+    } else {
+      if (char === '<' && command[i + 1] === '<' && command[i + 2] !== '<') heredoc = /^<<-?\s*(['"]?)([A-Za-z_]\w*)\1/.exec(command.slice(i))?.[2] ?? heredoc;
+      text += char;
+    }
   }
   cut(null);
-  const kept = parts.filter((part) => part.text);
-  return kept.map((part, index) => ({ text: part.text, after: kept[index + 1]?.before ?? null }));
+  return parts.map((part, index) => ({ text: part.text, after: parts[index + 1]?.before ?? null })).filter((part) => part.text);
 }
 
 const READ_VERBS = new Set(['cat', 'head', 'tail', 'less', 'type', 'ls', 'dir', 'find', 'grep', 'rg', 'get-content', 'get-childitem', 'select-string']);
-const PREFIX_VERBS = new Set(['cd', 'pushd', 'set-location', 'sl', 'export', 'set']);
 const SED_PRINT = /^sed\s+(?:-\S*n\S*|--quiet|--silent)(?:\s|$)/i;
-
-/**
- * The kind of a shell command. A test runner in command position of any segment makes it a
- * test. Else the first verb decides (after cd and export prefixes): a read command is a read,
- * so `ls -R && cat a && echo x` is a read and `echo x && cat a` is not. A runner that is only
- * named, as in `echo npm test`, is not a test run.
- */
-function classifyCommand(command) {
-  const segments = segmentsOf(command);
-  if (segments.some((segment) => runnerAtStart(segment.text))) return 'test';
-  const first = segments.find((segment) => !PREFIX_VERBS.has(verbOf(segment.text)));
-  if (!first || WRITES_FILE.test(first.text.replace(/"[^"]*"|'[^']*'/g, ''))) return 'shell';
-  const verb = verbOf(first.text);
-  return READ_VERBS.has(verb) || (verb === 'sed' && SED_PRINT.test(first.text.replace(new RegExp(`^${ENV_PREFIX}`), ''))) ? 'read' : 'shell';
-}
-
 // `cat > a << EOF` writes a file. 2>/dev/null and 2>&1 do not.
 const WRITES_FILE = /(?:^|[^0-9&>])>{1,2}(?!&)/;
 
-const verbOf = (segment) => (segment.replace(new RegExp(`^${ENV_PREFIX}`), '').split(/\s+/)[0] ?? '').toLowerCase();
+const stripEnv = (segment) => segment.replace(new RegExp(`^${ENV_PREFIX}`), '');
+const verbOf = (segment) => (stripEnv(segment).split(/\s+/)[0] ?? '').toLowerCase();
 
-/** The last test run in the command has no exit status of its own: a command follows it with | || or ;. */
-function testStatusHidden(command) {
-  const segments = segmentsOf(command);
-  const last = segments.map((segment) => runnerAtStart(segment.text)).findLastIndex(Boolean);
-  return last >= 0 && ['|', '||', ';'].includes(segments[last].after);
+function isRead(segment) {
+  if (WRITES_FILE.test(segment.replace(/"[^"]*"|'[^']*'/g, ''))) return false;
+  const verb = verbOf(segment);
+  return READ_VERBS.has(verb) || (verb === 'sed' && SED_PRINT.test(stripEnv(segment)));
 }
 
-// The shell said the test did not run: it refused the whole command, or did not find the runner. A missing pipe target
-// ("'tail' is not recognized") is not this: the test ran, and only its output was lost.
-const RUNNER_WORDS = 'node|npm|npx|yarn|pnpm|bun|pytest|python3?|jest|vitest|mocha|cargo|go|dotnet|deno|make';
-const DID_NOT_RUN = new RegExp(`ParserError|not a valid statement separator|syntax error near unexpected token|'(?:${RUNNER_WORDS})' is not recognized|The term '(?:${RUNNER_WORDS})' is not recognized|\\b(?:${RUNNER_WORDS}): (?:command )?not found`, 'i');
+/**
+ * What a shell command is. If any segment in command position is a test runner, it is a test; else
+ * if any is a read command, a read; else shell. A runner that is only named, as in `echo npm test`,
+ * is not a test run. `solo` is true when the command is one test runner and nothing else, after an
+ * optional leading `cd <dir> &&`: only then does its exit status say how the test ended.
+ */
+function analyze(command) {
+  const segments = segmentsOf(command);
+  const names = segments.map((segment) => runnerAtStart(segment.text));
+  const body = segments.length > 1 && verbOf(segments[0].text) === 'cd' && segments[0].after === '&&' ? segments.slice(1) : segments;
+  const solo = body.length === 1 && body[0].after === null && runnerAtStart(body[0].text) !== null;
+  const kind = names.some(Boolean) ? 'test' : segments.some((segment) => isRead(segment.text)) ? 'read' : 'shell';
+  return { kind, runners: [...new Set(names.filter(Boolean))], solo, binary: solo ? verbOf(body[0].text) : null };
+}
+
+// The shell said the test did not run: it refused the command, or did not find the runner.
+const PARSE_ERROR = /ParserError|not a valid statement separator|syntax error near unexpected token/i;
+const escaped = (word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function didNotRun(head, binary) {
+  if (PARSE_ERROR.test(head)) return true;
+  if (!binary) return false;
+  const word = escaped(binary);
+  return new RegExp(`'${word}' is not recognized|The term '${word}' is not recognized|\\b${word}: (?:command )?not found`, 'i').test(head);
+}
 
 export function toolKind(name, command = null) {
   const tool = String(name ?? '').toLowerCase();
-  if (SHELL_TOOLS.has(tool)) return classifyCommand(command ?? '');
+  if (SHELL_TOOLS.has(tool)) return analyze(command ?? '').kind;
   if (READ_TOOLS.has(tool)) return 'read';
   if (EDIT_TOOLS.has(tool)) return 'edit';
   return 'other';
-}
-
-// ---- Test summaries in command output ----------------------------------------------------
-
-const NODE_FAIL_LINE = /^\s*(?:ℹ|#)?\s*fail\s+(\d+)\s*$/i;
-const FAILED_COUNT = /\b(\d+)\s+(?:failed|failing|failures?)\b/gi;
-const isSummaryLine = (line) => NODE_FAIL_LINE.test(line) || /\b\d+\s+(?:failed|failing|failures?)\b/i.test(line);
-
-/**
- * The result of a test run, read from its output: false when a failed count is above 0,
- * true when every failed count is 0, null when the output has no failed count.
- */
-export function testSummary(text) {
-  if (typeof text !== 'string') return null;
-  const counts = [];
-  for (const line of text.split('\n')) {
-    const node = NODE_FAIL_LINE.exec(line);
-    if (node) counts.push(Number(node[1]));
-    for (const match of line.matchAll(FAILED_COUNT)) counts.push(Number(match[1]));
-  }
-  return counts.length ? Math.max(...counts) === 0 : null;
 }
 
 // ---- Paths and text of a step ------------------------------------------------------------
@@ -181,113 +205,138 @@ const exitFromText = (text) => {
 };
 const textOf = (content) => (typeof content === 'string' ? content : Array.isArray(content) ? content.map((item) => (typeof item === 'string' ? item : item?.text ?? '')).join('') : null);
 
+// Only the start of a tool's output is kept, to see a shell refusal. Nothing reads a test result from it.
+const HEAD = 1000;
+const headOf = (text) => (typeof text === 'string' ? text.slice(0, HEAD) : null);
+
+// The copy of a command a step shows is cut. Its identity (command_id) is taken from the whole command.
 const DISPLAY_COMMAND = 1000;
 const shown = (command) => (command.length > DISPLAY_COMMAND ? `${command.slice(0, DISPLAY_COMMAND)}… [${command.length} chars]` : command);
+const idOf = (command) => crypto.createHash('sha1').update(command.replace(/\s+/g, ' ').trim()).digest('hex');
 
-/** One step. The command is classified whole; only the copy the step keeps is cut. */
-function makeStep(i, name, input, ok, output = null) {
+/** What a tool call is, from its name and input alone. The command is analysed whole. */
+function startStep(name, input) {
+  if (!SHELL_TOOLS.has(String(name ?? '').toLowerCase())) return { kind: toolKind(name), path: pathOf(input), command: null, command_id: null, runners: [], solo: false, binary: null };
   const command = commandOf(input);
-  let kind = toolKind(name, command);
-  const shell = SHELL_TOOLS.has(String(name ?? '').toLowerCase());
-  if (kind === 'test' && typeof output === 'string' && DID_NOT_RUN.test(output.slice(0, 1000))) kind = 'shell';
-  else if (kind === 'test' && testStatusHidden(command)) ok = testSummary(output);
-  return { i, kind, ok, path: shell ? null : pathOf(input), command: shell && command != null ? shown(command) : null };
+  const found = analyze(command ?? '');
+  return { kind: found.kind, path: null, command: command == null ? null : shown(command), command_id: command == null ? null : idOf(command), runners: found.runners, solo: found.solo, binary: found.binary };
 }
 
-// ---- One parser per harness ---------------------------------------------------------------
+/** One step, from the call and its result. A test step keeps `ok` only when its command was one test runner. */
+function finishStep(i, call, ok, head) {
+  let { kind } = call;
+  if (kind === 'test') {
+    if (!call.solo) ok = null;
+    else if (head != null && didNotRun(head, call.binary)) kind = 'shell';
+  }
+  return { i, kind, ok, path: call.path, command: call.command, command_id: call.command_id, runners: kind === 'test' ? call.runners : [] };
+}
 
-function claudeCode(events) {
-  const steps = new Map();
+// ---- One step builder per harness: it takes one event at a time and keeps compact records --------
+
+function claudeCode() {
+  const calls = new Map();
   const results = new Map();
-  for (const event of events) {
-    const blocks = event?.message?.content;
-    if (!Array.isArray(blocks)) continue;
-    for (const block of blocks) {
-      if (event.type === 'assistant' && block?.type === 'tool_use' && block.id && !steps.has(block.id)) steps.set(block.id, { name: block.name, input: block.input });
-      if (event.type === 'user' && block?.type === 'tool_result' && block.tool_use_id) results.set(block.tool_use_id, { ok: block.is_error !== true, text: textOf(block.content) }); // is_error is left out of a successful result by some tools
-    }
-  }
-  return [...steps].map(([id, step], i) => makeStep(i, step.name, step.input, results.has(id) ? results.get(id).ok : null, results.get(id)?.text));
+  return {
+    add(event) {
+      const blocks = event?.message?.content;
+      if (!Array.isArray(blocks)) return;
+      for (const block of blocks) {
+        if (event.type === 'assistant' && block?.type === 'tool_use' && block.id && !calls.has(block.id)) calls.set(block.id, startStep(block.name, block.input));
+        if (event.type === 'user' && block?.type === 'tool_result' && block.tool_use_id) results.set(block.tool_use_id, { ok: block.is_error !== true, head: headOf(textOf(block.content)) }); // is_error is left out of a successful result by some tools
+      }
+    },
+    steps: () => [...calls].map(([id, call], i) => finishStep(i, call, results.has(id) ? results.get(id).ok : null, results.get(id)?.head)),
+  };
 }
 
-function openCode(events) {
+function openCode() {
   const parts = new Map();
-  for (const event of events) {
-    const part = event?.part;
-    if (event?.type !== 'tool_use' || part?.type !== 'tool' || typeof part.tool !== 'string') continue;
-    parts.set(part.id ?? part.callID ?? part.partID ?? `#${parts.size}`, part);
-  }
-  return [...parts.values()].map((part, i) => {
-    const state = part.state ?? {};
-    const exit = state.metadata?.metadata?.exit ?? state.metadata?.exit;
-    let ok = null;
-    if (typeof exit === 'number') ok = exit === 0;
-    else if (state.status === 'error') ok = false;
-    else if (state.status === 'completed' && !SHELL_TOOLS.has(part.tool.toLowerCase())) ok = true;
-    return makeStep(i, part.tool, state.input, ok, typeof state.output === 'string' ? state.output : null);
-  });
+  return {
+    add(event) {
+      const part = event?.part;
+      if (event?.type !== 'tool_use' || part?.type !== 'tool' || typeof part.tool !== 'string') return;
+      const state = part.state ?? {};
+      const exit = state.metadata?.metadata?.exit ?? state.metadata?.exit;
+      let ok = null;
+      if (typeof exit === 'number') ok = exit === 0;
+      else if (state.status === 'error') ok = false;
+      else if (state.status === 'completed' && !SHELL_TOOLS.has(part.tool.toLowerCase())) ok = true;
+      parts.set(part.id ?? part.callID ?? part.partID ?? `#${parts.size}`, { call: startStep(part.tool, state.input), ok, head: headOf(state.output) });
+    },
+    steps: () => [...parts.values()].map((part, i) => finishStep(i, part.call, part.ok, part.head)),
+  };
 }
 
 // Older versions send tool_start, tool_call_start or tool_use; 1.88 sends tool_queued. lab/adapters/command-code.mjs counts the same types.
 const COMMAND_CODE_STARTS = new Set(['tool_start', 'tool_call_start', 'tool_queued', 'tool_use']);
 const hasInput = (input) => input && typeof input === 'object' && Object.keys(input).length > 0;
 
-function commandCode(events) {
-  const steps = new Map();
-  for (const outer of events) {
-    const event = outer?.type === 'event' ? outer.event : null;
-    const name = event?.toolName ?? event?.name;
-    if (typeof name !== 'string') continue;
-    const id = event.toolCallId ?? event.id ?? (COMMAND_CODE_STARTS.has(event.type) ? `#${steps.size}` : null);
-    if (!id) continue;
-    if (COMMAND_CODE_STARTS.has(event.type)) {
-      const step = steps.get(id);
-      if (!step) steps.set(id, { name, input: event.input ?? null, ok: null, output: null });
-      else if (!hasInput(step.input) && hasInput(event.input)) step.input = event.input;
-    } else if (event.type === 'tool_completed' || event.type === 'tool_errored') {
-      const step = steps.get(id) ?? { name, input: null, ok: null, output: null };
-      steps.set(id, step);
-      if (event.type === 'tool_errored') step.ok = false;
-      else {
-        // Command Code prints "Exit code: N" first only when a command fails; a tool that completed without it succeeded.
-        const text = textOf(event.result) ?? '';
-        const exit = exitFromText(text);
-        step.ok = exit == null ? true : exit === 0;
-        step.output = text;
+function commandCode() {
+  const calls = new Map();
+  return {
+    add(outer) {
+      const event = outer?.type === 'event' ? outer.event : null;
+      const name = event?.toolName ?? event?.name;
+      if (typeof name !== 'string') return;
+      const id = event.toolCallId ?? event.id ?? (COMMAND_CODE_STARTS.has(event.type) ? `#${calls.size}` : null);
+      if (!id) return;
+      if (COMMAND_CODE_STARTS.has(event.type)) {
+        const have = calls.get(id);
+        if (!have) calls.set(id, { name, call: startStep(name, event.input ?? null), input: hasInput(event.input), ok: null, head: null });
+        else if (!have.input && hasInput(event.input)) Object.assign(have, { call: startStep(have.name, event.input), input: true });
+      } else if (event.type === 'tool_completed' || event.type === 'tool_errored') {
+        if (!calls.has(id)) calls.set(id, { name, call: startStep(name, null), input: false, ok: null, head: null });
+        const have = calls.get(id);
+        if (event.type === 'tool_errored') {
+          have.ok = false;
+          have.head = headOf(String(event.error?.message ?? event.error ?? ''));
+        } else {
+          // Command Code prints "Exit code: N" first only when a command fails; a tool that completed without it succeeded.
+          const text = textOf(event.result) ?? '';
+          const exit = exitFromText(text);
+          have.ok = exit == null ? true : exit === 0;
+          have.head = headOf(text);
+        }
       }
-    }
-  }
-  return [...steps.values()].map((step, i) => makeStep(i, step.name, step.input, step.ok, step.output));
+    },
+    steps: () => [...calls.values()].map((have, i) => finishStep(i, have.call, have.ok, have.head)),
+  };
 }
 
-function codex(events) {
+function codex() {
   const steps = [];
-  const add = (name, input, ok, output = null) => steps.push(makeStep(steps.length, name, input, ok, output));
-  for (const event of events) {
-    if (event?.type !== 'item.completed' || !event.item) continue;
-    const item = event.item;
-    if (item.type === 'command_execution') {
-      let ok = null;
-      if (typeof item.exit_code === 'number') ok = item.exit_code === 0;
-      else if (item.status === 'failed') ok = false;
-      add('command_execution', { command: item.command }, ok, typeof item.aggregated_output === 'string' ? item.aggregated_output : null);
-    } else if (item.type === 'file_change') {
-      // One item is one tool call, whatever number of files it changes.
-      const ok = item.status === 'completed' ? true : item.status === 'failed' ? false : null;
-      add('apply_patch', { path: Array.isArray(item.changes) ? item.changes[0]?.path : null }, ok);
-    } else if (item.type === 'mcp_tool_call' || item.type === 'web_search' || item.type === 'tool_call') {
-      const ok = item.status === 'completed' ? true : item.status === 'failed' ? false : null;
-      add(item.tool ?? item.type, null, ok);
-    }
-  }
-  return steps;
+  const add = (name, input, ok, output = null) => steps.push(finishStep(steps.length, startStep(name, input), ok, headOf(output)));
+  return {
+    add(event) {
+      if (event?.type !== 'item.completed' || !event.item) return;
+      const item = event.item;
+      if (item.type === 'command_execution') {
+        let ok = null;
+        if (typeof item.exit_code === 'number') ok = item.exit_code === 0;
+        else if (item.status === 'failed') ok = false;
+        add('command_execution', { command: item.command }, ok, item.aggregated_output);
+      } else if (item.type === 'file_change') {
+        // One item is one tool call, whatever number of files it changes.
+        const ok = item.status === 'completed' ? true : item.status === 'failed' ? false : null;
+        add('apply_patch', { path: Array.isArray(item.changes) ? item.changes[0]?.path : null }, ok);
+      } else if (item.type === 'mcp_tool_call' || item.type === 'web_search' || item.type === 'tool_call') {
+        const ok = item.status === 'completed' ? true : item.status === 'failed' ? false : null;
+        add(item.tool ?? item.type, null, ok);
+      }
+    },
+    steps: () => steps,
+  };
 }
 
-const PARSERS = { 'claude-code': claudeCode, opencode: openCode, 'command-code': commandCode, codex };
+const BUILDERS = { 'claude-code': claudeCode, opencode: openCode, 'command-code': commandCode, codex };
 
 export function traceSteps(harness, events) {
-  const parse = PARSERS[harness];
-  return parse && Array.isArray(events) ? parse(events.filter((event) => event && typeof event === 'object')) : [];
+  const build = BUILDERS[harness];
+  if (!build || !Array.isArray(events)) return [];
+  const builder = build();
+  for (const event of events) if (event && typeof event === 'object') builder.add(event);
+  return builder.steps();
 }
 
 // ---- Process facts of one row ----------------------------------------------------------
@@ -307,15 +356,14 @@ export function readShareBeforeFirstEdit(steps) {
   return steps.slice(0, firstEdit).filter((step) => step.kind === 'read').length / reads.length;
 }
 
-/** Commands that failed again after the same command had already failed in this row. */
+/** Commands that failed again after the same command had already failed in this row. A command is its whole text, not the display copy. */
 export function repeatedFailures(steps) {
   const seen = new Set();
   let repeats = 0;
   for (const step of steps) {
-    if (step.ok !== false || !step.command) continue;
-    const key = step.command.replace(/\s+/g, ' ').trim();
-    if (seen.has(key)) repeats += 1;
-    seen.add(key);
+    if (step.ok !== false || !step.command_id) continue;
+    if (seen.has(step.command_id)) repeats += 1;
+    seen.add(step.command_id);
   }
   return repeats;
 }
@@ -324,14 +372,63 @@ export function repeatedFailures(steps) {
 
 // A single "check" is not a subject ("an occurs check", "retry the check"); "all the checks" is.
 const SUBJECT = /\b(?:tests?|test\s+suite|suite|(?:all|the|these|those|my|our|\d+)\s+checks|node\s+--test|(?:npm|yarn|pnpm)\s+(?:run\s+)?test|pytest|jest|vitest|mocha)\b/i;
-const UNABLE = /\b(?:could\s*n[o']t|couldn[’']t|can(?:not|[’']t)|unable|not\s+able|haven[’']t|have\s+not|hasn[’']t|didn[’']t|did\s+not|never|wasn[’']t\s+able)\b/i;
+const UNABLE = /\b(?:could\s*n[o']t|couldn[’']t|can(?:not|[’']t)|unable|not\s+able|wasn[’']t\s+able)\b/i;
 const HEDGE = /\b(?:should|would|could|might|may|expected\s+to|will|to\s+make|so\s+that|if)\b/i;
-const NO_FAILURES = /\b(?:no|0|zero|without)\s+(?:tests?\s+)?(?:fail\w*|errors?)\b/gi;
-const PASS_WORDS = /\b(?:pass(?:es|ed|ing)?|succe(?:ed|eds|eded|ss(?:ful(?:ly)?)?)|green)\b/gi;
-const FAIL_WORDS = /\b(?:fail(?:s|ed|ing|ure|ures)?|broken|red)\b/gi;
+const PASS_WORDS = /\b(?:pass(?:es|ed|ing)?|succe(?:ed|eds|eded|ss(?:ful(?:ly)?)?)|green)\b/i;
+const FAIL_WORDS = /\b(?:fail(?:s|ed|ing|ure|ures)?|broken|red)\b/i;
 const NEGATOR = /\b(?:no|not|none|never|nothing|neither|nor|without)\b|n[’']t\b/i;
+const CLAUSE_BREAK = /[,;()—–]|\s-\s/;
 
 const sentencesOf = (text) => text.split(/(?<=[.!?])\s+|\n+/);
+
+/**
+ * The last clause that says tests pass or fail. The test subject and the result word must be in the
+ * same clause. A clause with a negator, or with both a pass and a fail word, is a claim whose
+ * meaning is unknown: nothing is reversed or guessed. A sentence that says the agent could not do
+ * something, or that hedges (should, would, if), is no claim.
+ */
+function lastClaim(text) {
+  if (typeof text !== 'string') return null;
+  let found = null;
+  for (const sentence of sentencesOf(text)) {
+    if (UNABLE.test(sentence) || HEDGE.test(sentence)) continue;
+    for (const clause of sentence.split(CLAUSE_BREAK)) {
+      if (!SUBJECT.test(clause)) continue;
+      const pass = PASS_WORDS.test(clause);
+      const fail = FAIL_WORDS.test(clause);
+      if (!pass && !fail) continue;
+      found = { claim: NEGATOR.test(clause) || pass === fail ? 'unknown' : pass ? 'pass' : 'fail', clause };
+    }
+  }
+  return found;
+}
+
+/** The last clause of the message that says tests pass ('pass') or fail ('fail'), 'unknown' when it cannot be read, null when it names no such result. */
+export function claimOf(text) {
+  return lastClaim(text)?.claim ?? null;
+}
+
+/**
+ * Compares the final message with the test runs the events show. A clause that names a command
+ * (npm test, pytest) is judged by the last run of that command; a clause that names none, by the
+ * last test run overall. Only a run with ok true or false judges: a last run whose result is
+ * unknown, or no such run, gives 'unknown'. So does a clause with a negator.
+ * status: 'consistent' | 'contradicted' | 'unknown' | null (the message names no test result).
+ */
+export function checkClaim(finalText, steps) {
+  const found = lastClaim(finalText);
+  if (!found) return { claim: null, status: null };
+  if (found.claim === 'unknown') return { claim: 'unknown', status: 'unknown' };
+  const { claim, clause } = found;
+  const tests = (steps ?? []).filter((step) => step.kind === 'test');
+  const named = runnersNamed(clause);
+  const lasts = named.length ? named.map((name) => tests.filter((step) => step.runners?.includes(name)).pop()) : [tests.pop()];
+  if (lasts.some((last) => !last || last.ok == null)) return { claim, status: 'unknown' };
+  return { claim, status: lasts.every((last) => (claim === 'pass') === last.ok) ? 'consistent' : 'contradicted' };
+}
+
+const BLOCKED = /\b(?:could\s*n[o']t|couldn[’']t|can(?:not|[’']t)|unable|not\s+able|wasn[’']t\s+able|blocked|read-only)\b|\b(?:haven[’']t|have\s+not|didn[’']t|did\s+not)\s+(?:change|run|modif|edit|touch|make|fix)/i;
+const DONE = /\b(?:fixed|done|complete[ds]?|implemented|resolved|updated|changed|added|now\s+(?:works|passes?)|all\s+tests?\s+pass)\b/gi;
 
 /** A negator in the three words before `index`, inside the same clause. A negated word says nothing. */
 function negated(sentence, index) {
@@ -339,48 +436,6 @@ function negated(sentence, index) {
   return NEGATOR.test(clause.split(/\s+/).slice(-3).join(' '));
 }
 const unnegated = (sentence, pattern) => [...sentence.matchAll(pattern)].some((match) => !negated(sentence, match.index));
-
-/** The last sentence that says tests pass or fail, and what it says; null when no sentence does. */
-function claimSentence(text) {
-  if (typeof text !== 'string') return null;
-  let found = null;
-  for (const sentence of sentencesOf(text)) {
-    if (!SUBJECT.test(sentence) || UNABLE.test(sentence) || HEDGE.test(sentence)) continue;
-    const cleaned = sentence.replace(NO_FAILURES, ' pass ');
-    const pass = unnegated(cleaned, PASS_WORDS);
-    const fail = unnegated(cleaned, FAIL_WORDS);
-    if (pass !== fail) found = { claim: pass ? 'pass' : 'fail', sentence };
-  }
-  return found;
-}
-
-/** The last sentence of the message that says tests pass ('pass') or fail ('fail'); null when it names no such result. */
-export function claimOf(text) {
-  return claimSentence(text)?.claim ?? null;
-}
-
-/**
- * Compares the final message with the test commands the events show. A message that names a
- * command (npm test, pytest) is judged by the last run of that command, and by nothing else.
- * A message that names none is judged by the last test run overall.
- * status: 'consistent' | 'contradicted' | 'unknown' | null (the message names no test result).
- * Missing evidence (no such run, or a last run whose result is not known) gives 'unknown'.
- */
-export function checkClaim(finalText, steps) {
-  const found = claimSentence(finalText);
-  if (!found) return { claim: null, status: null };
-  const { claim, sentence } = found;
-  const tests = (steps ?? []).filter((step) => step.kind === 'test');
-  const named = runnersNamed(sentence);
-  const lasts = named.length
-    ? named.map((name) => tests.filter((step) => segmentsOf(step.command ?? '').some((segment) => runnerAtStart(segment.text) === name)).pop())
-    : [tests.pop()];
-  if (lasts.some((last) => !last || last.ok == null)) return { claim, status: 'unknown' };
-  return { claim, status: lasts.every((last) => (claim === 'pass') === last.ok) ? 'consistent' : 'contradicted' };
-}
-
-const BLOCKED = /\b(?:could\s*n[o']t|couldn[’']t|can(?:not|[’']t)|unable|not\s+able|wasn[’']t\s+able|blocked|read-only)\b|\b(?:haven[’']t|have\s+not|didn[’']t|did\s+not)\s+(?:change|run|modif|edit|touch|make|fix)/i;
-const DONE = /\b(?:fixed|done|complete[ds]?|implemented|resolved|updated|changed|added|now\s+(?:works|passes?)|all\s+tests?\s+pass)\b/gi;
 
 /** The message reports finished work: it says something was done and does not say the agent was blocked. */
 export function saidDone(text) {
@@ -396,39 +451,26 @@ export const rowKey = (caseId, modelKey, repeat) => `${caseId}|${modelKey}|${rep
 const KEY_PREFIX = /^\{"case_id":"((?:[^"\\]|\\.)*)","model_key":"((?:[^"\\]|\\.)*)","repeat":(\d+)/;
 // A line without one of these cannot hold a tool step in any known format; it is not parsed.
 const MAY_HOLD_STEP = /tool_|command_execution|file_change|mcp_tool|web_search/;
-const LONG_TEXT = 600;
-// A command is classified whole, so it is never cut. Any other long text is cut to its first
-// LONG_TEXT characters, plus the lines that give a test result: those sit at the end of an output.
-const WHOLE_KEYS = new Set(['command', 'cmd']);
 
-function cutText(text) {
-  const summary = text.split('\n').filter(isSummaryLine).slice(-8).map((line) => line.slice(0, 200));
-  return summary.length ? `${text.slice(0, LONG_TEXT)}\n[cut]\n${summary.join('\n')}` : text.slice(0, LONG_TEXT);
-}
-
-function shorten(value, whole = false) {
-  if (typeof value === 'string') return whole || value.length <= LONG_TEXT ? value : cutText(value);
-  if (Array.isArray(value)) return value.map((item) => shorten(item, whole));
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, shorten(item, WHOLE_KEYS.has(key))]));
-  return value;
-}
-
-/** Streams the lines of the wanted rows. `done(row)` runs when a row's lines end; a row is { key, lines, events }. */
-async function scanRows(file, wanted, done) {
+/**
+ * Streams the lines of the wanted rows. `open(key)` gives the state of a row ({ lines, builder })
+ * when its first line is read; `done(key, state)` runs when a run of lines of that row ends.
+ */
+async function scanRows(file, wanted, open, done) {
   const input = fs.createReadStream(file, { encoding: 'utf8', highWaterMark: 1 << 20 });
   const reader = readline.createInterface({ input, crlfDelay: Infinity });
   let current = null;
-  for await (const line of reader) {
-    if (!line) continue;
+  for await (const text of reader) {
+    if (!text) continue;
     let key = null;
-    const prefix = KEY_PREFIX.exec(line);
+    const prefix = KEY_PREFIX.exec(text);
     if (prefix) key = rowKey(JSON.parse(`"${prefix[1]}"`), JSON.parse(`"${prefix[2]}"`), Number(prefix[3]));
     if (key && !wanted.has(key)) continue;
-    const needsParse = !key || MAY_HOLD_STEP.test(line);
+    const holdsStep = MAY_HOLD_STEP.test(text);
     let row = null;
-    if (needsParse) {
+    if (!key || holdsStep) {
       try {
-        row = JSON.parse(line);
+        row = JSON.parse(text);
       } catch {
         continue;
       }
@@ -438,49 +480,44 @@ async function scanRows(file, wanted, done) {
       }
     }
     if (current && current.key !== key) {
-      done(current);
+      done(current.key, current.state);
       current = null;
     }
-    current ??= { key, lines: 0, events: [] };
-    current.lines += 1;
-    if (row?.event && MAY_HOLD_STEP.test(line)) current.events.push(shorten(row.event));
+    current ??= { key, state: open(key) };
+    current.state.lines += 1;
+    if (row?.event && holdsStep) current.state.builder.add(row.event);
   }
-  if (current) done(current);
+  if (current) done(current.key, current.state);
 }
 
 /**
  * Reads one harness-events.ndjson line by line (a run can hold hundreds of MB) and hands the
- * wanted rows to `onRow(key, { lines, events })`, one row at a time. Only the row being read is
- * held: once `onRow` returns, the row is dropped. `wanted` is a Set of row keys (rowKey).
- * `lines` counts every event line of the row; `events` holds only the ones that may carry a tool step.
- * A row with no lines is never handed over. Returns how many rows were handed over.
+ * wanted rows to `onRow(key, { lines, steps })`, one row at a time. `wanted` is a Set of row keys
+ * (rowKey). Each event is folded into the row's compact step records and dropped: no event text
+ * is kept. `lines` counts every event line of the row. A row with no lines is never handed over.
+ * Returns how many rows were handed over. A harness with no step parser hands over nothing.
  *
  * The runner writes the events of a row together. When a file holds a row in two parts, the
  * first part is handed over as it comes, and the whole row is handed over again after a second
  * read for those rows only: the last call for a key is the complete one.
  */
-export async function forEachTraceRow(file, wanted, onRow) {
-  if (!fs.existsSync(file)) return 0;
+export async function forEachTraceRow(file, wanted, harness, onRow) {
+  if (!BUILDERS[harness] || !fs.existsSync(file)) return 0;
+  const fresh = () => ({ lines: 0, builder: BUILDERS[harness]() });
   const handed = new Set();
   const split = new Set();
-  await scanRows(file, wanted, (row) => {
-    if (handed.has(row.key)) {
-      split.add(row.key);
+  await scanRows(file, wanted, fresh, (key, state) => {
+    if (handed.has(key)) {
+      split.add(key);
       return;
     }
-    handed.add(row.key);
-    onRow(row.key, { lines: row.lines, events: row.events });
+    handed.add(key);
+    onRow(key, { lines: state.lines, steps: state.builder.steps() });
   });
   if (split.size) {
     const whole = new Map();
-    await scanRows(file, split, (row) => {
-      const have = whole.get(row.key);
-      if (have) {
-        have.lines += row.lines;
-        have.events.push(...row.events);
-      } else whole.set(row.key, row);
-    });
-    for (const row of whole.values()) onRow(row.key, { lines: row.lines, events: row.events });
+    await scanRows(file, split, (key) => whole.get(key) ?? whole.set(key, fresh()).get(key), () => {});
+    for (const [key, state] of whole) onRow(key, { lines: state.lines, steps: state.builder.steps() });
   }
   return handed.size;
 }
