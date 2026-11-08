@@ -221,15 +221,17 @@ const SLOW = [
   {
     slug: 'rga-text-crdt',
     overlay: 'rga-text-crdt--slow',
-    fails: ['rg36 deleting a very long range in one call'],
-    // rg34 and rg35 stay within 1.2 times their limits with this slow method, so they may fail here and are not claimed.
-    // rg33 too: the reference is itself quadratic there (0.34 s at this size, 1.4 s at twice the size), so no size
-    // separates this slow method by a wide margin without also failing correct solutions that are a constant
-    // factor slower. The slow method used 3.5 to 4.1 s of CPU against the 3.5 s limit here, and passed on CI.
+    // No speed probe is claimed: this slow method stays within 1.2 times every limit. rg34 and rg35 by design;
+    // rg33 used 3.5 to 4.1 s of CPU against its 3.5 s limit here and passed on CI (the reference is quadratic
+    // there too, 0.34 s, so no size separates them by a wide margin); rg36 used 3.8 s against 3.5 s. Enlarging
+    // a probe would change suite 1.0.0 under its old runs, so the probes stay and the claim goes. The entry
+    // still proves that the slow method passes every probe that is not about speed.
+    fails: [],
     maybe: [
       'rg33 ten thousand local inserts, three thousand in the middle, a thousand deletes',
       'rg34 five thousand operations delivered one at a time in reverse',
       'rg35 three replicas typing at the start and the end thousands of times',
+      'rg36 deleting a very long range in one call',
     ],
   },
   {

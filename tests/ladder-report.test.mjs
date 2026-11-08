@@ -248,7 +248,7 @@ test('--json prints the same data, with the problems and the filters', (t) => {
   assert.deepEqual(parsed.configs, JSON.parse(JSON.stringify(report.configs)));
   assert.deepEqual(Object.keys(parsed).sort(), ['cases', 'configs', 'filters', 'problems', 'tiers', 'versions', 'warnings']);
   assert.deepEqual(parsed.filters, { suite: 'ladder-code', runs: null, suite_versions: null });
-  assert.deepEqual(parsed.versions, [{ suite: 'ladder-code', version: '1.0.0', prompt: 'js-function@1', runs: 3, left_out_runs: 0, left_out_versions: [] }]);
+  assert.deepEqual(parsed.versions, [{ suite: 'ladder-code', version: '1.0.0', prompt: 'js-function@1', runs: 3, left_out_runs: 0, left_out_versions: [], cases_from: 'disk' }]);
   assert.deepEqual(parsed.warnings, []);
   assert.ok(parsed.problems.length > 0);
   assert.throws(() => ladderCommand(root, { suite: 'nope', log: () => {} }), /--suite must be one of ladder-answer, ladder-code, ladder-agent/);
@@ -285,7 +285,30 @@ test('suite versions: the newest version with counted runs is used, and one line
   const c1 = report.cases.find((entry) => entry.case_id === 'ladder-code-c1');
   assert.deepEqual([c1.mean, c1.configs_n, c1.verdict], [1, 1, 'in band'], 'the old score 0 is not averaged in');
   assert.deepEqual(cellOf(report.configs[0], 2), [0, 0, null], 'c2 was only in the old version');
-  assert.deepEqual(report.versions, [{ suite: 'ladder-code', version: '1.1.0', prompt: 'js-function@1', runs: 1, left_out_runs: 1, left_out_versions: ['1.0.0'] }]);
+  assert.deepEqual(report.versions, [{ suite: 'ladder-code', version: '1.1.0', prompt: 'js-function@1', runs: 1, left_out_runs: 1, left_out_versions: ['1.0.0'] }].map((item) => ({ ...item, cases_from: 'disk' })));
+});
+
+test('an older suite version with a frozen copy is reported with its own cases and tiers, and no warning', (t) => {
+  const root = versionedRoot(t);
+  // The disk is at 1.0.0 in this fixture; make it 1.1.0 without c2, and keep 1.0.0 as a frozen copy.
+  const dir = path.join(root, 'datasets', 'ladder-code');
+  write(path.join(dir, 'versions', '1.0.0', 'suite.yaml'), fs.readFileSync(path.join(dir, 'suite.yaml'), 'utf8'));
+  write(path.join(dir, 'versions', '1.0.0', 'cases.jsonl'), fs.readFileSync(path.join(dir, 'cases.jsonl'), 'utf8'));
+  write(path.join(dir, 'suite.yaml'), 'id: ladder-code\nversion: "1.1.0"\n');
+  write(path.join(dir, 'cases.jsonl'), jsonl(CASES.filter((item) => item.case_id !== 'ladder-code-c2')));
+  const lines = [];
+  const old = ladderCommand(root, { calibrate: true, suiteVersions: ['ladder-code@1.0.0'], log: (line) => lines.push(line) });
+  assert.deepEqual(old.cases.map((entry) => entry.case_id).sort(), CASES.map((item) => item.case_id).sort(), 'every case of 1.0.0, also the one 1.1.0 dropped');
+  assert.equal(old.cases.find((entry) => entry.case_id === 'ladder-code-c2').mean, 1);
+  assert.equal(old.versions[0].cases_from, 'frozen copy');
+  assert.deepEqual(old.warnings, []);
+  assert.ok(lines.some((line) => line.startsWith('Suite versions used: ladder-code 1.0.0 (1 run; cases and tiers of its frozen copy).')), lines.join('\n'));
+  // Without the copy, the disk's case set stands and the warning says so.
+  fs.rmSync(path.join(dir, 'versions'), { recursive: true, force: true });
+  const bare = ladderCommand(root, { calibrate: true, suiteVersions: ['ladder-code@1.0.0'], json: true, log: () => {} });
+  assert.ok(!bare.cases.some((entry) => entry.case_id === 'ladder-code-c2'));
+  assert.equal(bare.versions[0].cases_from, 'disk');
+  assert.equal(bare.warnings.length, 1);
 });
 
 test('--suite-version picks another version; a bad value or two versions of one suite is refused', (t) => {

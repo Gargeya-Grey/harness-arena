@@ -24,7 +24,7 @@ const spec = [
   'OCCURRENCES. For each event and each of its dates, and for each time of day of the event (the times in the order given), there is one occurrence. Its start is the UTC minute of the wall time (that date, that time of day) in the zone of the event, by FROM A WALL TIME TO A UTC MINUTE. Its length is duration. All the occurrences of all events are made, also those outside the window, because they can clash with each other.',
   'CLASHES. Rank the occurrences: higher priority first; then the event that comes earlier in the array of events; then the earlier start. Go through them in that order with a list of accepted occurrences that is empty at the start. An occurrence with a length of 0 is accepted and never clashes and is never in the list of accepted occurrences. For any other occurrence, the blockers are the accepted occurrences whose interval overlaps its interval; the interval of an occurrence is [start, start + length) in UTC minutes, and two intervals overlap when each starts before the other ends. With no blockers it is accepted (and added to the list). With blockers: for onClash "drop" it is removed; for "keep" it is accepted, added to the list and marked clash; for "slide" its start is set to the latest end among its blockers, and this is repeated while it still has blockers (with the blockers computed again each time), then it is accepted, added to the list, and marked moved.',
   '',
-  'RESULT. Keep the accepted occurrences whose (possibly moved) start is at least the UTC minute of from and less than the UTC minute of to. Sort them by start, then by the position of the event, then by the day number of the date, then by the time of day (as a number of minutes). Each occurrence becomes one string: the shown text of its start in the view zone, a space, the id of the event, then " clash" or " moved" when the occurrence is so marked (after the " dst" of the shown text, if any).',
+  'RESULT. Keep the accepted occurrences whose (possibly moved) start is at least the UTC minute of from and less than the UTC minute of to. Sort them by start, then by the position of the event, then by the day number of the date, then by the time of day (as a number of minutes). Each occurrence becomes one string: the shown text of its start in the view zone (with its " dst", if any), a space, the id of the event, then " clash" or " moved" when the occurrence is so marked. Example: "0003.10.25 02:30 sat dst o moved".',
 ].join('\n');
 
 const SOL = 'sol';
@@ -128,7 +128,7 @@ const hand = [
   // 2:30 north on 3.10.25, 3.10.26, 3.10.27 (days 1029, 1030, 1031), shown in north. Day 1029: daylight, d = 1029 * 1440 - 30. Day 1030: s = 1030 * 1440 + 30 is standard time (valid) and
   // d = 1030 * 1440 - 30 is daylight time (valid): the smaller, d. Day 1031: only s. Shown in north: 02:30 dst on 25 and 26, 02:30 on 27 (not dst).
   t('overlap', [win('3.10.24 0:00', '3.10.30 0:00', { view: 'north', events: [one('o', 'north', '3.10.25 2:30', { freq: 'day', count: 3 })] })], [
-    '0003.10.25 02:30 sat o dst', '0003.10.26 02:30 sol o dst', '0003.10.27 02:30 lun o',
+    '0003.10.25 02:30 sat dst o', '0003.10.26 02:30 sol dst o', '0003.10.27 02:30 lun o',
   ]),
   // Months: monthDays [31, -1, 1] with "clamp", from 1.1.1, count 6 candidates. Month 1 has 31 days: days {31, 31, 1} -> 1, 31. Month 2 has 30 days: 31 is invalid and clamps to 30,
   // -1 is day 30, 1 -> 1, 30. Month 3: 1, 31. Candidates in order: 1.1.1, 1.1.31, 1.2.1, 1.2.30, 1.3.1, 1.3.31; count 6 stops there. (Start 1.1.1 itself is a candidate.)

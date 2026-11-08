@@ -86,10 +86,11 @@ const worked = [
   t('auto-hyphen', ['computer', opt(5, { hyphenate: true })], ['com-', 'puter']),
   // Width 6: k = 2: "compu-" is exactly 6 wide and is chosen (the largest k that fits). The rest "ter" is the last line.
   t('auto-hyphen', ['computer', opt(6, { hyphenate: true })], ['compu-', 'ter']),
-  // Soft hyphens, width 4: "ab~cd~ef~gh~ij". Line 1: the largest k whose text plus "-" fits is k = 1: "ab-" (3). Line 2: "cd-". Two mark-break lines in a row, so the
-  // soft break points are not allowed for line 3: nothing fits, the line is empty: the first piece "ef" is cut by width (2 of 4): "ef" with no "-".
-  // Line 4: the rest "ghij" is 4 wide and fits.
-  t('mark-limit', ['ab~cd~ef~gh~ij', opt(4)], ['ab-', 'cd-', 'ef', 'ghij']),
+  // Soft hyphens, width 8 (the task allows 8 to 80): "abcde~fghij~klmno~pqrst~uvwxy". Line 1: the rest (25) does not fit; the largest k whose
+  // text plus "-" fits is k = 1: "abcde-" (6; k = 2 is 11). Line 2: "fghij-". Two mark-break lines in a row, so the soft break points are not
+  // allowed for line 3: no candidate, the line has no item, so the first piece is cut (step 5): all of "klmno" (5 of 8), with no "-".
+  // Line 3 is a forced cut, not a mark break, so line 4 may break at a soft point again: "pqrst-" (k = 1; the rest is 10 wide). Line 5: "uvwxy".
+  t('mark-limit', ['abcde~fghij~klmno~pqrst~uvwxy', opt(8)], ['abcde-', 'fghij-', 'klmno', 'pqrst-', 'uvwxy']),
   // Width 10, widow: "aaaa bbbb" and "cccc dddd" fill two lines, the last line is "ee" (one item, 2 wide), 3 lines, the line before has 2 items:
   // "dddd" moves down (4 + 1 + 2 = 7 <= 10).
   t('widow', ['aaaa bbbb cccc dddd ee', opt(10)], ['aaaa bbbb', 'cccc', 'dddd ee']),

@@ -324,6 +324,7 @@ function tessenSchedule(spec) {
   inWindow.sort((a, b) => a.start - b.start || a.order - b.order || a.day - b.day || a.clock - b.clock);
   return inWindow.map((one) => {
     const shown = formatLocal(view, one.start);
-    return `${shown.text} ${one.id}${shown.daylight ? ' dst' : ''}${one.flag}`;
+    // The shown text ends with " dst" in daylight time; the id and the flag follow it.
+    return `${shown.text}${shown.daylight ? ' dst' : ''} ${one.id}${one.flag}`;
   });
 }

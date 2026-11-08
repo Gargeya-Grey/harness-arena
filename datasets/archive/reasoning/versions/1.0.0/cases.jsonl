@@ -1,0 +1,15 @@
+{"case_id":"reasoning-train-meet","input":{"question":"Two trains start 300 km apart and travel toward each other on the same track, one at 70 km/h and the other at 80 km/h. After how many hours do they meet?"},"expected":2,"tags":["rates"]}
+{"case_id":"reasoning-bat-ball","input":{"question":"A bat and a ball cost 1.10 dollars in total. The bat costs 1.00 dollar more than the ball. How many cents does the ball cost?"},"expected":5,"tags":["trap","arithmetic"]}
+{"case_id":"reasoning-widgets","input":{"question":"5 machines take 5 minutes to make 5 widgets. How many minutes do 100 machines take to make 100 widgets?"},"expected":5,"tags":["trap","rates"]}
+{"case_id":"reasoning-lily-pad","input":{"question":"A patch of lily pads doubles in size every day. It takes 48 days to cover the whole lake. After how many days does it cover half of the lake?"},"expected":47,"tags":["trap","growth"]}
+{"case_id":"reasoning-weekday","input":{"question":"Today is a Wednesday. What day of the week is it 100 days from today?"},"expected":"Friday","tags":["dates"]}
+{"case_id":"reasoning-leap-2100","input":{"question":"Is the year 2100 a leap year in the Gregorian calendar? Answer yes or no."},"expected":"no","tags":["dates","trap"]}
+{"case_id":"reasoning-odd-sum","input":{"question":"What is the sum of the first 50 positive odd numbers?"},"expected":2500,"tags":["arithmetic"]}
+{"case_id":"reasoning-handshakes","input":{"question":"12 people are at a meeting. Each person shakes hands exactly once with every other person. How many handshakes happen?"},"expected":66,"tags":["counting"]}
+{"case_id":"reasoning-percent","input":{"question":"A price goes up by 20 percent and then the new price goes down by 20 percent. The final price is what percent of the original price?"},"expected":96,"tags":["trap","percent"]}
+{"case_id":"reasoning-sisters","input":{"question":"Sally is a girl. She has 3 brothers. Each of her brothers has 2 sisters. How many sisters does Sally have?"},"expected":1,"tags":["trap","logic"]}
+{"case_id":"reasoning-clock-angle","input":{"question":"What is the smaller angle, in degrees, between the hour hand and the minute hand of a clock at 3:15?"},"expected":7.5,"tags":["trap","geometry"]}
+{"case_id":"reasoning-dilution","input":{"question":"You have 10 litres of a solution that is 30 percent salt. How many litres of pure water must you add to make it 20 percent salt?"},"expected":5,"tags":["mixtures"]}
+{"case_id":"reasoning-sevens","input":{"question":"If you write every whole number from 1 to 100, how many times do you write the digit 7?"},"expected":20,"tags":["counting","trap"]}
+{"case_id":"reasoning-strawberry","input":{"question":"How many times does the letter r appear in the word strawberry?"},"expected":3,"tags":["counting","trap"]}
+{"case_id":"reasoning-two-pipes","input":{"question":"Pipe A fills a tank in 3 hours. Pipe B fills the same tank in 6 hours. With both pipes open, how many hours does it take to fill the empty tank?"},"expected":2,"tags":["rates"]}

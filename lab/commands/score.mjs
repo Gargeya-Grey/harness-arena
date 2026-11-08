@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { listDirs, readJson, readJsonl } from '../lib/fsutil.mjs';
-import { findRunDir, loadSuite, runDirs } from '../lib/repo.mjs';
+import { VERSIONS_DIR, findRunDir, loadSuite, runDirs, suiteDir } from '../lib/repo.mjs';
 import { storeFolders, takeLocks } from '../lib/lock.mjs';
 import { appendEntry, ensureLedger, ledgerPath, loadLedger, scoresEntry, trustRun } from '../lib/ledger.mjs';
 import { getEvaluator } from '../evaluators/index.mjs';
@@ -39,9 +39,18 @@ export function scoreRun(root, runDir, { log = () => {}, force = false } = {}) {
   }
   const { rows, problems } = readJsonl(path.join(runDir, 'raw.jsonl'));
   if (problems.length) throw new Error(`raw.jsonl line ${problems[0].line}: ${problems[0].message}`);
-  const suite = loadSuite(root, manifest.suite.id);
-  if (suite.version !== manifest.suite.version || suite.sha256 !== manifest.suite.sha256) {
-    log(`  note: suite ${suite.id} changed since this run (run ${manifest.suite.version}, now ${suite.version}); scoring against the current cases`);
+  // Score against the exact suite the run used: the current folder at the run's version, or the
+  // frozen copy of that version (datasets/<suite>/versions/<version>/). Anything else would judge
+  // old answers by new cases or checks, so the run is not scored and its score files stay as they are.
+  const suite = loadSuite(root, manifest.suite.id, { version: manifest.suite.version });
+  if (!suite) {
+    const copy = path.relative(root, path.join(suiteDir(root, manifest.suite.id), VERSIONS_DIR, String(manifest.suite.version))).replace(/\\/g, '/');
+    log(`  skip: suite ${manifest.suite.id} is no longer at version ${manifest.suite.version}, and ${copy}/ holds no frozen copy of it; the run is not scored`);
+    return [];
+  }
+  if (suite.sha256 !== manifest.suite.sha256) {
+    log(`  skip: suite ${manifest.suite.id} ${manifest.suite.version}${suite.frozen ? ' (frozen copy)' : ''} is not the content this run used (hash ${suite.sha256.slice(0, 12)}, the run recorded ${String(manifest.suite.sha256).slice(0, 12)}); the run is not scored`);
+    return [];
   }
   const cases = new Map(suite.cases.map((item) => [item.case_id, item]));
   const written = [];

@@ -456,14 +456,15 @@ function workspaceTests({ raw, testCase, suite, runDir }, runner = runWorkspaceC
   if (!checkName || testCase.input?.workspace == null || !suite?.dir || !runDir) return null;
   const manifest = (raw.artifacts || []).find((item) => String(item.path || '').endsWith('/workspace.json'));
   if (!manifest) return { value: 0, passed: false, details: { check: checkName, error: 'no workspace was stored for this row' } };
-  const fixtureDir = path.join(suite.dir, 'workspaces', safeSegment(String(testCase.input.workspace)));
+  // A frozen suite version may keep its own workspaces/ and checks/ (lab/lib/repo.mjs loadSuite).
+  const fixtureDir = path.join(suite.workspacesDir ?? path.join(suite.dir, 'workspaces'), safeSegment(String(testCase.input.workspace)));
   let run;
   try {
     const stored = JSON.parse(fs.readFileSync(path.join(runDir, ...String(manifest.path).split('/')), 'utf8'));
     // The rebuild adds the agent's changes to today's starter. If the starter has
     // changed since the run, the rebuild would be a different workspace: no score.
     if (stored.fixture_sha256 !== treeHash(fixtureDir)) return { skip: 'its starter project changed since the run, so the rebuild would not be the workspace the agent left' };
-    run = runner({ fixtureDir, check: loadCheck(path.join(suite.dir, 'checks'), checkName), runDir, manifestPath: manifest.path });
+    run = runner({ fixtureDir, check: loadCheck(suite.checksDir ?? path.join(suite.dir, 'checks'), checkName), runDir, manifestPath: manifest.path });
   } catch (error) {
     run = { error: `check could not run: ${String(error?.message ?? error).slice(0, 300)}`, skipped: [], results: [] };
   }

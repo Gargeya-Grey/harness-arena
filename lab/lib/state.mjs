@@ -384,14 +384,19 @@ export function buildState(root, { validate = true } = {}) {
 
     const declared = Array.isArray(manifest.experiment?.cases) ? manifest.experiment.cases : [];
     let caseIds = declared;
+    // The case list of the version the run recorded: the suite now, or its frozen copy
+    // (datasets/<suite>/versions/<version>/). Neither: the cases the run has rows for.
+    const versionCases = loadCases(root, manifest.suite.id, manifest.suite.version);
     if (!caseIds.length) {
-      const suiteCases = loadCases(root, manifest.suite.id).map((item) => item.case_id);
+      const suiteCases = versionCases.map((item) => item.case_id);
       caseIds = suiteCases.length ? suiteCases : [...new Set(rawRows.map((row) => row.case_id))].sort();
     }
     if (!suitesSeen.has(manifest.suite.id)) {
       suitesSeen.add(manifest.suite.id);
       for (const item of loadCases(root, manifest.suite.id)) cases[item.case_id] = { ...item, suite: manifest.suite.id };
     }
+    // A case only an older version has (a retired task) keeps its text from that version's copy.
+    for (const item of versionCases) if (!cases[item.case_id]) cases[item.case_id] = { ...item, suite: manifest.suite.id };
 
     const key = contextKey(manifest, caseIds);
     if (!contexts.has(key)) {

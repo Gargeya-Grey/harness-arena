@@ -24,7 +24,8 @@ Non-goals until the basics work: local models, LLM-as-judge, databases.
 | `datasets/<suite>/suite.yaml` | Suite identity and defaults | bump `version` on change |
 | `datasets/<suite>/cases.jsonl` | Test cases, one JSON object per line | bump `version` on change |
 | `datasets/ladder-*/defs/`, `generate.mjs` | The ladder suites' definitions, and the generator that writes their `cases.jsonl` | edit a definition, run `generate.mjs --write`, bump `version` |
-| `datasets/archive/<suite>/` | A retired suite, with its cases, workspaces and checks | frozen; bytes never change; an id lives here or in `datasets/`, never both |
+| `datasets/<suite>/versions/<version>/` | A frozen copy of an earlier suite version: its `suite.yaml` and `cases.jsonl`, plus `workspaces/` or `checks/` when they differ from the current ones | written once, before the version bump; never edited |
+| `datasets/archive/<suite>/` | A retired suite, with its cases, workspaces and checks | frozen; bytes never change; an id lives here or in `datasets/`, never both. Its `versions/` may still gain a copy of an older version, which is not part of the hash |
 | `configs/ladder.yaml` | The difficulty ladder: five tiers, expert-time ranges, target score bands, tasks per tier and kind | versioned in git (`docs/difficulty.md`) |
 | `prompts/<prompt>/prompt.yaml` | Prompt identity, current version, variables | metadata only |
 | `prompts/<prompt>/vN.yaml` | Frozen template for version N | never edited; add `vN+1` |
@@ -42,6 +43,14 @@ Non-goals until the basics work: local models, LLM-as-judge, databases.
 The comparison suites are the difficulty ladder (`docs/difficulty.md`): 80 tasks in five tiers over three suites, `ladder-answer`, `ladder-code` and `ladder-agent`. Each ladder case records its tier and its expert time in `metadata.tier`; `configs/ladder.yaml` holds the tier table and `lab/lib/ladder.mjs` checks every case against it. `node lab ladder` reads the counted evidence and shows, per configuration, how many tasks of each tier it solved. A pilot (`--repeats 1`) with `node lab ladder --calibrate` shows which tasks stay in their tier, move or need rework. A task that moves keeps its `case_id`; its tier changes in a new suite version.
 
 The earlier suites (`reasoning`, `coding`, `agentic` and their `-hard` forms) are retired into `datasets/archive/`, and their experiments into `experiments/archive/`. A retired suite is unchanged: a run names its suite by id and hash, and the hash covers the suite's bytes, not its folder. So `loadSuite` looks in `datasets/<id>/`, then in `datasets/archive/<id>/`; old runs load, score, resume and show as before. `validate` still checks the archived suites and experiments, and refuses an id found in both places. An archived suite takes no new case. `smoke` stays active as the harness check.
+
+### Frozen suite versions
+
+A run records the suite version and hash it used. A new version must not change how an older run is scored, counted or shown, so the old version stays on disk as a frozen copy in `datasets/<suite>/versions/<version>/`. Before you bump a suite's version, copy its `suite.yaml` and `cases.jsonl` there, and its `workspaces/` or `checks/` when the new version changes them. `loadSuite(root, id, { version })` returns the current folder at the current version, the frozen copy at an older one, or null.
+
+- `score` judges a run only against the suite at the version it recorded, and only when the hash matches. Otherwise it skips the run and leaves its score files as they are.
+- The state and `node lab ladder` take a run's cases, and a ladder run's tiers, from that version.
+- `validate` checks each copy (folder name, files, id, version, cases). It reports a suite that changed after a run without a new version, and a frozen copy whose hash is not the run's. It warns when a run's version has no copy: that run's stored scores still count, but it cannot be scored again.
 
 ## Identifiers
 
