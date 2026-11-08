@@ -144,6 +144,26 @@ test('js-function@2: a thrown object with hostile getters fails its test, fast, 
   }
 });
 
+test('js-function@2: a test that fills the heap fails alone, and the other tests keep their results', () => {
+  const tests = [{ args: [1], returns: 1 }, { args: [2], returns: 2 }, { args: [3], returns: 3 }];
+  const code = 'function f(x) { if (x === 2) { const all = []; while (true) all.push(new Array(1e5).fill(0)); } return x; }';
+  for (let round = 0; round < 3; round += 1) {
+    const run = runJsTestsV2({ sources: [code], name: 'f', tests });
+    assert.deepEqual(run.results.map((item) => item.ok), [true, false, true], JSON.stringify(run.results));
+    assert.equal(run.loaded, true);
+    assert.equal(run.error, undefined);
+    assert.match(run.results[1].error, /this test stopped the sandbox process\. sandbox gave no result \(exit \d+\): FATAL ERROR/);
+  }
+});
+
+test('js-function@2: code that fills the heap while loading fails the case with the reason', () => {
+  const tests = [{ args: [1], returns: 1 }, { args: [2], returns: 2 }];
+  const run = runJsTestsV2({ sources: ['const all = []; while (true) all.push(new Array(1e5).fill(0)); function f(x) { return x; }'], name: 'f', tests });
+  assert.deepEqual(run.results.map((item) => item.ok), [false, false]);
+  assert.equal(run.loaded, false);
+  assert.match(run.error, /sandbox gave no result \(exit \d+\): FATAL ERROR/);
+});
+
 test('js-function@2: model code that replaces the sandbox\'s own built-ins cannot hang it or change other tests', () => {
   const hooks = [
     "g.Math.min = g.Math.max = g.Math.ceil = g.Math.round = () => { while (true) {} };",

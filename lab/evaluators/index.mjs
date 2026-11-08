@@ -233,29 +233,20 @@ function withBackstop(run, baseMs, cap) {
 
 const limitsOf = (limits) => ({ ...CPU_LIMITS, ...(limits || {}) });
 
-/**
- * js-function@2: the same sandbox idea as runJsTests, judged by CPU time (js-sandbox-v2.cjs).
- * A test fails over `testCpuMs` of CPU; the tests of a case share `caseCpuMs`. The sandbox
- * always ends by itself (every step has a CPU-based backstop and the case has a CPU budget),
- * so the process wall limit only stops a sandbox that hangs. It must be longer than any
- * honest case on the busiest machine: caseCpuMs x cap (300 s). `limits.wallMs` replaces it
- * (for tests that need a short one).
- */
-export function runJsTestsV2({ sources, name, tests, limits }) {
-  const lim = limitsOf(limits);
+/** One sandbox process: { out } with its result line, or { error, died } (died: it ended without one). */
+function sandboxV2({ sources, name, tests, lim, caseCpuMs }) {
   const nonce = crypto.randomUUID();
   const env = process.platform === 'win32' ? { SYSTEMROOT: process.env.SYSTEMROOT } : {};
-  const input = JSON.stringify({ nonce, sources, name, tests: tests.map((test) => ({ args: test.args })), limits: { testCpuMs: lim.testCpuMs, caseCpuMs: lim.caseCpuMs, cap: lim.cap } });
+  const input = JSON.stringify({ nonce, sources, name, tests: tests.map((test) => ({ args: test.args })), limits: { testCpuMs: lim.testCpuMs, caseCpuMs, cap: lim.cap } });
   const result = spawnSync(process.execPath, [...SANDBOX_FLAGS, `--allow-fs-read=${SANDBOX_V2}`, '--max-old-space-size=256', SANDBOX_V2], {
     input,
     encoding: 'utf8',
-    timeout: lim.wallMs ?? lim.caseCpuMs * lim.cap,
+    timeout: lim.wallMs ?? caseCpuMs * lim.cap,
     maxBuffer: 8 * 1024 * 1024,
     env,
     windowsHide: true,
   });
-  const fail = (error) => ({ loaded: false, error, results: tests.map((test) => ({ args: test.args, expected: test.returns, ok: false })) });
-  if (result.error) return fail(result.error.code === 'ETIMEDOUT' ? 'sandbox stopped by its wall-clock backstop' : result.error.message);
+  if (result.error) return { error: result.error.code === 'ETIMEDOUT' ? 'sandbox stopped by its wall-clock backstop' : result.error.message };
   let out = null;
   for (const line of String(result.stdout).split('\n')) {
     try {
@@ -265,7 +256,58 @@ export function runJsTestsV2({ sources, name, tests, limits }) {
       // Not the sandbox's line.
     }
   }
-  if (!out) return fail(`sandbox gave no result (exit ${result.status}): ${String(result.stderr).trim().split('\n').at(-1)?.slice(0, 200) ?? ''}`);
+  if (out) return { out };
+  const stderr = String(result.stderr);
+  const why = /FATAL ERROR:[^\r\n]*/.exec(stderr)?.[0] ?? stderr.trim().split('\n').at(-1) ?? '';
+  return { error: `sandbox gave no result (exit ${result.status}): ${why.slice(0, 200)}`, died: true };
+}
+
+/** Every test in its own process, sharing the CPU budget of the case. A test whose process dies is charged its full CPU limit. */
+function oneProcessEach(run, tests, lim) {
+  const results = [];
+  let spent = 0;
+  let loaded = false;
+  let firstError = null;
+  for (const test of tests) {
+    if (spent >= lim.caseCpuMs) {
+      results.push({ error: `the CPU budget of ${lim.caseCpuMs} ms for the case was spent before this test` });
+      continue;
+    }
+    const one = run([test], lim.caseCpuMs - spent);
+    if (one.out) {
+      spent += Number.isFinite(one.out.cpu_ms) ? one.out.cpu_ms : 0;
+      loaded ||= Boolean(one.out.loaded);
+      firstError ??= one.out.error ?? null;
+      results.push(one.out.results?.[0] ?? { error: 'no result for this test' });
+    } else {
+      spent += lim.testCpuMs;
+      firstError ??= one.error;
+      results.push({ error: `this test stopped the sandbox process. ${one.error}` });
+    }
+  }
+  return loaded ? { out: { loaded: true, cpu_ms: Math.round(spent), results } } : { error: firstError };
+}
+
+/**
+ * js-function@2: the same sandbox idea as runJsTests, judged by CPU time (js-sandbox-v2.cjs).
+ * A test fails over `testCpuMs` of CPU; the tests of a case share `caseCpuMs`. The sandbox
+ * always ends by itself (every step has a CPU-based backstop and the case has a CPU budget),
+ * so the process wall limit only stops a sandbox that hangs. It must be longer than any
+ * honest case on the busiest machine: caseCpuMs x cap (300 s). `limits.wallMs` replaces it
+ * (for tests that need a short one).
+ *
+ * Code that fills the heap aborts the whole process (V8 exit 134), and whether the heap limit or
+ * the CPU limit comes first varies from run to run. So a process that dies gives no verdict: the
+ * tests run again, one process each. The test that kills its process fails alone.
+ */
+export function runJsTestsV2({ sources, name, tests, limits }) {
+  const lim = limitsOf(limits);
+  const fail = (error) => ({ loaded: false, error, results: tests.map((test) => ({ args: test.args, expected: test.returns, ok: false })) });
+  const run = (some, caseCpuMs) => sandboxV2({ sources, name, tests: some, lim, caseCpuMs });
+  let done = run(tests, lim.caseCpuMs);
+  if (done.died && tests.length > 1) done = oneProcessEach(run, tests, lim);
+  if (!done.out) return fail(done.error);
+  const { out } = done;
   const results = tests.map((test, index) => {
     const item = out.results?.[index] || { error: 'no result for this test' };
     const base = { args: test.args, expected: test.returns };
