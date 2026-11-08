@@ -220,7 +220,11 @@ function pairReason(pair) {
   const names = `${pair.a_label} against ${pair.b_label}`;
   const split = `${pair.a_only} only ${pair.a_label} solved, ${pair.b_only} only ${pair.b_label} solved`;
   if (pair.status === 'confounded') return `${names}: a setup that cannot be shown to stay out may carry your own setup, so this pair cannot give a clean signal.`;
-  if (!pair.shared) return `${names}: no planned task has history for both, so no disagreement can be predicted.`;
+  if (!pair.shared) {
+    return pair.status === 'unreachable'
+      ? `${names}: no planned task has history for both. Even if all ${pair.unseen} split one way, p would stay at ${pair.best_case_p}, over ${ALPHA}.`
+      : `${names}: no planned task has history for both, so no disagreement can be predicted.`;
+  }
   const head = `${names}: ${count(pair.shared, 'shared task')} with history, ${split}.`;
   if (pair.status === 'reachable') return `${head} That pattern gives p ${pair.sign_p}, under ${ALPHA}.`;
   if (pair.status === 'unreachable') return `${head} Even if ${count(pair.unseen, 'task')} without history all went one way, p would stay at ${pair.best_case_p}, over ${ALPHA}.`;
@@ -285,11 +289,15 @@ export function signalReport(root, experiment, options = {}) {
   }
   if (!history.refused && plannedCalls && lowCalls && lowCalls !== plannedCalls) reasons.push(`${count(lowCalls, 'planned call')} repeat${lowCalls === 1 ? 's' : ''} a task that every chosen setup already solved.`);
   if (!history.refused && plannedCalls && lowCalls !== plannedCalls && matched.length >= 2) {
-    const withEvidence = pairs.filter((pair) => pair.shared || pair.status === 'confounded');
-    const byStatus = Object.fromEntries(['reachable', 'open', 'unreachable', 'confounded'].map((name) => [name, pairs.filter((pair) => pair.status === name).length]));
-    if (pairs.length > 3 && withEvidence.length) reasons.push(`${count(pairs.length, 'pair')}: ${byStatus.reachable} can reach p under ${ALPHA} from history, ${byStatus.unreachable} cannot, ${byStatus.confounded} cannot be compared cleanly, ${byStatus.open} are open.`);
-    const order = ['reachable', 'open', 'confounded', 'unreachable'];
-    for (const pair of withEvidence.sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status)).slice(0, 3)) reasons.push(pairReason(pair));
+    if (plan.cases.length < NEEDED) {
+      reasons.push(`The plan has ${count(plan.cases.length, 'task')}. Two setups need at least ${NEEDED} tasks that one solves and the other does not, so no pair can reach p under ${ALPHA}.`);
+    } else {
+      const withEvidence = pairs.filter((pair) => pair.shared || pair.status !== 'open');
+      const byStatus = Object.fromEntries(['reachable', 'open', 'unreachable', 'confounded'].map((name) => [name, pairs.filter((pair) => pair.status === name).length]));
+      if (pairs.length > 3 && withEvidence.length) reasons.push(`${count(pairs.length, 'pair')}: ${byStatus.reachable} can reach p under ${ALPHA} from history, ${byStatus.unreachable} cannot, ${byStatus.confounded} cannot be compared cleanly, ${byStatus.open} are open.`);
+      const order = ['reachable', 'open', 'confounded', 'unreachable'];
+      for (const pair of withEvidence.sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status)).slice(0, 3)) reasons.push(pairReason(pair));
+    }
   }
   if (!history.refused) {
     const without = matched.filter((setup) => !setup.has_history);

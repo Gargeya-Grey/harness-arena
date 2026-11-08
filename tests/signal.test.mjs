@@ -242,6 +242,17 @@ test('an experiment with zero planned calls is low signal', (t) => {
   assert.equal(report.reasons[0], 'The experiment plans 0 calls, so a run cannot show anything.');
 });
 
+test('a plan of fewer than 6 tasks cannot reach p under 0.05 whatever the history, so it is low signal and says why', (t) => {
+  const root = makeRoot(t, { tasks: 5 });
+  const report = signalReport(root, addExperiment(root, A_B));
+  assert.equal(report.result, 'low signal');
+  assert.equal(report.pairs[0].status, 'unreachable');
+  // All five tasks one way: 2 x (1/2)^5 = 0.0625.
+  assert.equal(report.pairs[0].best_case_p, 0.0625);
+  assert.equal(report.reasons[0], 'The plan has 5 tasks. Two setups need at least 6 tasks that one solves and the other does not, so no pair can reach p under 0.05.');
+  assert.equal(report.pairs[0].predicted_disagreements, null, 'no history, so no predicted count');
+});
+
 test('a suite whose counted runs mix prompt versions is refused: the result is unknown, with the reason, and the history is not used', (t) => {
   const root = makeRoot(t, { tasks: 8 });
   addRun(root, { rand: 'a00001', model: 'm-a', rows: scoresOf(range(1, 6), [7, 8]), promptVersion: '1' });
