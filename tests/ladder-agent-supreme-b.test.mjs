@@ -216,7 +216,8 @@ const SLOW = [
   // rr42 sits within a factor of two of its limit even for the reference (140 to 375 ms of CPU against 700), so a
   // constant-factor slowdown of DAILY periods can tip it over on a busy machine: it may fail here, it is not claimed.
   { slug: 'rrule-expander', overlay: 'rrule-expander--slow-days', fails: ['rr40'], maybe: ['rr42'] },
-  { slug: 'rrule-expander', overlay: 'rrule-expander--slow-seen', fails: ['rr41', 'rr42', 'rr44'] },
+  // rr44 used 4.2 to 5.3 s of CPU against its 2.5 s guard here and passed on a faster CI runner, so it is not claimed.
+  { slug: 'rrule-expander', overlay: 'rrule-expander--slow-seen', fails: ['rr41', 'rr42'], maybe: ['rr44'] },
   { slug: 'rrule-expander', overlay: 'rrule-expander--slow-exdates', fails: ['rr42', 'rr43'] },
   {
     slug: 'rga-text-crdt',
