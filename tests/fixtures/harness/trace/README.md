@@ -8,7 +8,7 @@ the setup events (`system/init`, plugin and skill lists), rate-limit events,
 signatures and message metadata are removed. So is every field that names an account, a
 credential or its expiry (the Claude Code result line had one), a billing plan, an
 e-mail address or a home folder. The step list that `traceSteps` reads from each file
-does not change by this. `tests/trajectory.test.mjs` scans every file in this folder for
+does not change by this. `tests/trajectory.test.mjs` scans every `.jsonl` file in this folder for
 those values; add a field to its pattern when a new harness version adds one.
 
 - `claude-code.events.jsonl`: one `ls`/`cat` call (a read), one edit, one test run piped to `tail`.

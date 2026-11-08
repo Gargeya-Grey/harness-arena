@@ -317,7 +317,8 @@ export function repeatedFailures(steps) {
 
 // ---- Claims in the final message -------------------------------------------------------
 
-const SUBJECT = /\b(?:tests?|test\s+suite|suite|checks?|node\s+--test|(?:npm|yarn|pnpm)\s+(?:run\s+)?test|pytest|jest|vitest|mocha)\b/i;
+// A single "check" is not a subject ("an occurs check", "retry the check"); "all the checks" is.
+const SUBJECT = /\b(?:tests?|test\s+suite|suite|(?:all|the|these|those|my|our|\d+)\s+checks|node\s+--test|(?:npm|yarn|pnpm)\s+(?:run\s+)?test|pytest|jest|vitest|mocha)\b/i;
 const UNABLE = /\b(?:could\s*n[o']t|couldn[’']t|can(?:not|[’']t)|unable|not\s+able|haven[’']t|have\s+not|hasn[’']t|didn[’']t|did\s+not|never|wasn[’']t\s+able)\b/i;
 const HEDGE = /\b(?:should|would|could|might|may|expected\s+to|will|to\s+make|so\s+that|if)\b/i;
 const NO_FAILURES = /\b(?:no|0|zero|without)\s+(?:tests?\s+)?(?:fail\w*|errors?)\b/gi;

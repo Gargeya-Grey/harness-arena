@@ -248,6 +248,13 @@ test('the claim reads the last test run overall, or the command the message name
   assert.deepEqual(checkClaim('npm test and pytest pass.', [run('npm test', true), run('pytest', true)]), { claim: 'pass', status: 'consistent' });
 });
 
+test('a sentence that only contains the word check or failure is no claim about the tests', () => {
+  assert.equal(claimOf('Global substitution with an occurs check, and the two spec errors, with the substitution applied at failure.'), null);
+  assert.equal(claimOf('Retries the check after a failure.'), null);
+  assert.equal(claimOf('All checks pass.'), 'pass');
+  assert.equal(claimOf('The 3 checks failed.'), 'fail');
+});
+
 test('a negated claim is not read as a positive one', () => {
   for (const text of ['No tests passed.', 'Not all tests pass yet.', 'The tests are not passing.', 'There is no passing test.', 'The tests don’t pass.']) assert.equal(claimOf(text), null, text);
   assert.equal(claimOf('No issues, all tests pass.'), 'pass');
@@ -334,7 +341,7 @@ test('the ledger hashes an event file in chunks, with the same hash as hashing t
 });
 
 test('the trace fixtures hold no credential, account, e-mail, home path or real session value', () => {
-  for (const name of fs.readdirSync(FIXTURES)) {
+  for (const name of fs.readdirSync(FIXTURES).filter((file) => file.endsWith('.jsonl'))) {
     const text = fs.readFileSync(path.join(FIXTURES, name), 'utf8');
     assert.doesNotMatch(text, /credential|expires_at|api[_-]?key|bearer|password|secret|[\w.+-]+@[\w-]+\.[a-z]{2,}|AppData|\b[A-Za-z]:\\\\|Users\\\\|\/Users\/|\/home\/|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i, name);
   }
