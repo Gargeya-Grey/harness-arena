@@ -9,6 +9,7 @@ import { SchemaSet } from './schema.mjs';
 import { clusteredInterval, mean, percentile, sum, variance } from './metrics.mjs';
 import { errorClass, modelCheck, runLiveness } from './checks.mjs';
 import { ledgerPath, loadLedger, runCounts, scoreFileNames, trustRun } from './ledger.mjs';
+import { ladderState } from './ladder.mjs';
 
 const TEXT_INLINE_LIMIT = 2 * 1024 * 1024;
 
@@ -22,17 +23,81 @@ export function humanizeModel(value) {
     .join(' ');
 }
 
+// The setup states of a run, from what the run recorded (never from what it asked for).
+export const SETUP_STATES = ['loaded', 'kept out', 'partly kept out', 'leaked', 'unknown'];
+
+// The flags that keep the user's own setup out, per harness: what each adapter's `isolation` sends
+// (lab/adapters/*.mjs). A run labelled isolated is kept out only when its record holds all of them.
+// An entry that ends in "=" matches any value (a temp home path); any other entry must match exactly.
+// `partial: true` marks a harness whose flags cannot keep everything out (its adapter note says what
+// still loads), so the best state it can reach is "partly kept out".
+export const REQUIRED_SETUP_FLAGS = {
+  'claude-code': { flags: ['--setting-sources', '--strict-mcp-config', '--disable-slash-commands', 'CLAUDE_CODE_DISABLE_CLAUDE_MDS=1', 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1'] },
+  codex: { flags: ['CODEX_HOME='] },
+  'gemini-cli': { flags: ['GEMINI_CLI_HOME=', 'GOOGLE_GENAI_USE_GCA=true'] },
+  opencode: { flags: ['XDG_CONFIG_HOME=', 'XDG_DATA_HOME=', 'XDG_STATE_HOME=', 'XDG_CACHE_HOME='] },
+  'command-code': { flags: ['--no-skills'], partial: true },
+};
+
+/** Flag strings as tokens: `--flag=value` becomes `--flag`, `value`; `KEY=value` stays whole. */
+function flagTokens(flags) {
+  return (Array.isArray(flags) ? flags : []).flatMap((flag) =>
+    String(flag ?? '')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .flatMap((token) => (token.startsWith('--') && token.includes('=') ? [token.slice(0, token.indexOf('=')), token.slice(token.indexOf('=') + 1)] : [token])),
+  );
+}
+
+function hasFlag(tokens, wanted) {
+  if (wanted === '--setting-sources') {
+    // The user's own settings load when "user" is among the sources.
+    const at = tokens.indexOf(wanted);
+    return at >= 0 && !String(tokens[at + 1] ?? '').split(',').includes('user');
+  }
+  return wanted.endsWith('=') ? tokens.some((token) => token.startsWith(wanted) && token.length > wanted.length) : tokens.includes(wanted);
+}
+
 /**
- * `<model_key>__<harness>-<version>__<effort or default>`, plus `__isolated` when the
- * harness ran without the user's own setup, plus `__no-tools` when an answer run turned the
- * harness's tools off through its config. Computed, never stored.
+ * What a run kept out of the harness's own setup, from the flags it recorded:
+ *   loaded           the run did not ask to keep the setup out
+ *   kept out         it asked, and every flag of the harness's table is in its record
+ *   partly kept out  every flag is there, and the harness still loads part of the setup
+ *   leaked           it asked, flags were recorded, and one the table needs is missing
+ *   unknown          it asked, and the record proves nothing: no flags, or a harness with no table
+ * Returns { state, missing } where `missing` lists the flags a leaked run lacks.
+ */
+export function setupEvidenceOf(manifest) {
+  const settings = manifest?.harness?.settings || {};
+  if (settings.user_config !== 'isolated') return { state: 'loaded', missing: [] };
+  const table = REQUIRED_SETUP_FLAGS[manifest?.harness?.name];
+  const tokens = flagTokens(settings.user_config_flags);
+  if (!table || !tokens.length) return { state: 'unknown', missing: [] };
+  const missing = table.flags.filter((flag) => !hasFlag(tokens, flag));
+  if (missing.length) return { state: 'leaked', missing };
+  return { state: table.partial ? 'partly kept out' : 'kept out', missing: [] };
+}
+
+export const setupStateOf = (manifest) => setupEvidenceOf(manifest).state;
+
+const SETUP_ID_SUFFIX = { isolated: 'isolated', 'kept out': 'isolated', 'partly kept out': 'isolated-partial', leaked: 'isolated-leaked', unknown: 'isolated-unknown' };
+const SETUP_LABEL = { 'kept out': 'isolated', 'partly kept out': 'isolated (partly)', leaked: 'isolated (leaked)', unknown: 'isolated (unproved)' };
+
+/**
+ * `<model_key>__<harness>-<version>__<effort or default>`, plus a suffix for the user setup of the
+ * run, plus `__no-tools` when an answer run turned the harness's tools off through its config.
+ * The suffix follows the setup state: kept out `__isolated`, leaked `__isolated-leaked`,
+ * partly kept out `__isolated-partial`, unknown `__isolated-unknown`; loaded has none.
+ * `userConfig` is a setup state, or the old `loaded` / `isolated` pair that gives the legacy id.
+ * Computed, never stored.
  */
 export function configId(modelKey, harness, effort, userConfig = 'loaded', answerTools = 'default') {
   return [
     safeSegment(modelKey),
     `${safeSegment(harness?.name)}-${safeSegment(harness?.version)}`,
     safeSegment(effort || 'default'),
-    ...(userConfig === 'isolated' ? ['isolated'] : []),
+    ...(SETUP_ID_SUFFIX[userConfig] ? [SETUP_ID_SUFFIX[userConfig]] : []),
     ...(answerTools === 'off' ? ['no-tools'] : []),
   ].join('__');
 }
@@ -76,7 +141,7 @@ export function comparisonMode(configs) {
   if (varies((c) => `${c.harness.name}@${c.harness.version}`)) axes.push('harness');
   if (varies((c) => c.effort || 'default')) axes.push('effort');
   if (varies((c) => `${c.params?.temperature ?? ''}|${c.params?.max_tokens ?? ''}`)) axes.push('decoding');
-  if (varies((c) => c.user_config || 'loaded')) axes.push('setup');
+  if (varies((c) => c.setup_state || c.user_config || 'loaded')) axes.push('setup');
   if (varies((c) => c.answer_tools || 'default')) axes.push('answer tools');
   if (!axes.length) return { mode: 'replicate', axes };
   return { mode: axes.length === 1 ? 'controlled' : 'descriptive', axes };
@@ -89,15 +154,21 @@ function buildConfig(manifest, modelKey, raw, registry) {
   const effort = entry.reasoning_effort || raw?.request?.params?.reasoning_effort || null;
   const displayName = registered.display_name || humanizeModel(entry.model || modelKey);
   const userConfig = userConfigOf(manifest);
+  const { state: setupState, missing: setupMissing } = setupEvidenceOf(manifest);
   const answerTools = answerToolsOf(manifest);
-  const setup = `${userConfig === 'isolated' ? ' · isolated' : ''}${answerTools === 'off' ? ' · no tools' : ''}`;
+  const setup = `${SETUP_LABEL[setupState] ? ` · ${SETUP_LABEL[setupState]}` : ''}${answerTools === 'off' ? ' · no tools' : ''}`;
   return {
-    id: configId(modelKey, harness, effort, userConfig, answerTools),
+    id: configId(modelKey, harness, effort, setupState, answerTools),
+    // The id the formula gave before the setup state split it. Annotations and saved boards made then
+    // name this one; one legacy id can be several ids now, so a lookup resolves it per run.
+    legacy_id: configId(modelKey, harness, effort, userConfig, answerTools),
     model_key: modelKey,
     display_name: displayName,
     short_label: `${displayName} · ${harness.name || 'unknown'}${effort ? ` · ${effort}` : ''}${setup}`,
     label: `${displayName} · ${harness.name || 'unknown'} ${harness.version || ''}${effort ? ` · ${effort}` : ''}${setup}`.replace(/\s+/g, ' ').trim(),
     user_config: userConfig,
+    setup_state: setupState,
+    setup_missing: setupMissing,
     user_config_flags: harness.settings?.user_config_flags || [],
     answer_tools: answerTools,
     provider: entry.provider || registered.provider || 'unknown',
@@ -328,6 +399,9 @@ export function buildState(root, { validate = true } = {}) {
   const configs = {};
   const observations = [];
   const runs = [];
+  // Per run: legacy config id -> current config id. One legacy id can be several current ids across
+  // runs (a leaked and a clean run), never within one run and one model.
+  const idsOfRun = new Map();
   const suitesSeen = new Set();
   const cases = {};
   // One load per suite version for the whole build: an agent suite load reads every workspace file.
@@ -449,6 +523,7 @@ export function buildState(root, { validate = true } = {}) {
     ctx.runs.push(manifest.run_id);
 
     const runConfigIds = new Set();
+    const runSetup = setupEvidenceOf(manifest);
     let errors = 0;
     // A halted run is never scored, whatever score file sits in its folder.
     // So is a run that does not match the evidence ledger, or that the ledger says was halted.
@@ -463,6 +538,8 @@ export function buildState(root, { validate = true } = {}) {
       }
       const stored = configs[config.id];
       if (!stored.run_ids.includes(manifest.run_id)) stored.run_ids.push(manifest.run_id);
+      if (!idsOfRun.has(manifest.run_id)) idsOfRun.set(manifest.run_id, new Map());
+      idsOfRun.get(manifest.run_id).set(config.legacy_id, config.id);
       if (!stored.latest_run_at || String(manifest.created_at) > stored.latest_run_at) stored.latest_run_at = manifest.created_at;
       if (!ctx.config_ids.includes(config.id)) ctx.config_ids.push(config.id);
       runConfigIds.add(config.id);
@@ -472,7 +549,11 @@ export function buildState(root, { validate = true } = {}) {
       const quality = raw.error ? null : qualityScore ? qualityScore.value : null;
       const passed = quality == null ? null : typeof qualityScore.passed === 'boolean' ? qualityScore.passed : quality >= 0.5;
       const formatScores = scores.filter((score) => score.dimension === 'format');
-      const human = latest.get(`${manifest.run_id}|${raw.case_id}|${config.id}|${raw.repeat}`) || null;
+      // An annotation made before the setup state split the id names the legacy id; the run decides
+      // which current id that was. The newer of the two wins.
+      const humanNow = latest.get(`${manifest.run_id}|${raw.case_id}|${config.id}|${raw.repeat}`);
+      const humanThen = config.legacy_id === config.id ? null : latest.get(`${manifest.run_id}|${raw.case_id}|${config.legacy_id}|${raw.repeat}`);
+      const human = humanNow && humanThen ? (String(humanThen.created_at) > String(humanNow.created_at) ? humanThen : humanNow) : humanNow || humanThen || null;
       if (raw.error) errors += 1;
       observations.push({
         id: `${manifest.run_id}|${raw.case_id}|${config.id}|${raw.repeat}`,
@@ -530,6 +611,8 @@ export function buildState(root, { validate = true } = {}) {
       experiment_id: manifest.experiment?.id ?? null,
       experiment_description: manifest.experiment?.description ?? null,
       harness: manifest.harness || null,
+      setup_state: runSetup.state,
+      setup_missing: runSetup.missing,
       models: (manifest.models || []).map((item) => item.model_key),
       config_ids: [...runConfigIds],
       rows: rawRows.length,
@@ -548,6 +631,13 @@ export function buildState(root, { validate = true } = {}) {
       ctx.aggregates[id] = aggregate(ctxRows.filter((row) => row.config_id === id), configs[id], { hasQuality });
     }
     ctx.comparison = comparisonMode(ctx.config_ids.map((id) => configs[id]));
+    // Answers stored with no score, counted whether or not their run counts: a run that stopped
+    // before scoring has answers and no aggregate, and the page must say so instead of "no answers".
+    ctx.unscored_answers = {};
+    for (const row of observations) {
+      if (row.context_key !== ctx.key || row.error || row.quality != null) continue;
+      ctx.unscored_answers[row.config_id] = (ctx.unscored_answers[row.config_id] || 0) + 1;
+    }
     ctx.latest_run_at = ctx.runs
       .map((id) => runs.find((run) => run.run_id === id)?.created_at)
       .filter(Boolean)
@@ -569,14 +659,24 @@ export function buildState(root, { validate = true } = {}) {
   boards.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
   runs.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
 
-  return {
+  // A saved annotation names the config id of its day. Shown here under the id its run has now;
+  // the stored line is not touched. An id that is current, or that no run of the annotation knows, stays.
+  const currentAnnotations = annotations.map((item) => {
+    const now = idsOfRun.get(item.run_id);
+    const resolve = (id) => (id && now?.has(id) ? now.get(id) : id);
+    const config_id = resolve(item.config_id);
+    const pair_config_id = resolve(item.pair_config_id);
+    return config_id === item.config_id && pair_config_id === item.pair_config_id ? item : { ...item, config_id, pair_config_id, stored_config_id: item.config_id };
+  });
+
+  const state = {
     generated_at: isoNow(),
     contexts: [...contexts.values()].sort((a, b) => String(b.latest_run_at).localeCompare(String(a.latest_run_at))),
     configs,
     observations,
     cases,
     runs,
-    annotations,
+    annotations: currentAnnotations,
     boards,
     problems,
     meta: {
@@ -585,4 +685,7 @@ export function buildState(root, { validate = true } = {}) {
       annotation_file: 'annotations/human@1.jsonl',
     },
   };
+  // The ladder view: every case of the suite versions in use, unrun ones included (lab/lib/ladder.mjs).
+  state.ladder = ladderState(root, state, { suiteAt });
+  return state;
 }
