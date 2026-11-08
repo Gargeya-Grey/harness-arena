@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ladder · Model Lab</title>
+<meta name="description" content="What the stored runs do and do not show about each task of the difficulty ladder and each pair of setups.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/fonts/fonts.css">
+<link rel="stylesheet" href="/theme.css">
+<link rel="stylesheet" href="/ladder.css">
+<script src="/boot.js"></script>
+<script type="module" src="/ladder.js"></script>
+</head>
+<body>
+<div class="app">
+  <aside class="rail" id="rail" aria-label="Model Lab"></aside>
+
+  <main class="main" id="main">
+    <div class="page">
+      <header class="ld-head">
+        <h1>Ladder</h1>
+        <p class="ld-meta" id="ld-meta">Reading the stored runs…</p>
+      </header>
+
+      <section class="ld-answer glass" id="answer" aria-label="The answer" hidden></section>
+      <div class="ld-notices" id="notices"></div>
+      <div class="ld-empty glass" id="empty" hidden></div>
+
+      <section class="ld-sect" id="setups-sect" aria-labelledby="setups-h" hidden>
+        <div class="sect-label"><h2 id="setups-h">Setups</h2><span class="sect-note">Solved of tasks counted, then the mean score</span></div>
+        <div class="ld-wrap glass" id="setups" tabindex="-1"></div>
+      </section>
+
+      <section class="ld-sect" id="pairs-sect" aria-labelledby="pairs-h" hidden>
+        <div class="sect-label"><h2 id="pairs-h">Pairs of setups</h2><span class="sect-note">Tasks only one of the two solved, and the sign test</span></div>
+        <div class="ld-pick" id="pair-pick" hidden></div>
+        <div id="pair-card"></div>
+        <div class="ld-wrap glass" id="pairs"></div>
+      </section>
+
+      <section class="ld-sect" id="tasks-sect" aria-labelledby="tasks-h" hidden>
+        <div class="sect-label"><h2 id="tasks-h">Tasks</h2><span class="sect-note" id="tasks-note" role="status"></span></div>
+        <div class="ld-pick" id="tools"></div>
+        <div class="ld-wrap glass" id="tasks"></div>
+        <p class="ld-legend" aria-hidden="true"><span><span class="ld-mk ld-pass">✓</span>solved</span><span><span class="ld-mk ld-fail">✕</span>not solved</span><span><span class="nil">not run</span>no counted result</span></p>
+      </section>
+
+      <section class="ld-sect" id="evidence-sect" aria-labelledby="evidence-h" hidden>
+        <div class="sect-label"><h2 id="evidence-h">What this page reads</h2></div>
+        <div class="ld-evidence" id="evidence"></div>
+      </section>
+    </div>
+  </main>
+</div>
+<div class="sr" id="live" aria-live="polite"></div>
+</body>
+</html>
