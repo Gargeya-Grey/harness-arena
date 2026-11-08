@@ -303,7 +303,18 @@ test('a leaked setup next to a clean one: leaked history is never pooled, and th
   assert.match(report.setups[0].config_id, /__isolated$/);
   assert.equal(report.result, 'unknown');
   assert.deepEqual(report.tasks, { no_history: 8, all_solved: 0, all_unsolved: 0, disagree: 0 });
-  assert.match(report.reasons.join('\n'), /m-b · claude-code: stored runs exist only as leaked and loaded\. They are never pooled with kept out\./);
+  assert.match(report.reasons.join('\n'), /m-b · claude-code: stored runs exist only as leaked and loaded\. They are never pooled with the planned setup \(kept out, answer tools default\)\./);
+});
+
+test('history from a configuration with other answer tools is not pooled: OpenCode runs with its tools off, a stored run with them on is another setup', (t) => {
+  const root = makeRoot(t, { tasks: 8 });
+  addRun(root, { rand: 'a00001', model: 'm-a', rows: scoresOf(range(1, 8)) });
+  addRun(root, { rand: 'a00002', model: 'm-b', harness: 'opencode', rows: scoresOf([], range(1, 8)) });
+  vouch(root);
+  const report = signalReport(root, addExperiment(root, [['m-a', 'claude-code'], ['m-b', 'opencode']]));
+  assert.deepEqual(report.setups.map((setup) => [setup.history, setup.config_id.endsWith('__no-tools')]), [[true, false], [false, true]]);
+  assert.equal(report.result, 'unknown');
+  assert.match(report.reasons.join('\n'), /m-b · opencode: stored runs exist only as answer tools default\. They are never pooled with the planned setup \(kept out, answer tools off\)\./);
 });
 
 test('a setup that cannot be kept out is flagged, and a pair with it is not clean', (t) => {

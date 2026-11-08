@@ -125,10 +125,11 @@ function matchHistory(setups, state, rows) {
     rowsOf.get(row.config_id).push(row);
   }
   return setups.map((setup) => {
+    // History is a counted result: a configuration whose rows are all lost errors has none.
     const same = Object.values(state.configs).filter(
-      (config) => config.model_key === setup.model && config.harness.name === setup.harness && (config.effort ?? null) === (setup.effort ?? null) && config.answer_tools === setup.answer_tools && rowsOf.has(config.id),
+      (config) => config.model_key === setup.model && config.harness.name === setup.harness && (config.effort ?? null) === (setup.effort ?? null) && rowsOf.has(config.id) && countedRows(rowsOf.get(config.id), true).length > 0,
     );
-    const own = same.filter((config) => config.setup_state === setup.setup_state).sort((a, b) => String(b.latest_run_at).localeCompare(String(a.latest_run_at)));
+    const own = same.filter((config) => config.setup_state === setup.setup_state && config.answer_tools === setup.answer_tools).sort((a, b) => String(b.latest_run_at).localeCompare(String(a.latest_run_at)));
     const chosen = own[0] ?? null;
     return {
       ...setup,
@@ -137,8 +138,10 @@ function matchHistory(setups, state, rows) {
       history_label: chosen?.short_label ?? setup.label,
       rows: chosen ? rowsOf.get(chosen.id) : [],
       other_harness_versions: own.slice(1).map((config) => config.id),
-      // Never pooled: the same setup under another setup state.
-      excluded: same.filter((config) => config.setup_state !== setup.setup_state).map((config) => ({ config_id: config.id, setup_state: config.setup_state })),
+      // Never pooled: the same model and harness under another setup state or with other answer tools.
+      excluded: same
+        .filter((config) => !own.includes(config))
+        .map((config) => ({ config_id: config.id, setup_state: config.setup_state, answer_tools: config.answer_tools, differs: [config.setup_state !== setup.setup_state ? config.setup_state : null, config.answer_tools !== setup.answer_tools ? `answer tools ${config.answer_tools}` : null].filter(Boolean).join(', ') })),
     };
   });
 }
@@ -303,7 +306,7 @@ export function signalReport(root, experiment, options = {}) {
     const without = matched.filter((setup) => !setup.has_history);
     if (without.length) reasons.push(`${count(without.length, 'setup')} of ${matched.length} ${without.length === 1 ? 'has' : 'have'} no history for ${plan.suite.id}@${plan.suite.version} in the planned setup state: ${without.map((setup) => `${setup.label} (${setup.setup_state})`).join(', ')}.`);
     for (const setup of without.filter((item) => item.excluded.length)) {
-      reasons.push(`${setup.label}: stored runs exist only as ${[...new Set(setup.excluded.map((item) => item.setup_state))].join(' and ')}. They are never pooled with ${setup.setup_state}.`);
+      reasons.push(`${setup.label}: stored runs exist only as ${[...new Set(setup.excluded.map((item) => item.differs))].join(' and ')}. They are never pooled with the planned setup (${setup.setup_state}, answer tools ${setup.answer_tools}).`);
     }
     for (const setup of matched.filter((item) => item.other_harness_versions.length)) {
       reasons.push(`${setup.label}: history is from ${setup.config_id}; ${count(setup.other_harness_versions.length, 'other harness version')} ${setup.other_harness_versions.length === 1 ? 'is' : 'are'} not pooled.`);
