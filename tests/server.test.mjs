@@ -53,8 +53,9 @@ test.after(async () => {
 test('health and state', async () => {
   assert.equal((await request('GET', '/api/health')).json.ok, true);
   const state = (await request('GET', '/api/state')).json;
-  assert.equal(state.contexts.length, 3);
-  assert.equal(state.observations.length, 77);
+  assert.equal(state.contexts.length, 5);
+  assert.equal(state.observations.length, 123);
+  assert.equal(state.ladder.suites.find((suite) => suite.id === 'ladder-answer').cases.length, 12, 'the state carries the ladder, unrun cases included');
 });
 
 test('only local Host headers are served', async () => {

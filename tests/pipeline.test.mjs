@@ -134,10 +134,10 @@ test('validate: a completed run is counted against the suite version it recorded
 test('state: fixture contexts, configurations and observations', () => {
   const state = buildState(FIXTURES);
   assert.deepEqual(state.problems, []);
-  assert.equal(state.contexts.length, 3);
-  assert.equal(Object.keys(state.configs).length, 6);
-  assert.equal(state.runs.length, 9);
-  assert.equal(state.observations.length, 77);
+  assert.equal(state.contexts.length, 5);
+  assert.equal(Object.keys(state.configs).length, 9);
+  assert.equal(state.runs.length, 14);
+  assert.equal(state.observations.length, 123);
   const smoke = state.contexts.find((context) => context.suite.id === 'smoke' && context.repeats === 3);
   assert.ok(smoke, 'the 3-repeat smoke context exists');
   for (const id of smoke.config_ids) {

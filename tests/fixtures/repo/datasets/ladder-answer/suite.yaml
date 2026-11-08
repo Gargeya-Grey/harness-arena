@@ -1,0 +1,5 @@
+id: ladder-answer
+version: "2.0.0"
+description: Fixture ladder suite: 12 answer tasks over five tiers, for the ladder report and the dashboard.
+defaults:
+  repeats: 1

@@ -29,6 +29,11 @@ function write(rel, text) {
 const jsonl = (rows) => rows.map((row) => JSON.stringify(row)).join('\n') + '\n';
 const copy = (rel) => write(rel, fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8'));
 
+// The event stream of the real fixture run is local only (it is not in a fresh checkout's results/).
+// A checkout without it keeps the copy that is committed in the fixture.
+const REAL_EVENTS = 'results/20261021T080428Z__smoke__smoke-command-code__900ca7/harness-events.ndjson';
+const keptEvents = fs.existsSync(path.join(OUT, REAL_EVENTS)) ? fs.readFileSync(path.join(OUT, REAL_EVENTS), 'utf8') : null;
+
 fs.rmSync(OUT, { recursive: true, force: true });
 
 write('configs/models.yaml', `# Fixture registry. Prices are illustrative, not current.
@@ -270,6 +275,8 @@ const realEvents = path.join(OUT, 'results', realRun, 'harness-events.ndjson');
 if (fs.existsSync(realEvents)) {
   const lines = fs.readFileSync(realEvents, 'utf8').split('\n').filter(Boolean).map(JSON.parse);
   write(`results/${realRun}/harness-events.ndjson`, jsonl(lines.map((line) => ({ ...line, event: redactEvent(line.event) }))));
+} else if (keptEvents !== null) {
+  write(REAL_EVENTS, keptEvents);
 }
 
 write('annotations/human@1.jsonl', jsonl([
@@ -283,6 +290,107 @@ write('boards/haiku-harness.json', `${JSON.stringify({
   context: { suite: 'smoke', prompt: 'qa-single-turn', cases: smoke.cases.map((item) => item.case_id), repeats: 3 },
   treatment_axis: 'harness',
   configs: ['claude-haiku__claude-code-2.1.306__default', 'claude-haiku__anthropic-api-2023-06-01__default'],
+  view: {},
+}, null, 2)}\n`);
+
+// A ladder suite: 12 tasks over five tiers (the tier table is the real one), run by four setups that
+// differ in what they kept out of the harness's own setup, and one run that stopped before scoring.
+// 10 tasks are declared by the counted runs; the last two are never run (information: no-data).
+copy('configs/ladder.yaml');
+copy('prompts/reasoning-final-answer/prompt.yaml');
+copy('prompts/reasoning-final-answer/v1.yaml');
+const TIERS = { 1: ['easy', 1], 2: ['medium', 5], 3: ['hard', 15], 4: ['extra-hard', 60], 5: ['supreme', 200] };
+const LADDER_TASKS = [
+  ['a1', 1, 12], ['a2', 1, 30], ['b1', 2, 7], ['b2', 2, 21], ['c1', 3, 99], ['c2', 3, 144], ['c3', 3, 8],
+  ['d1', 4, 63], ['d2', 4, 25], ['e1', 5, 5], ['e2', 5, 6], ['e3', 5, 7],
+];
+write('datasets/ladder-answer/suite.yaml', `id: ladder-answer
+version: "2.0.0"
+description: Fixture ladder suite: 12 answer tasks over five tiers, for the ladder report and the dashboard.
+defaults:
+  repeats: 1
+`);
+write('datasets/ladder-answer/cases.jsonl', jsonl(LADDER_TASKS.map(([slug, level, answer]) => ({
+  case_id: `ladder-answer-fx-${slug}`,
+  input: { question: `Fixture problem ${slug}: what number is the answer?` },
+  expected: answer,
+  tags: [`tier-${level}-${TIERS[level][0]}`],
+  metadata: { tier: { level, name: TIERS[level][0], human_minutes: TIERS[level][1], basis: 'Fixture task. The time is a label, not a measurement.' } },
+}))));
+const ladderSuite = loadSuite(OUT, 'ladder-answer');
+const finalPrompt = loadPrompt(OUT, 'reasoning-final-answer');
+const FINAL = { id: 'final-answer', version: '1', dimension: 'quality' };
+const CLAUDE_FLAGS = ['--setting-sources', 'project,local', '--strict-mcp-config', '--disable-slash-commands'];
+const withSetup = (harness, flags) => ({ ...harness, settings: { ...harness.settings, user_config: 'isolated', user_config_requested: 'isolated', user_config_flags: flags } });
+// What each run did on the 10 declared tasks (a1 a2 b1 b2 c1 c2 c3 d1 d2 e1): 1 solved, 0 not,
+// 'lost' a call lost to a usage limit (it does not count). The tasks come out as
+// 3 all-solved (a1 a2 b1), 4 disagree (b2 c1 c2 c3; c2 only because of a setup split), 2 all-unsolved (d1 d2),
+// 1 one-config (e1) and 2 never run (e2 e3).
+const LADDER_RUNS = [
+  { stamp: '20261022T090000Z', rand: 'c1aa01', model: 'claude-haiku', harness: withSetup(HARNESSES['claude-code'], CLAUDE_FLAGS), applied: {}, results: [1, 1, 1, 1, 1, 0, 0, 0, 0, 'lost'] },
+  { stamp: '20261022T091000Z', rand: 'c1bb02', model: 'claude-haiku', harness: withSetup(HARNESSES['claude-code'], [...CLAUDE_FLAGS, 'CLAUDE_CODE_DISABLE_CLAUDE_MDS=1', 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1']), applied: {}, results: [1, 1, 1, 1, 1, 1, 0, 0, 0, 1] },
+  { stamp: '20261022T092000Z', rand: 'c1cc03', model: 'deepseek-v4.1-flash-max', harness: withSetup(HARNESSES['command-code'], ['--no-skills']), applied: { reasoning_effort: 'max' }, results: [1, 1, 1, 0, 0, 0, 1, 0, 0, 'lost'] },
+  { stamp: '20261022T093000Z', rand: 'c1dd04', model: 'gpt-5-mini-high', harness: HARNESSES.codex, applied: { reasoning_effort: 'high' }, results: [1, 1, 1, 1, 1, 0, 0, 0, 0, 'lost'] },
+];
+const LADDER_DECLARED = ladderSuite.cases.slice(0, 10).map((item) => item.case_id);
+const ladderExperiment = (cases) => ({ id: 'ladder-answer-pilot', description: 'Fixture ladder pilot: one repeat per task.', suite: 'ladder-answer', prompt: 'reasoning-final-answer', repeats: 1, cases, targets: LADDER_RUNS.map((item) => ({ model: item.model, harness: item.harness.name })), evaluators: [FINAL] });
+function ladderRows({ runId, model, applied, cases, result }) {
+  const raw = [];
+  const scores = [];
+  cases.forEach((caseId, index) => {
+    const item = ladderSuite.cases.find((entry) => entry.case_id === caseId);
+    const outcome = result(index);
+    const lost = outcome === 'lost';
+    const text = lost ? null : `Reasoning.\nAnswer: ${outcome === 1 ? item.expected : item.expected + 1}`;
+    raw.push({
+      run_id: runId, case_id: caseId, model_key: model, repeat: 0, started_at: '2026-10-22T09:00:00.000Z', latency_ms: lost ? 1000 : 3000 + index * 100,
+      tokens_per_second: null, tool_calls: 0, skills_used: [],
+      request: { prompt_id: finalPrompt.id, prompt_version: finalPrompt.version, messages: renderMessages(finalPrompt.messages, item.input), system_prompt: null, params: applied },
+      response: lost ? { text: null, finish_reason: null } : { text, finish_reason: 'end_turn' },
+      usage: lost ? { input_tokens: null, output_tokens: null, cache_read_tokens: null, cache_write_tokens: null } : { input_tokens: 400, output_tokens: 60, cache_read_tokens: 0, cache_write_tokens: 0 },
+      cost_usd: null,
+      error: lost ? { type: 'rate_limit', message: 'Usage limit reached' } : null,
+      metadata: { workdir: 'isolated' },
+    });
+    if (!lost) scores.push({ run_id: runId, case_id: caseId, model_key: model, repeat: 0, evaluator_id: 'final-answer', evaluator_version: '1', dimension: 'quality', value: outcome === 1 ? 1 : 0, passed: outcome === 1, details: { expected: item.expected, actual: String(outcome === 1 ? item.expected : item.expected + 1) } });
+  });
+  return { raw, scores };
+}
+for (const profile of LADDER_RUNS) {
+  const runId = `${profile.stamp}__ladder-answer__ladder-answer-pilot__${profile.rand}`;
+  const created = `2026-10-22T${profile.stamp.slice(9, 11)}:${profile.stamp.slice(11, 13)}:00.000Z`;
+  const { raw, scores } = ladderRows({ runId, model: profile.model, applied: profile.applied, cases: LADDER_DECLARED, result: (index) => profile.results[index] });
+  const dir = `results/${runId}`;
+  write(`${dir}/run.json`, `${JSON.stringify(manifest({ runId, created, finished: created.replace(':00.000Z', ':20.000Z'), suite: ladderSuite, prompt: finalPrompt, experiment: ladderExperiment(LADDER_DECLARED), harness: profile.harness, modelKey: profile.model, applied: profile.applied, evaluators: [FINAL] }), null, 2)}\n`);
+  write(`${dir}/raw.jsonl`, jsonl(raw));
+  write(`${dir}/scores/final-answer@1.jsonl`, jsonl(scores));
+}
+// A run that stopped (the user ended it) after 6 answers and before any score: its answers count nowhere yet.
+{
+  const profile = { stamp: '20261022T100000Z', rand: 'c1ee05', model: 'gpt-5-mini-high', harness: HARNESSES.codex, applied: { reasoning_effort: 'high' } };
+  const runId = `${profile.stamp}__ladder-answer__ladder-answer-pilot__${profile.rand}`;
+  const cases = ladderSuite.cases.slice(0, 6).map((item) => item.case_id);
+  const { raw } = ladderRows({ runId, model: profile.model, applied: profile.applied, cases, result: () => 1 });
+  const stopped = manifest({ runId, created: '2026-10-22T10:00:00.000Z', finished: null, suite: ladderSuite, prompt: finalPrompt, experiment: ladderExperiment(cases), harness: profile.harness, modelKey: profile.model, applied: profile.applied, evaluators: [FINAL] });
+  write(`results/${runId}/run.json`, `${JSON.stringify({ ...stopped, status: 'failed', finished_at: '2026-10-22T10:00:40.000Z', runner: { pid: 1, heartbeat_at: '2026-10-22T10:00:40.000Z', interrupted: true } }, null, 2)}\n`);
+  write(`results/${runId}/raw.jsonl`, jsonl(raw));
+}
+// A rating and a saved view made before the user-setup state split the id of the Claude Code runs:
+// both name the old id, which the leaked run and the clean run shared.
+const legacyAnnotation = {
+  annotation_id: 'fixture-annotation-legacy', run_id: '20261022T090000Z__ladder-answer__ladder-answer-pilot__c1aa01', case_id: 'ladder-answer-fx-a1',
+  config_id: 'claude-haiku__claude-code-2.1.306__default__isolated', repeat: 0, reviewer: 'owner', created_at: '2026-10-22T11:00:00.000Z', scale: '1-5', value: 3,
+  notes: 'Rated before the setup state split the id.', pair_id: null, pair_choice: null, pair_config_id: null, revealed: true, supersedes: null,
+};
+write('annotations/human@1.jsonl', jsonl([JSON.parse(fs.readFileSync(path.join(OUT, 'annotations/human@1.jsonl'), 'utf8').trim()), legacyAnnotation]));
+write('boards/ladder-legacy.json', `${JSON.stringify({
+  board_id: 'ladder-legacy',
+  title: 'Haiku through Claude Code (old id)',
+  created_at: '2026-10-22T11:05:00.000Z',
+  updated_at: '2026-10-22T11:05:00.000Z',
+  context: { suite: 'ladder-answer', prompt: 'reasoning-final-answer', cases: LADDER_DECLARED, repeats: 1 },
+  treatment_axis: 'none',
+  configs: ['claude-haiku__claude-code-2.1.306__default__isolated'],
   view: {},
 }, null, 2)}\n`);
 
