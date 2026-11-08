@@ -117,7 +117,7 @@ export function headline(ladder) {
 export function renderAnswer(ladder) {
   const h = headline(ladder);
   if (!h) return '';
-  return String(html`<p class="ld-say">${h.say}</p>${h.pairs ? html`<p class="ld-more ld-pairs-say">${h.pairs}</p>` : ''}${h.more.map((line) => html`<p class="ld-more">${line}</p>`)}<div class="ld-foot"><span class="fair"><span class="mark-s info" aria-hidden="true"></span><span>A tier is an estimate of expert time, not a measured difficulty. Only the stored runs speak about models, and only for the tasks they ran. The p values are not corrected for the number of pairs.</span></span></div>`);
+  return String(html`<p class="ld-say">${h.say}</p>${h.pairs ? html`<p class="ld-more ld-pairs-say">${h.pairs}</p>` : ''}${h.more.length ? html`<p class="ld-more">${h.more.join(' ')}</p>` : ''}<div class="ld-foot"><span class="fair"><span class="mark-s info" aria-hidden="true"></span><span>A tier is an estimate of expert time, not a measured difficulty. Only the stored runs speak about models, and only for the tasks they ran. The p values are not corrected for the number of pairs.</span></span></div>`);
 }
 
 export function renderMeta(ladder) {
@@ -199,6 +199,13 @@ export function renderPairs(ladder, ui = {}) {
   return String(html`<table class="ld-tbl ld-pairs"><thead><tr><th scope="col" class="c-pair">Pair</th><th scope="col">Tasks both ran</th><th scope="col">Only the first solved</th><th scope="col">Only the second solved</th><th scope="col">Sign test p</th><th scope="col">What the runs show</th><th scope="col" class="c-act"><span class="sr">Show the tasks</span></th></tr></thead><tbody>${pairs.map((pair) => html`<tr data-pair="${pair.a}|${pair.b}"${on(pair) ? html` class="is-on"` : ''}><th scope="row" class="c-pair"><span class="ld-vs"><span class="lt" aria-hidden="true">${letters.get(pair.a)}</span><span class="who-name">${pair.a_label}</span></span><span class="ld-vs"><span class="lt" aria-hidden="true">${letters.get(pair.b)}</span><span class="who-name">${pair.b_label}</span></span></th><td data-label="Tasks both ran" class="num">${pair.shared}</td><td data-label="Only the first solved" class="num">${pair.a_only}</td><td data-label="Only the second solved" class="num">${pair.b_only}</td><td data-label="Sign test p" class="num">${pText(pair.sign_p)}</td><td data-label="What the runs show"><span class="ld-read${pair.sign_p < ALPHA ? ' is-apart' : ''}">${readingText(pair)}</span></td><td class="c-act"><button type="button" class="btn quiet small" data-act="pair-row" data-a="${pair.a}" data-b="${pair.b}" data-fk="pair:${pair.a}|${pair.b}">Show tasks</button></td></tr>`)}</tbody></table>`);
 }
 
+/** Which letter is which setup, above the task table, where the columns show only the letter. */
+export function renderKey(ladder) {
+  const letters = letterMap(ladder);
+  if (!configsOf(ladder).length) return '';
+  return String(html`<ul class="ld-key" aria-label="Setup letters">${configsOf(ladder).map((config) => html`<li><span class="lt" aria-hidden="true">${letters.get(config.config_id)}</span><span class="col-name">${config.label}</span></li>`)}</ul>`);
+}
+
 /** The card for the two setups chosen in the selects: what only one of them solved, and the sign test. */
 export function renderPairCard(ladder, ui = {}) {
   if (configsOf(ladder).length < 2 || !(ladder?.pairs || []).length) return '';
@@ -209,7 +216,7 @@ export function renderPairCard(ladder, ui = {}) {
   if (!pair) return String(html`<div class="ld-card" data-pair-card><p class="ld-say-sm">${a} and ${b} ran no task in common, so the runs cannot compare them.</p></div>`);
   const apart = pair.sign_p < ALPHA;
   const gap = pair.a_only + pair.b_only;
-  return String(html`<div class="ld-card" data-pair-card><p class="ld-say-sm">${a} solved <b class="num">${pair.a_only}</b> ${pair.a_only === 1 ? 'task' : 'tasks'} that ${b} did not. ${b} solved <b class="num">${pair.b_only}</b> that ${a} did not.</p><p class="ld-more">They both ran ${plural(pair.shared, 'task')}. ${apart ? html`The runs can tell them apart: sign test p ${pText(pair.sign_p)}.` : html`The runs cannot tell them apart: sign test p ${pText(pair.sign_p)}. A split this uneven or less could be chance.`}${isNum(pair.mean_diff) ? ` Mean score gap over those tasks: ${pair.mean_diff > 0 ? '+' : ''}${fixed(pair.mean_diff)} (${a} minus ${b}).` : ''}</p>${gap ? html`<button type="button" class="switch" role="switch" aria-checked="${ui.split ? 'true' : 'false'}" data-act="split" data-fk="split"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>Show only the ${gap} ${gap === 1 ? 'task' : 'tasks'} that tell them apart</button>` : ''}</div>`);
+  return String(html`<div class="ld-card" data-pair-card><p class="ld-say-sm">${a} solved <b class="num">${pair.a_only}</b> ${pair.a_only === 1 ? 'task' : 'tasks'} that ${b} did not. ${b} solved <b class="num">${pair.b_only}</b> that ${a} did not.</p><p class="ld-more">They both ran ${plural(pair.shared, 'task')}. ${apart ? html`The runs can tell them apart: sign test p ${pText(pair.sign_p)}.` : html`The runs cannot tell them apart: sign test p ${pText(pair.sign_p)}. A split at least this uneven could be chance.`}${isNum(pair.mean_diff) ? ` Mean score gap over those tasks: ${pair.mean_diff > 0 ? '+' : ''}${fixed(pair.mean_diff)} (${a} minus ${b}).` : ''}</p>${gap ? html`<button type="button" class="switch" role="switch" aria-checked="${ui.split ? 'true' : 'false'}" data-act="split" data-fk="split"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>Show only the ${gap} ${gap === 1 ? 'task' : 'tasks'} that tell them apart</button>` : ''}</div>`);
 }
 
 /* ---------- Tasks ---------- */
@@ -302,7 +309,7 @@ export function renderTasks(ladder, cases, ui) {
   const configs = configsOf(ladder);
   const letters = letterMap(ladder);
   if (!tasks.length) return String(html`<p class="ld-quiet" data-no-match>No task matches these filters. <button type="button" class="link-btn" data-act="clear" data-fk="clear">Clear the filters</button></p>`);
-  return String(html`<table class="ld-tbl ld-tasks"><thead><tr><th scope="col" class="c-task">Task</th><th scope="col" class="c-tier">Tier and expert time</th><th scope="col" class="c-info">What the runs show</th>${configs.map((config) => html`<th scope="col" class="c-score${config.config_id === ui.a || config.config_id === ui.b ? ' is-pick' : ''}"><span class="col-who"><span class="lt" aria-hidden="true">${letters.get(config.config_id)}</span><span class="col-name">${config.label}</span></span></th>`)}</tr></thead><tbody>${tasks.map((task) => taskRow(task, ladder, cases, ui))}</tbody></table>`);
+  return String(html`<table class="ld-tbl ld-tasks"><thead><tr><th scope="col" class="c-task">Task</th><th scope="col" class="c-tier">Tier and expert time</th><th scope="col" class="c-info">What the runs show</th>${configs.map((config) => html`<th scope="col" class="c-score${config.config_id === ui.a || config.config_id === ui.b ? ' is-pick' : ''}" title="${config.label}"><span class="lt" aria-hidden="true">${letters.get(config.config_id)}</span><span class="sr">${config.label}</span></th>`)}</tr></thead><tbody>${tasks.map((task) => taskRow(task, ladder, cases, ui))}</tbody></table>`);
 }
 
 export function renderTasksNote(ladder, ui) {
@@ -370,6 +377,7 @@ export function renderPage(data, ui = defaultUi(), error = null) {
     pairCard: hasTasks ? renderPairCard(ladder, shown) : '',
     pairs: hasTasks ? renderPairs(ladder, shown) : '',
     tools: hasTasks ? renderToolbar(ladder, shown, 'tasks') : '',
+    key: hasTasks ? renderKey(ladder) : '',
     tasks: hasTasks ? renderTasks(ladder, data?.cases, shown) : '',
     tasksNote: hasTasks ? renderTasksNote(ladder, shown) : '',
     evidence: hasTasks ? renderEvidence(ladder) : '',
@@ -400,6 +408,7 @@ function paint() {
   setHtml($('pair-card'), page.pairCard);
   setHtml($('pairs'), page.pairs);
   setHtml($('tools'), page.tools);
+  setHtml($('tasks-key'), page.key);
   setHtml($('tasks'), page.tasks);
   $('tasks-note').textContent = page.tasksNote;
   setHtml($('evidence'), page.evidence);
