@@ -16,6 +16,9 @@ __pycache__/
 .venv/
 node_modules/
 
+# Local working plans name private paths and harness setup.
+docs/plans/
+
 # Dashboard local state
 .cache/
 /annotations/

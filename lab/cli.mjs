@@ -2,7 +2,9 @@
 // Model Lab command line. Run from the repository root: `node lab <command>`.
 
 import { parseArgs } from 'node:util';
+import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { freezeSuite, labRoot } from './lib/repo.mjs';
 import { runCommand } from './commands/run.mjs';
 import { scoreCommand } from './commands/score.mjs';
@@ -50,11 +52,32 @@ Commands
                             version whose counted runs mix prompt versions is refused (use --runs)
       --runs <id,...>       Only these runs (a run id, or part of one)
       --json                The same data as JSON
+  audit checks            Test the hidden checks with mutants of the references
+      --suite <id>          The suite to audit
+      --suite-version <v>   The exact version to audit
+      --max <n>             Mutants per task
+      --write               Also store the result under reports/audit/
+      --json                The same data as JSON
+  audit stability --runs <id,...>
+                          Score stored answers again and list every disagreement; writes nothing to a run
+  trace [--suite <id>] [--suite-version <v>] [--json]
+                          What the stored attempts did: tools, tests, tokens per solved task
+  signal <experiment.yaml> [--json]
+                          Before you spend calls: can this run give a trustable signal?
+  instrument --suite <id> [--power] [--json]
+                          Where each configuration breaks on one generated task family
   dashboard [--port n]    Start the local dashboard (default http://127.0.0.1:4317)
 
 Environment
   LAB_ROOT                Data root (default: this repository). Tests use tests/fixtures/repo.
 `;
+
+async function loadCommand(name) {
+  const file = new URL(`./commands/${name}.mjs`, import.meta.url);
+  if (!fs.existsSync(fileURLToPath(file))) throw new Error(`"${name}" is not built in this checkout`);
+  const module = await import(file.href);
+  return module[`${name}Command`];
+}
 
 async function main(argv) {
   const [command, ...rest] = argv;
@@ -80,6 +103,8 @@ async function main(argv) {
       suite: { type: 'string' },
       runs: { type: 'string' },
       'suite-version': { type: 'string', multiple: true },
+      max: { type: 'string' },
+      power: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -135,6 +160,11 @@ async function main(argv) {
     case 'ladder':
       ladderCommand(root, { calibrate: values.calibrate, json: values.json, suite: values.suite, suiteVersions: values['suite-version']?.flatMap((item) => item.split(',')).map((item) => item.trim()).filter(Boolean), runs: values.runs ? values.runs.split(',').map((item) => item.trim()).filter(Boolean) : null });
       return 0;
+    case 'audit':
+    case 'trace':
+    case 'signal':
+    case 'instrument':
+      return (await loadCommand(command))(root, positionals, values);
     case 'dashboard': {
       const { startServer } = await import('../dashboard/server.mjs');
       startServer({ root, port: Number(values.port || process.env.PORT || 4317) });
