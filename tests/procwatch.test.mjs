@@ -2,13 +2,15 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { runProcess } from '../lab/adapters/process.mjs';
-import { fork, spawnSync } from 'node:child_process';
-import { jobWatch, startProcessWatch, treeWatch } from '../lab/lib/procwatch.mjs';
+import { fork, spawn, spawnSync } from 'node:child_process';
+import { escapedChildren, jobWatch, startProcessWatch, treeWatch } from '../lab/lib/procwatch.mjs';
 
 const windowsOnly = { skip: process.platform !== 'win32' && 'Job Objects are Windows only' };
 
@@ -86,6 +88,47 @@ test('during a guarded call the harness gets its stdin and its exit code through
   assert.equal(result.error, null);
   assert.equal(result.stdout, 'hello\nworld');
   assert.equal(result.code, 3);
+});
+
+test('a process older than the new process only shares a reused id, so it is not its child', () => {
+  assert.deepEqual(escapedChildren('children 1000 git.exe:34400:999'), []);
+  assert.deepEqual(escapedChildren('children 1000 a.exe:1:1000|b.exe:2:1001|git.exe:3:5'), ['a.exe:1', 'b.exe:2']);
+  assert.deepEqual(escapedChildren('children 1000 bad,name.exe:5:1001'), ['bad,name.exe:5']);
+  assert.deepEqual(escapedChildren('children 637000000000000001 c.exe:9:637000000000000000'), []);
+  assert.deepEqual(escapedChildren('children 637000000000000001 c.exe:9:637000000000000001'), ['c.exe:9']);
+});
+
+test('when the start of the new process is not known, every child counts', () => {
+  assert.deepEqual(escapedChildren('children 0 git.exe:34400:999'), ['git.exe:34400']);
+});
+
+test('an answer the watch cannot read is an error, not an empty list', () => {
+  assert.throws(() => escapedChildren('children x y'), /cannot read/);
+  assert.throws(() => escapedChildren('children 1000 a.exe:1'), /cannot read/);
+});
+
+test('a child the process started before the job held it halts the call', windowsOnly, async (t) => {
+  const starter = `const c = require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(sleeper)}], { stdio: 'ignore' }); console.log(c.pid); ${sleeper}`;
+  const parent = spawn(process.execPath, ['-e', starter], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+  let childPid = 0;
+  let watch = null;
+  t.after(async () => {
+    await watch?.finish();
+    for (const pid of [childPid, parent.pid]) {
+      try {
+        if (pid) process.kill(pid);
+      } catch {
+        // Already gone.
+      }
+    }
+  });
+  const lines = readline.createInterface({ input: parent.stdout });
+  const [line] = await once(lines, 'line');
+  lines.close();
+  childPid = Number(line.trim());
+  watch = await jobWatch();
+  await assert.rejects(watch.assign(parent.pid), new RegExp(`before the job held it \\(node\\.exe:${childPid}\\)`));
+  assert.match((await watch.finish()).error, new RegExp(`node\\.exe:${childPid}`));
 });
 
 test('a timeout during a guarded call ends the harness, not only the launcher', windowsOnly, async () => {
