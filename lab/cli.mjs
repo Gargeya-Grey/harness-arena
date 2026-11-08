@@ -41,8 +41,9 @@ Commands
   runs                    List runs, newest first
   report [--write]        Markdown comparison per context (to stdout, or reports/comparison.md)
   ladder                  The difficulty ladder per configuration: solved / tasks and mean score per tier
-      --calibrate           Per task: panel mean, tier band, verdict (in band, move to <tier>, rework)
-                            and a flag for negative discrimination: of two configurations that ran
+      --calibrate           Per task: information class (no-data, one-config, all-solved, all-unsolved,
+                            disagree). Per pair: shared tasks and an exact sign test.
+                            Also a flag for negative discrimination: of two configurations that ran
                             the task, the one with the higher mean on the other tasks both ran scored
                             under 0.5 on every repeat, and the other scored 1 on every repeat
       --suite <id>          Only ladder-answer, ladder-code or ladder-agent

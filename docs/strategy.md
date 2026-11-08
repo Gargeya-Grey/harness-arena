@@ -26,7 +26,7 @@ Non-goals until the basics work: local models, LLM-as-judge, databases.
 | `datasets/ladder-*/defs/`, `generate.mjs` | The ladder suites' definitions, and the generator that writes their `cases.jsonl` | edit a definition, run `generate.mjs --write`, bump `version` |
 | `datasets/<suite>/versions/<version>/` | A frozen copy of an earlier suite version: its `suite.yaml` and `cases.jsonl`, and its `workspaces/` and `checks/` when the suite has them | written once by `node lab freeze`, before the version bump; never edited |
 | `datasets/archive/<suite>/` | A retired suite, with its cases, workspaces and checks | frozen; bytes never change; an id lives here or in `datasets/`, never both. Its `versions/` may still gain a copy of an older version, which is not part of the hash |
-| `configs/ladder.yaml` | The difficulty ladder: five tiers, expert-time ranges, target score bands, tasks per tier and kind | versioned in git (`docs/difficulty.md`) |
+| `configs/ladder.yaml` | The difficulty ladder: five tiers, expert-time ranges, tasks per tier and kind | versioned in git (`docs/difficulty.md`) |
 | `prompts/<prompt>/prompt.yaml` | Prompt identity, current version, variables | metadata only |
 | `prompts/<prompt>/vN.yaml` | Frozen template for version N | never edited; add `vN+1` |
 | `experiments/<name>.yaml` | Declared matrix: suite, prompt, targets (model x harness), repeats, evaluators. The dashboard lists these | new file for new comparison |
@@ -40,7 +40,7 @@ Non-goals until the basics work: local models, LLM-as-judge, databases.
 
 ### The ladder and the archive
 
-The comparison suites are the difficulty ladder (`docs/difficulty.md`): 80 tasks in five tiers over three suites, `ladder-answer`, `ladder-code` and `ladder-agent`. Each ladder case records its tier and its expert time in `metadata.tier`; `configs/ladder.yaml` holds the tier table and `lab/lib/ladder.mjs` checks every case against it. `node lab ladder` reads the counted evidence and shows, per configuration, how many tasks of each tier it solved. A pilot (`--repeats 1`) with `node lab ladder --calibrate` shows which tasks stay in their tier, move or need rework. A task that moves keeps its `case_id`; its tier changes in a new suite version.
+The comparison suites are the difficulty ladder (`docs/difficulty.md`): 80 tasks in five tiers over three suites, `ladder-answer`, `ladder-code` and `ladder-agent`. Each ladder case records its tier and its expert time in `metadata.tier`; `configs/ladder.yaml` holds the tier table and `lab/lib/ladder.mjs` checks every case against it. `node lab ladder` reads the counted evidence and shows, per configuration, how many tasks of each tier it solved. A pilot (`--repeats 1`) with `node lab ladder --calibrate` shows what each task can tell about the configurations that ran it; a tier is an estimate label, and a score does not move a task. A task that moves keeps its `case_id`; its tier changes in a new suite version.
 
 The earlier suites (`reasoning`, `coding`, `agentic` and their `-hard` forms) are retired into `datasets/archive/`, and their experiments into `experiments/archive/`. A retired suite is unchanged: a run names its suite by id and hash, and the hash covers the suite's bytes, not its folder. So `loadSuite` looks in `datasets/<id>/`, then in `datasets/archive/<id>/`; old runs load, score, resume and show as before. `validate` still checks the archived suites and experiments, and refuses an id found in both places. An archived suite takes no new case. `smoke` stays active as the harness check.
 
@@ -59,7 +59,7 @@ A run records the suite version and hash it used. A new version must not change 
 - `prompt_id` + `version` - e.g. `qa-basic`, `"1"`.
 - `run_id` - `YYYYMMDDTHHMMSSZ__<suite>__<experiment>__<rand6>` (e.g. `20261021T143000Z__smoke__smoke-baseline__a1b2c3`). Filesystem-safe on Windows, sorts chronologically.
 - `repeat` - 0-based index of repeated execution of the same case/model pair.
-- `config_id` - `<model_key>__<harness>-<version>__<effort|default>`, plus `__isolated` when the run kept the user setup out (e.g. `claude-haiku-5.5__claude-code-2.1.306__default`). Derived from the run; never written by hand.
+- `config_id` - `<model_key>__<harness>-<version>__<effort|default>`, plus a suffix when the experiment asked to keep the user setup out: `__isolated` (kept out), `__isolated-partial` (partly kept out), `__isolated-leaked` (leaked) or `__isolated-unknown` (the flags prove nothing) (e.g. `claude-haiku-5.5__claude-code-2.1.306__default__isolated`). Derived from the run; never written by hand.
 
 Every file loaded from disk is recorded with a SHA-256 in the manifest, so a run identifies the *bytes* it used, not just a label:
 

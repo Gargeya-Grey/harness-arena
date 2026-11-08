@@ -51,7 +51,7 @@ node lab ladder --calibrate
 node lab dashboard
 ```
 
-`node lab ladder` puts configurations in rows and tiers in columns. Each cell is `solved/counted` tasks and the mean score; a task is solved when its mean score is 1. This is the table that shows where configurations separate. `--calibrate` adds one line per task: its mean across the configurations, its tier's target band, and a verdict (`in band`, `move to <tier>`, `rework`), with a flag for a task that one configuration solves while a stronger one (higher mean on the other tasks both ran) scores under 0.5 on every repeat. Per suite it uses the newest suite version that has counted runs; `--suite-version <suite>@<version>` picks another. `--suite`, `--runs` and `--json` filter or print the data.
+`node lab ladder` puts configurations in rows and tiers in columns. Each cell is `solved/counted` tasks and the mean score; a task is solved when its mean score is 1. This is the table that shows where configurations separate. `--calibrate` adds one line per task with its information class (`no-data`, `one-config`, `all-solved`, `all-unsolved`, `disagree`), and one line per pair of configurations with the tasks both ran, the tasks only one of them solved, and an exact sign test. A tier is an estimate label, so the report gives no verdict on a task. It flags a task that one configuration solves while a stronger one (higher mean on the other tasks both ran) scores under 0.5 on every repeat. Per suite it uses the newest suite version that has counted runs; `--suite-version <suite>@<version>` picks another. `--suite`, `--runs` and `--json` filter or print the data.
 
 The older suites (`reasoning`, `coding`, `agentic` and their `-hard` forms) are retired. They sit in `datasets/archive/`, their experiments in `experiments/archive/`. Old runs still open and score, and an archived experiment still runs by path: `node lab run experiments/archive/coding-sweep.yaml --dry-run`.
 
@@ -72,7 +72,7 @@ To add any other model that OpenCode reaches (`opencode models` lists them), add
 | `node lab score <run-id> \| --all` | Computes scores again from `raw.jsonl`, against the exact suite version the run used. Makes no model calls. |
 | `node lab validate` | Checks every input and stored record against `schemas/`. |
 | `node lab runs` | Lists runs, newest first. |
-| `node lab ladder [--calibrate] [--suite <id>] [--suite-version <suite>@<version>] [--runs <id,...>] [--json]` | Prints the difficulty ladder per configuration: solved/tasks and mean score per tier, from one suite version per suite (the newest with counted runs, unless `--suite-version` says otherwise). `--calibrate` adds the verdict for each task. Reads counted evidence only; makes no model calls. |
+| `node lab ladder [--calibrate] [--suite <id>] [--suite-version <suite>@<version>] [--runs <id,...>] [--json]` | Prints the difficulty ladder per configuration: solved/tasks and mean score per tier, from one suite version per suite (the newest with counted runs, unless `--suite-version` says otherwise). `--calibrate` adds the information class for each task and the evidence for each pair. Reads counted evidence only; makes no model calls. |
 | `node lab report [--write]` | Prints a Markdown comparison per context, or writes `reports/comparison.md`. |
 | `node lab dashboard [--port n]` | Starts the local control page and comparison dashboard. |
 | `npm test` | Runs the test suite (`tests/*.test.mjs`). |
@@ -169,7 +169,7 @@ Without `lab.local.yaml`, runs go to `results/` in the checkout, as before.
 - **Model check.** Each row records `metadata.model_check`: `match`, `mismatch` (the harness reports another model, for example a fallback under load) or `unknown` (the harness reports none). The dashboard marks a configuration with a mismatch, and a model key with `pinned: false` (a free alias the provider can change).
 - **Harnesses interleave.** One experiment runs repeat by repeat and case by case across every harness, so a slow hour or a usage limit hits all of them alike. The runner reads each harness version again at the end; a CLI that updated itself during the run gets `harness.settings.version_end`.
 
-- **Configuration**: model + harness + harness version + effort + user setup. Its id is `<model_key>__<harness>-<version>__<effort|default>`, plus `__isolated` when the run kept the user setup out.
+- **Configuration**: model + harness + harness version + effort + user setup. Its id is `<model_key>__<harness>-<version>__<effort|default>`, plus a suffix when the experiment asked to keep the user setup out: `__isolated` (kept out), `__isolated-partial` (partly kept out), `__isolated-leaked` (leaked) or `__isolated-unknown` (the flags prove nothing).
 - **Context**: suite version + prompt version + evaluators + case set + repeats. The dashboard compares configurations only inside one context.
 - **Controlled** comparison: exactly one axis differs (model, harness, effort, decoding, or setup). **Descriptive** comparison: more than one axis differs. The dashboard shows which axes differ.
 
@@ -198,7 +198,7 @@ configs/models.yaml        Model registry: exact id, params, optional pricing, p
 configs/harnesses.yaml     Extra CLI harnesses, declared with no code
 datasets/<suite>/          suite.yaml + cases.jsonl (ladder suites: also generate.mjs and defs/)
 datasets/archive/<suite>/  Retired suites, unchanged, still loaded by old runs
-configs/ladder.yaml        The difficulty ladder: tiers, expert time, target score bands
+configs/ladder.yaml        The difficulty ladder: tiers, expert time, tasks per tier and kind
 prompts/<prompt>/          prompt.yaml + frozen vN.yaml templates
 experiments/*.yaml         targets (model x harness), suite, prompt, repeats, evaluators (the Run page lists these)
 experiments/archive/       Retired experiments; they still run by path

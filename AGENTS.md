@@ -8,7 +8,7 @@ The repo runs the same test cases through different CLI harnesses and models, us
 
 - **Suite** - a versioned set of test cases. An active suite lives in `datasets/<id>/`. A retired suite lives in `datasets/archive/<id>/`: old runs still name it, so it still loads, validates and scores.
 - **Ladder** - the 80 tasks in five tiers (easy, medium, hard, extra-hard, supreme) over the suites `ladder-answer`, `ladder-code` and `ladder-agent`. `configs/ladder.yaml` holds the tier table. Every ladder case records its tier and its expert time in `metadata.tier`.
-- **Pilot** - a ladder run with `--repeats 1`. `node lab ladder --calibrate` reads it and says which tasks stay, move tier or need rework.
+- **Pilot** - a ladder run with `--repeats 1`. `node lab ladder --calibrate` reads it and says what each task can tell about the configurations that ran it.
 - **Prompt version** - a frozen template that runs reference by id and version.
 - **Harness** - the CLI that makes the call: built in (`claude-code`, `codex`, `command-code`, `gemini-cli`, `opencode`) or declared in `configs/harnesses.yaml`.
 - **User setup** - the owner's own harness configuration (global instructions, skills, MCP servers). An experiment sets `user_config: loaded` (default) or `isolated`; the run records the flags that kept it out.
@@ -34,7 +34,7 @@ configs/models.yaml       Model registry: exact id, params, optional pricing, ha
 configs/harnesses.yaml    CLI harnesses declared with no code
 datasets/<suite>/         suite.yaml + cases.jsonl (one case per line); agent suites add workspaces/ and checks/; ladder suites add generate.mjs and defs/; versions/<version>/ holds frozen copies of earlier versions
 datasets/archive/<suite>/ Retired suites, bytes unchanged; smoke stays in datasets/ as the harness check
-configs/ladder.yaml       The tier table: expert-time ranges, target score bands, tasks per tier and kind
+configs/ladder.yaml       The tier table: expert-time ranges, tasks per tier and kind
 prompts/<prompt>/         prompt.yaml + frozen vN.yaml templates
 experiments/*.yaml        targets x suite x prompt x repeats x evaluators (the dashboard lists only these)
 experiments/archive/      Retired experiments; they still run by path
@@ -100,12 +100,12 @@ Done when `node lab validate` and `npm test` pass, and `node lab ladder` prints 
 node lab run experiments/ladder-answer.yaml --dry-run   # also ladder-code, ladder-agent
 node lab run experiments/ladder-code.yaml --repeats 1   # the pilot: one repeat per task
 node lab ladder                                         # configurations as rows, tiers as columns
-node lab ladder --calibrate                             # per task: panel mean, tier band, verdict
+node lab ladder --calibrate                             # per task: information class; per pair: shared tasks
 ```
 
 `node lab ladder` reads only the rows that count (closed, ledger-matched, scored runs), as the dashboard counts them. Unlike the dashboard, it pools the runs of one suite version across experiments: per suite, the newest version that has counted runs, or the one `--suite-version <suite>@<version>` names (repeat or comma-separate it). It prints which version of each suite it used and how many counted runs of other versions it left out. A suite version whose counted runs mix prompt versions is refused: pick runs with `--runs`. A cell is `solved/counted`, then the mean score. A task counts as solved when its mean score over the configuration's counted repeats is 1. A `*` marks a configuration that has results for fewer tasks than the tier holds. `--suite <ladder suite>` and `--runs <id,...>` filter; `--json` prints the same data.
 
-`--calibrate` applies the Calibration rules of `docs/difficulty.md` to the pilot: `in band`, `move to <tier>` (the first tier whose band holds the mean and whose expert-time range is within a factor of 4 of the task's `human_minutes`), or `rework`. It flags a task when, of two configurations that both ran it, the one with the higher mean on the other tasks both ran scores under 0.5 on every repeat while the other scores 1 on every repeat: check that task for a defect before anything else. The panel is small, so a verdict is a prompt to look, not a ruling. A task changes tier only in a new suite version.
+`--calibrate` prints what the runs can tell, as `docs/difficulty.md` defines it. Each task gets one information class: `no-data`, `one-config`, `all-solved`, `all-unsolved` or `disagree`. Each pair of configurations gets the tasks both ran, the tasks only one of them solved, and an exact two-sided sign test on those two counts. A tier is an estimate label: the lab gives no target score and no verdict on a task. It flags a task when, of two configurations that both ran it, the one with the higher mean on the other tasks both ran scores under 0.5 on every repeat while the other scores 1 on every repeat: check that task for a defect before anything else. A task changes tier only when the expert-time estimate was wrong, and only in a new suite version.
 
 Done when `node lab ladder` shows the runs you expect and `node lab validate` passes.
 
