@@ -10,12 +10,13 @@
 //       Scores each stored answer again, three times, and lists every answer whose scores
 //       differ. It reads run folders and writes nothing into them.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CPU_LIMITS, getEvaluator, loadCheck, runJsTestsV2, runWorkspaceCheckV2 } from '../evaluators/index.mjs';
-import { REPO_ROOT, loadSuite, paths, suiteDir } from '../lib/repo.mjs';
-import { isoNow, readJson, readJsonl, safeSegment, sha256, writeJson } from '../lib/fsutil.mjs';
+import { REPO_ROOT, loadSuite, paths, runDirs, suiteDir } from '../lib/repo.mjs';
+import { isoNow, readJson, readJsonl, safeSegment, sha256 } from '../lib/fsutil.mjs';
 import { applyMutation, mutationSites, pickSites } from '../lib/mutate.mjs';
 import { copyTree, listTree, snapshotWorkspace, treeHash } from '../lib/workspace.mjs';
 import { runCounts } from '../lib/ledger.mjs';
@@ -25,6 +26,8 @@ import { resolveRunDir } from './score.mjs';
 export const DEFAULT_MAX = 12;
 export const STABILITY_TIMES = 3;
 export const MISMATCH = 'reference does not match this version';
+export const NOT_DETERMINISTIC = 'reference not deterministic';
+export const NO_VERDICT = 'no mutant gave a verdict';
 
 const USAGE = `Usage: node lab audit checks --suite <id> --suite-version <v> [--max <n>] [--cases a,b] [--write] [--json]
        node lab audit stability --runs <id,...|all> [--json]`;
@@ -113,21 +116,61 @@ const baseRecord = (item, kind) => ({
 
 const excludedCase = (item, kind, reason, extra = {}) => ({ ...baseRecord(item, kind), status: 'excluded', reason, ...extra });
 
+// A failed test says something about the code only when it ran and judged the code's answer. These
+// are the other ways one fails: the time limit (a real check would reject such a solution too) and
+// the ways a test never ran, or its process died, so no test judged the mutant.
+const TIMED_OUT = /wall-clock backstop|timed out after|ms of CPU.*over the \d+ ms limit/;
+const NOT_RUN = /^(the CPU budget of \d+ ms for the (case|check) was spent before this (test|probe)|no result for this (test|probe)|this test stopped the sandbox process|sandbox gave no result)/;
+
+/**
+ * What the results of one run of the check say about a mutant: `survived`; `killed` by a test that
+ * judged it ('check') or only by the time limit ('timeout'); or `excluded`, when the only failures
+ * are tests that never ran.
+ */
+export function judgeResults(results) {
+  const failed = results.filter((result) => !result.ok);
+  if (!failed.length) return { outcome: 'survived' };
+  const error = (result) => String(result.error ?? '');
+  if (failed.some((result) => !NOT_RUN.test(error(result)) && !TIMED_OUT.test(error(result)))) return { outcome: 'killed', killed_by: 'check' };
+  if (failed.some((result) => TIMED_OUT.test(error(result)))) return { outcome: 'killed', killed_by: 'timeout' };
+  return { outcome: 'excluded', reason: `no test judged this mutant: ${error(failed[0]).slice(0, 160)}` };
+}
+
+const signature = (run) => JSON.stringify([run.loaded ?? null, Boolean(run.error), run.results.map((result) => result.ok)]);
+const passed = (run) => run.results.filter((result) => result.ok).length;
+
 function summarize(record, mutants) {
   const valid = mutants.filter((mutant) => mutant.outcome !== 'excluded');
   const killed = valid.filter((mutant) => mutant.outcome === 'killed');
   const kept = killed.map((mutant) => mutant.pass / mutant.total);
-  return {
-    ...record,
-    status: 'audited',
+  const stats = {
     mutants: valid.length,
     killed: killed.length,
+    killed_by_check: killed.filter((mutant) => mutant.killed_by === 'check').length,
+    killed_by_timeout: killed.filter((mutant) => mutant.killed_by === 'timeout').length,
     survived: valid.length - killed.length,
     excluded_mutants: mutants.length - valid.length,
     kill_rate: share(killed.length, valid.length),
     mean_score_of_killed: round(meanOf(kept)),
     results: mutants,
   };
+  if (!valid.length) return { ...record, status: 'excluded', reason: NO_VERDICT, detail: `all ${mutants.length} mutants were excluded; the first: ${String(mutants[0].reason).slice(0, 120)}`, ...stats };
+  return { ...record, status: 'audited', ...stats };
+}
+
+const LOAD_MARK = '__lab_audit_loaded__';
+const LOAD_PROBE = '__lab_audit_probe__';
+const THROWS_ON_LOAD = 'the mutant throws while it loads, so its tests did not judge the code that was planted';
+
+/** Does the source run to its end? A hoisted function survives a throw above it, and the sandbox still loads it. */
+function finishesLoading(source, limits) {
+  const run = runJsTestsV2({
+    sources: [`${source}\n;var ${LOAD_MARK} = true;\n`, `function ${LOAD_PROBE}() { return typeof ${LOAD_MARK} !== 'undefined'; }`],
+    name: LOAD_PROBE,
+    tests: [{ args: [], returns: true }],
+    limits,
+  });
+  return run.results[0]?.ok === true;
 }
 
 function auditCodeCase({ root, suite, block, item, max }) {
@@ -139,19 +182,27 @@ function auditCodeCase({ root, suite, block, item, max }) {
   const { name } = item.input;
   const tests = item.expected.tests;
   const base = runJsTestsV2({ sources: [source], name, tests });
-  const passes = base.results.filter((result) => result.ok).length;
+  const again = runJsTestsV2({ sources: [source], name, tests });
+  if (signature(base) !== signature(again)) {
+    return { ...record, status: 'excluded', reason: NOT_DETERMINISTIC, detail: `two runs of the reference passed ${passed(base)} and ${passed(again)} of ${tests.length} tests` };
+  }
+  const passes = passed(base);
   if (!base.loaded || passes !== tests.length) {
     return { ...record, status: 'excluded', reason: MISMATCH, detail: base.loaded ? `the reference passes ${passes} of ${tests.length} tests` : `the reference does not load: ${base.error ?? 'no error given'}` };
   }
   const sites = mutationSites(source);
   if (!sites.length) return { ...record, status: 'excluded', reason: 'no mutation site in the reference', sites: 0 };
-  const caseCpuMs = Math.max(2 * CPU_LIMITS.testCpuMs, Math.ceil((base.cpu_ms ?? 0) * 3) + CPU_LIMITS.testCpuMs);
+  const caseCpuMs = Math.max(2 * CPU_LIMITS.testCpuMs, Math.ceil(Math.max(base.cpu_ms ?? 0, again.cpu_ms ?? 0) * 3) + CPU_LIMITS.testCpuMs);
+  const limits = { caseCpuMs, wallMs: 60000 };
   const mutants = pickSites(sites, max).map((site) => {
-    const run = runJsTestsV2({ sources: [applyMutation(source, site)], name, tests, limits: { caseCpuMs, wallMs: 60000 } });
+    const mutated = applyMutation(source, site);
+    const run = runJsTestsV2({ sources: [mutated], name, tests, limits });
     const shown = { line: site.line, operator: site.operator, code: site.code };
     if (!run.loaded) return { ...shown, outcome: 'excluded', reason: run.error ?? 'the mutant did not load', pass: null, total: tests.length };
-    const pass = run.results.filter((result) => result.ok).length;
-    return { ...shown, outcome: pass < tests.length ? 'killed' : 'survived', pass, total: tests.length };
+    const verdict = judgeResults(run.results);
+    if (verdict.outcome === 'excluded') return { ...shown, ...verdict, pass: null, total: tests.length };
+    if (verdict.outcome === 'killed' && !finishesLoading(mutated, limits)) return { ...shown, outcome: 'excluded', reason: THROWS_ON_LOAD, pass: null, total: tests.length };
+    return { ...shown, ...verdict, pass: passed(run), total: tests.length };
   });
   return summarize({ ...record, sites: sites.length }, mutants);
 }
@@ -193,7 +244,11 @@ function auditAgentCase({ root, suite, block, item, max }) {
   const total = Object.keys(check.probes).length + Object.keys(check.files).length;
   record.tests = total;
   const base = checkWorkspace({ fixtureDir, check, overlay });
-  const passes = base.results.filter((result) => result.ok).length;
+  const again = checkWorkspace({ fixtureDir, check, overlay });
+  if (signature(base) !== signature(again)) {
+    return { ...record, status: 'excluded', reason: NOT_DETERMINISTIC, detail: `two runs of the reference passed ${passed(base)} and ${passed(again)} of ${base.results.length} tests` };
+  }
+  const passes = passed(base);
   if (base.error || !base.results.length || passes !== base.results.length) {
     return { ...record, status: 'excluded', reason: MISMATCH, detail: base.error ? `the check could not run: ${base.error}` : `the reference passes ${passes} of ${base.results.length} tests` };
   }
@@ -201,20 +256,45 @@ function auditAgentCase({ root, suite, block, item, max }) {
     .filter((rel) => SOURCE_FILE.test(rel) && !TEST_FILE.test(rel))
     .flatMap((file) => mutationSites(fs.readFileSync(path.join(overlay, ...file.split('/')), 'utf8')).map((site) => ({ file, site })));
   if (!sites.length) return { ...record, status: 'excluded', reason: 'no mutation site in the reference', sites: 0 };
-  const limits = { checkCpuMs: Math.max(10000, Math.ceil((base.cpu_ms ?? 0) * 3) + 5000) };
+  const limits = { checkCpuMs: Math.max(10000, Math.ceil(Math.max(base.cpu_ms ?? 0, again.cpu_ms ?? 0) * 3) + 5000) };
   const mutants = pickSites(sites, max).map((mutation) => {
     const run = checkWorkspace({ fixtureDir, check, overlay, mutation, limits });
     const shown = { file: mutation.file, line: mutation.site.line, operator: mutation.site.operator, code: mutation.site.code };
+    const total = run.results.length;
+    // A file the snapshot left out (over its size limit) never reached the check, so the check did not see the bug.
+    const left = (run.skipped ?? []).find((entry) => entry.path === mutation.file);
+    if (left) return { ...shown, outcome: 'excluded', reason: `${mutation.file} was not in the snapshot (${left.reason}), so the check never saw the planted bug`, pass: null, total };
     const probes = run.results.filter((result) => !result.name.startsWith('file '));
     const broken = probes.length > 0 && probes.every((result) => !result.ok && /SyntaxError/.test(result.error ?? ''));
-    if (run.error || broken) return { ...shown, outcome: 'excluded', reason: run.error ?? probes[0].error.slice(0, 160), pass: null, total: run.results.length };
-    const pass = run.results.filter((result) => result.ok).length;
-    return { ...shown, outcome: pass < run.results.length ? 'killed' : 'survived', pass, total: run.results.length };
+    if (run.error || broken) return { ...shown, outcome: 'excluded', reason: run.error ?? probes[0].error.slice(0, 160), pass: null, total };
+    const verdict = judgeResults(run.results);
+    if (verdict.outcome === 'excluded') return { ...shown, ...verdict, pass: null, total };
+    return { ...shown, ...verdict, pass: passed(run), total };
   });
   return summarize({ ...record, sites: sites.length }, mutants);
 }
 
 // ---- the report -------------------------------------------------------------------------------
+
+/** The suite loaded must be the one asked for: the frozen copy says its own version, and it hashes like the runs of that version did. */
+function verifySuite(root, suite, version) {
+  if (suite.version !== String(version)) {
+    throw new Error(`The frozen copy of ${suite.id} ${version} says it is version ${suite.version} (${posix(path.relative(root, suite.dir))}); it is not audited`);
+  }
+  const recorded = new Set();
+  for (const { dir } of runDirs(root)) {
+    let manifest = null;
+    try {
+      manifest = readJson(path.join(dir, 'run.json'));
+    } catch {
+      continue; // not a readable run: it recorded nothing
+    }
+    if (manifest?.suite?.id === suite.id && String(manifest.suite.version) === suite.version && manifest.suite.sha256) recorded.add(manifest.suite.sha256);
+  }
+  if (recorded.size && !recorded.has(suite.sha256)) {
+    throw new Error(`Runs recorded ${suite.id} ${suite.version} with hash ${[...recorded].join(', ')}, but ${suite.frozen ? 'the copy' : 'the suite'} has hash ${suite.sha256}; the suite changed without a new version, or the copy is broken, so it is not audited`);
+  }
+}
 
 /**
  * Audit the hidden checks of one exact suite version. Returns the report (see formatChecks for
@@ -228,6 +308,7 @@ export function auditChecks(root, { suite: suiteId, version, max = DEFAULT_MAX, 
   if (version == null || version === '') throw new Error(`Name the exact version to audit: --suite-version <v> (the current version of ${suiteId} is ${head.version})`);
   const suite = loadSuite(root, suiteId, { version });
   if (!suite) throw new Error(`Suite ${suiteId} has no version ${version}: the current version is ${head.version}, and its frozen copies are ${fs.existsSync(path.join(head.dir, 'versions')) ? fs.readdirSync(path.join(head.dir, 'versions')).join(', ') || 'none' : 'none'}`);
+  verifySuite(root, suite, version);
   const wanted = cases ? new Set(cases) : null;
   if (wanted) {
     const unknown = [...wanted].filter((id) => !suite.cases.some((item) => item.case_id === id));
@@ -244,7 +325,7 @@ export function auditChecks(root, { suite: suiteId, version, max = DEFAULT_MAX, 
   }
 
   const audited = records.filter((record) => record.status === 'audited');
-  const mutants = audited.flatMap((record) => record.results.map((mutant) => ({ ...mutant, case_id: record.case_id })));
+  const mutants = records.filter((record) => record.results).flatMap((record) => record.results.map((mutant) => ({ ...mutant, case_id: record.case_id })));
   const valid = mutants.filter((mutant) => mutant.outcome !== 'excluded');
   const killed = valid.filter((mutant) => mutant.outcome === 'killed');
   const operators = [...new Set(valid.map((mutant) => mutant.operator))].sort().map((operator) => {
@@ -264,6 +345,8 @@ export function auditChecks(root, { suite: suiteId, version, max = DEFAULT_MAX, 
       excluded: records.length - audited.length,
       mutants: valid.length,
       killed: killed.length,
+      killed_by_check: killed.filter((mutant) => mutant.killed_by === 'check').length,
+      killed_by_timeout: killed.filter((mutant) => mutant.killed_by === 'timeout').length,
       survived: valid.length - killed.length,
       excluded_mutants: mutants.length - valid.length,
       kill_rate: share(killed.length, valid.length),
@@ -288,8 +371,8 @@ export function formatChecks(report) {
   lines.push(`up to ${report.max_per_task} mutants per task; ${Math.round(report.elapsed_ms / 1000)} s`);
   lines.push('');
   lines.push(`${totals.audited} of ${totals.tasks} tasks audited, ${totals.excluded} excluded`);
-  lines.push(`mutants: ${totals.mutants} valid, ${totals.killed} killed, ${totals.survived} survived; kill rate ${pct(totals.kill_rate)}`);
-  lines.push(`${totals.excluded_mutants} mutants excluded (they did not load or gave no verdict); an excluded mutant is never a kill`);
+  lines.push(`mutants: ${totals.mutants} valid, ${totals.killed} killed (${totals.killed_by_check} by a test that judged them, ${totals.killed_by_timeout} by the time limit), ${totals.survived} survived; kill rate ${pct(totals.kill_rate)}`);
+  lines.push(`${totals.excluded_mutants} mutants excluded (they did not load or no test judged them); an excluded mutant is never a kill`);
   lines.push(`a killed mutant still keeps ${pct(totals.mean_score_of_killed)} of the score on average`);
   lines.push('');
   lines.push('operator'.padEnd(18) + 'mutants'.padStart(8) + 'killed'.padStart(8) + 'survived'.padStart(10) + 'kill rate'.padStart(11));
@@ -314,24 +397,41 @@ export function formatChecks(report) {
 
 // ---- stability --------------------------------------------------------------------------------
 
-/** The run folders to look at: the ids named, or every run that counts (closed, ledger-matched, scored). */
-function stabilityRuns(root, refs) {
-  if (refs.length === 1 && refs[0] === 'all') {
-    const { runs } = buildState(root, { validate: false });
-    return runs
-      .filter((run) => runCounts(run.trust) && run.status !== 'running' && !run.harness?.settings?.halted)
-      .map((run) => resolveRunDir(root, run.run_id));
-  }
-  return [...new Set(refs.map((ref) => resolveRunDir(root, ref)))];
+/** Why a run does not count (closed, ledger-matched, scored), or null when it does. The ladder uses the same rule. */
+function whyNotCounted(run) {
+  if (run.trust.state === 'legacy') return 'there is no evidence ledger yet, so no run counts';
+  if (run.trust.state !== 'trusted') return run.trust.reason ?? `its ledger state is ${run.trust.state}`;
+  if (run.trust.scores !== 'match') return run.trust.scores_reason ?? 'its scores do not match the ledger';
+  if (run.status === 'running') return 'run.json still says it is running';
+  if (run.harness?.settings?.halted) return `the guard stopped it (${run.harness.settings.halted})`;
+  return null;
 }
 
-/** One stored score per answer, keyed like the runner keys them. */
-function storedScores(runDir) {
+/** The run folders to look at: every run that counts, or the ids named, each of which must count. */
+function stabilityRuns(root, refs) {
+  const { runs } = buildState(root, { validate: false });
+  if (refs.length === 1 && refs[0] === 'all') {
+    return runs.filter((run) => whyNotCounted(run) === null).map((run) => resolveRunDir(root, run.run_id));
+  }
+  const dirs = refs.map((ref) => resolveRunDir(root, ref));
+  for (const dir of dirs) {
+    const runId = readJson(path.join(dir, 'run.json')).run_id;
+    const run = runs.find((one) => one.run_id === runId);
+    const why = run ? whyNotCounted(run) : 'it is not a run of this store';
+    if (why) throw new Error(`Run ${runId} does not count: ${why}. Stability reads only runs that count (closed, ledger-matched, scored).`);
+  }
+  return [...new Set(dirs)];
+}
+
+/** One stored score per answer and evaluator, keyed like the runner keys them. Only the score file of each declared evaluator is read. */
+function storedScores(runDir, manifest) {
   const stored = new Map();
-  const dir = path.join(runDir, 'scores');
-  if (!fs.existsSync(dir)) return stored;
-  for (const name of fs.readdirSync(dir).filter((file) => file.endsWith('.jsonl'))) {
-    for (const score of readJsonl(path.join(dir, name)).rows) stored.set(`${score.case_id}|${score.model_key}|${score.repeat}|${score.evaluator_id}@${score.evaluator_version}`, score.value);
+  for (const spec of manifest.evaluators || []) {
+    const name = `${spec.id}@${spec.version}`;
+    if (/[\\/]|\.\./.test(name)) continue;
+    const file = path.join(runDir, 'scores', `${name}.jsonl`);
+    if (!fs.existsSync(file)) continue;
+    for (const score of readJsonl(file).rows) stored.set(`${score.case_id}|${score.model_key}|${score.repeat}|${name}`, score.value);
   }
   return stored;
 }
@@ -343,11 +443,14 @@ function storedScores(runDir) {
 export function auditStability(root, { runs: refs, times = STABILITY_TIMES, log = () => {} } = {}) {
   if (!refs?.length) throw new Error('Name the runs: --runs <run-id,...> (or --runs all for every run that counts)');
   const dirs = stabilityRuns(root, refs);
-  const report = { kind: 'stability', generated_at: isoNow(), times, runs: [], answers: 0, unstable: 0, differs_from_stored: 0, disagreements: [] };
+  // An answer is one stored reply (run, case, model, repeat); it is scored once per evaluator, and each of those is a pair.
+  const report = { kind: 'stability', generated_at: isoNow(), times, runs: [], answers: 0, answer_evaluator_pairs: 0, unstable: 0, unstable_pairs: 0, differs_from_stored: 0, disagreements: [] };
   for (const runDir of dirs) {
     const manifest = readJson(path.join(runDir, 'run.json'));
-    const entry = { run_id: manifest.run_id, suite: `${manifest.suite.id}@${manifest.suite.version}`, answers: 0, unstable: 0 };
+    const entry = { run_id: manifest.run_id, suite: `${manifest.suite.id}@${manifest.suite.version}`, answers: 0, answer_evaluator_pairs: 0, unstable: 0, unstable_pairs: 0 };
     report.runs.push(entry);
+    const seen = new Set();
+    const seenUnstable = new Set();
     const suite = loadSuite(root, manifest.suite.id, { version: manifest.suite.version });
     if (!suite || suite.sha256 !== manifest.suite.sha256) {
       entry.skipped = suite ? 'the suite is not the content this run used' : 'the suite version is gone and has no frozen copy';
@@ -355,7 +458,7 @@ export function auditStability(root, { runs: refs, times = STABILITY_TIMES, log 
     }
     log(`  ${manifest.run_id}`);
     const cases = new Map(suite.cases.map((item) => [item.case_id, item]));
-    const stored = storedScores(runDir);
+    const stored = storedScores(runDir, manifest);
     const { rows } = readJsonl(path.join(runDir, 'raw.jsonl'));
     for (const spec of manifest.evaluators || []) {
       const evaluator = getEvaluator(spec.id, spec.version);
@@ -378,13 +481,24 @@ export function auditStability(root, { runs: refs, times = STABILITY_TIMES, log 
           values.push(result.value);
         }
         if (values.length !== times) continue;
-        entry.answers += 1;
-        report.answers += 1;
-        const was = stored.get(`${raw.case_id}|${raw.model_key}|${raw.repeat}|${evaluator.id}@${evaluator.version}`) ?? null;
+        const answer = `${raw.case_id}|${raw.model_key}|${raw.repeat}`;
+        if (!seen.has(answer)) {
+          seen.add(answer);
+          entry.answers += 1;
+          report.answers += 1;
+        }
+        entry.answer_evaluator_pairs += 1;
+        report.answer_evaluator_pairs += 1;
+        const was = stored.get(`${answer}|${evaluator.id}@${evaluator.version}`) ?? null;
         if (was != null && values.some((value) => value !== was)) report.differs_from_stored += 1;
         if (new Set(values).size > 1) {
-          entry.unstable += 1;
-          report.unstable += 1;
+          if (!seenUnstable.has(answer)) {
+            seenUnstable.add(answer);
+            entry.unstable += 1;
+            report.unstable += 1;
+          }
+          entry.unstable_pairs += 1;
+          report.unstable_pairs += 1;
           report.disagreements.push({ run_id: manifest.run_id, case_id: raw.case_id, model_key: raw.model_key, repeat: raw.repeat, evaluator: `${evaluator.id}@${evaluator.version}`, scores: values, stored: was });
         }
       }
@@ -394,9 +508,10 @@ export function auditStability(root, { runs: refs, times = STABILITY_TIMES, log 
 }
 
 export function formatStability(report) {
-  const lines = [`Stability: ${report.unstable} unstable answers of ${report.answers} scored (each scored ${report.times} times, in ${report.runs.length} runs)`];
+  const lines = [`Stability: ${report.unstable} unstable of ${report.answers} answers scored (each scored ${report.times} times, in ${report.runs.length} runs)`];
+  lines.push(`By answer-evaluator pair: ${report.unstable_pairs} unstable of ${report.answer_evaluator_pairs} pairs`);
   lines.push(`scores that differ from the score stored in the run: ${report.differs_from_stored}`, '');
-  for (const run of report.runs) lines.push(`  ${run.run_id}  ${run.suite}  ${run.answers} scored, ${run.unstable} unstable${run.skipped ? `  (${run.skipped})` : ''}`);
+  for (const run of report.runs) lines.push(`  ${run.run_id}  ${run.suite}  ${run.answers} answers (${run.answer_evaluator_pairs} pairs) scored, ${run.unstable} unstable${run.skipped ? `  (${run.skipped})` : ''}`);
   if (report.disagreements.length) {
     lines.push('', 'unstable answers:');
     for (const item of report.disagreements) lines.push(`  ${item.run_id} ${item.case_id} ${item.model_key} r${item.repeat} ${item.evaluator}: ${item.scores.join(', ')} (stored ${item.stored ?? '-'})`);
@@ -406,12 +521,52 @@ export function formatStability(report) {
 
 // ---- command ----------------------------------------------------------------------------------
 
+/** Suite metadata is not validated, and it builds the name of the report: refuse anything that could name another path. */
+function checkReportName(id, version) {
+  for (const [what, value] of [['suite id', id], ['version', version]]) {
+    if (value != null && /[\\/:*?"<>|]|\.\./.test(String(value))) throw new Error(`${what} "${value}" has a path separator or "..", so no report can be stored for it`);
+  }
+}
+
+/** reports/audit/<suite>@<version>.json, written to a temp file and renamed. Never through a link. */
+function writeReport(root, report) {
+  checkReportName(report.suite.id, report.suite.version);
+  const reports = paths(root).reports;
+  const dir = path.join(reports, 'audit');
+  const refuseLink = (target) => {
+    let stat = null;
+    try {
+      stat = fs.lstatSync(target);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    if (stat?.isSymbolicLink()) throw new Error(`${posix(path.relative(root, target))} is a link; the report is not written through a link`);
+  };
+  refuseLink(reports);
+  refuseLink(dir);
+  fs.mkdirSync(dir, { recursive: true }); // not a run folder: reports/audit/
+  const file = path.join(dir, `${report.suite.id}@${report.suite.version}.json`);
+  refuseLink(file);
+  const temp = path.join(dir, `.${path.basename(file)}.${crypto.randomBytes(6).toString('hex')}.tmp`);
+  try {
+    fs.writeFileSync(temp, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' }); // not a run folder: reports/audit/
+    fs.renameSync(temp, file); // not a run folder: reports/audit/
+  } finally {
+    fs.rmSync(temp, { force: true }); // not a run folder: reports/audit/
+  }
+  return file;
+}
+
 export async function auditCommand(root, positionals = [], values = {}) {
   const [what] = positionals;
   const log = (line) => process.stderr.write(`${line}\n`);
   if (what === 'checks') {
     const versions = [values['suite-version']].flat().filter(Boolean);
     if (versions.length > 1) throw new Error(`Name one version to audit, got ${versions.join(', ')}`);
+    if (values.write) {
+      if (values.cases) throw new Error('--write stores the audit of the whole suite; it cannot be used with --cases');
+      checkReportName(values.suite, versions[0]);
+    }
     const report = auditChecks(root, {
       suite: values.suite,
       version: versions[0],
@@ -420,10 +575,7 @@ export async function auditCommand(root, positionals = [], values = {}) {
       log: values.json ? () => {} : log,
     });
     let written = null;
-    if (values.write) {
-      written = path.join(paths(root).reports, 'audit', `${report.suite.id}@${report.suite.version}.json`);
-      writeJson(written, report); // not a run folder: reports/audit/
-    }
+    if (values.write) written = writeReport(root, report);
     console.log(values.json ? JSON.stringify(report, null, 2) : formatChecks(report));
     if (written && !values.json) console.log(`\nWritten: ${posix(path.relative(root, written))}`);
     return 0;

@@ -31,6 +31,8 @@ const OPERATORS = [
 // A `/` starts a regular expression, not a division, after one of these.
 const REGEX_AFTER_WORDS = new Set(['return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw', 'new', 'else', 'do', 'yield', 'await']);
 const REGEX_AFTER_CHARS = '(,=:[!&|?{};+-*%<>~^';
+// The `)` that closes the condition of one of these is followed by a statement, so a `/` there starts a regular expression.
+const CONTROL_WORDS = new Set(['if', 'while', 'for', 'with']);
 
 /**
  * The source with every comment, string, template text and regular expression literal replaced by
@@ -45,6 +47,12 @@ function maskNonCode(src) {
   const templates = []; // brace depth of each open ${ }
   let braces = 0;
   let previous = ''; // the last code character that is not a space, or the last word
+  let prior = ''; // the one before it
+  const parens = []; // for each open `(`: does it open the condition of if, while, for or with
+  const remember = (value) => {
+    prior = previous;
+    previous = value;
+  };
   let i = 0;
 
   // From just after a backtick or a closing brace of ${ }: blank the text up to the next ${ or backtick.
@@ -88,13 +96,13 @@ function maskNonCode(src) {
       while (j < src.length && src[j] !== c && src[j] !== '\n') j += src[j] === '\\' ? 2 : 1;
       blank(i, Math.min(j + 1, src.length));
       i = j + 1;
-      previous = 'x';
+      remember('x');
       continue;
     }
     if (c === '`') {
       blank(i, i + 1);
       i = scanTemplate(i + 1);
-      previous = 'x';
+      remember('x');
       continue;
     }
     if (c === '{') braces += 1;
@@ -104,7 +112,7 @@ function maskNonCode(src) {
         templates.pop();
         blank(i, i + 1);
         i = scanTemplate(i + 1);
-        previous = 'x';
+        remember('x');
         continue;
       }
     }
@@ -123,9 +131,15 @@ function maskNonCode(src) {
         while (j < src.length && /[a-z]/i.test(src[j])) j += 1;
         blank(i, j);
         i = j;
-        previous = 'x';
+        remember('x');
         continue;
       }
+    }
+    if (c === '(') parens.push(CONTROL_WORDS.has(previous) || (previous === 'await' && prior === 'for'));
+    if (c === ')') {
+      remember(parens.pop() ? '(' : ')');
+      i += 1;
+      continue;
     }
     if (/\s/.test(c)) {
       i += 1;
@@ -134,11 +148,11 @@ function maskNonCode(src) {
     if (/[A-Za-z_$]/.test(c)) {
       let j = i + 1;
       while (j < src.length && /[\w$]/.test(src[j])) j += 1;
-      previous = src.slice(i, j);
+      remember(src.slice(i, j));
       i = j;
       continue;
     }
-    previous = c;
+    remember(c);
     i += 1;
   }
   return out.join('');
