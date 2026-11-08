@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { loadCheck, runWorkspaceCheckV2 } from '../lab/evaluators/index.mjs';
 import { copyTree, snapshotWorkspace } from '../lab/lib/workspace.mjs';
 import { buildCases } from '../datasets/ladder-agent/generate.mjs';
+import { onlyTiming } from './ladder-agent-timing.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, '..');
@@ -216,7 +217,8 @@ const SLOW = [
   // rr42 sits within a factor of two of its limit even for the reference (140 to 375 ms of CPU against 700), so a
   // constant-factor slowdown of DAILY periods can tip it over on a busy machine: it may fail here, it is not claimed.
   { slug: 'rrule-expander', overlay: 'rrule-expander--slow-days', fails: ['rr40'], maybe: ['rr42'] },
-  { slug: 'rrule-expander', overlay: 'rrule-expander--slow-seen', fails: ['rr41', 'rr42', 'rr44'] },
+  // rr44 used 4.2 to 5.3 s of CPU against its 2.5 s guard here and passed on a faster CI runner, so it is not claimed.
+  { slug: 'rrule-expander', overlay: 'rrule-expander--slow-seen', fails: ['rr41', 'rr42'], maybe: ['rr44'] },
   { slug: 'rrule-expander', overlay: 'rrule-expander--slow-exdates', fails: ['rr42', 'rr43'] },
   {
     slug: 'rga-text-crdt',
@@ -253,6 +255,7 @@ test('a slow solution fails the speed probes and passes the rest', () => {
     assert.equal(run.error, undefined, `${overlay}: the check itself broke: ${run.error}`);
     const names = failed(run.results).map((item) => item.name);
     assert.deepEqual(names.filter((name) => !maybe.includes(name)), fails, `${overlay}: the probes that fail`);
+    for (const item of failed(run.results)) if (maybe.includes(item.name)) assert.ok(onlyTiming(item, checkData.probes[item.name]), `${overlay}: "${item.name}" failed for more than time: ${item.error}`);
     for (const name of fails) assert.ok(names.includes(name), `${overlay}: "${name}" passes`);
     for (const name of fails) assert.ok(Object.hasOwn(checkData.probes, name), `${overlay}: "${name}" is not a probe of ${slug}`);
   }

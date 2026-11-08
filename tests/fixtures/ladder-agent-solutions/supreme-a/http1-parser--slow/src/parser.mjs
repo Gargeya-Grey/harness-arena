@@ -73,7 +73,7 @@ export class RequestParser {
 
   #addBody(piece) {
     const grown = new Uint8Array(this.#bodySize + piece.length);
-    grown.set(this.#body);
+    for (let k = 0; k < this.#bodySize; k += 1) grown[k] = this.#body[k];
     grown.set(piece, this.#bodySize);
     this.#body = grown;
     this.#bodySize += piece.length;

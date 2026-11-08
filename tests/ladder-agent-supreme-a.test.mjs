@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { loadCheck, runWorkspaceCheckV2 } from '../lab/evaluators/index.mjs';
 import { copyTree, snapshotWorkspace } from '../lab/lib/workspace.mjs';
 import { buildCases } from '../datasets/ladder-agent/generate.mjs';
+import { onlyTiming } from './ladder-agent-timing.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, '..');
@@ -214,13 +215,16 @@ const SLOW = [
   {
     slug: 'http1-parser',
     overlay: 'http1-parser--slow',
-    fails: ['a body in one-byte pieces stays fast', 'many pipelined requests in one call stay fast', 'a chunked body of tiny chunks in one call stays fast'],
+    fails: ['a body in one-byte pieces stays fast', 'a chunked body of tiny chunks in one call stays fast'],
+    // The natural slow method used 3.7 to 4.7 s of CPU against this probe's 3 s limit here and passed on a faster CI
+    // runner. Slowing it further would add work the probe does not ask for, so the claim goes.
+    maybe: ['many pipelined requests in one call stay fast'],
   },
   { slug: 'regex-engine', overlay: 'regex-engine--slow', fails: ['many matches in a long text stay fast'] },
 ];
 
 test('a slow solution fails the speed probes and passes the rest', () => {
-  for (const { slug, overlay, fails } of SLOW) {
+  for (const { slug, overlay, fails, maybe = [] } of SLOW) {
     const work = workspaceWith(slug, slug); // the reference ...
     fs.cpSync(path.join(SOLUTIONS, overlay), work, { recursive: true }); // ... with its slow files on top
     for (const file of listFiles(path.join(SOLUTIONS, overlay))) assert.equal(path.relative(path.join(SOLUTIONS, overlay), file).split(path.sep)[0], 'src', `${overlay}: ${file} is outside src`);
@@ -228,8 +232,9 @@ test('a slow solution fails the speed probes and passes the rest', () => {
     const artifact = snapshotWorkspace({ fixtureDir: fixtureOf(slug), workDir: work, runDir, base: 'w', artifactId: 'x', createdAt: '2026-11-07T00:00:00Z' });
     const run = runWorkspaceCheckV2({ fixtureDir: fixtureOf(slug), check: checkOf(slug), runDir, manifestPath: artifact.path });
     assert.equal(run.error, undefined, `${overlay}: the check itself broke: ${run.error}`);
-    assert.deepEqual(failed(run.results).map((item) => item.name), fails, `${overlay}: the probes that fail`);
-    assert.equal(passedCount(run.results), run.results.length - fails.length, overlay);
+    const names = failed(run.results).map((item) => item.name);
+    assert.deepEqual(names.filter((name) => !maybe.includes(name)), fails, `${overlay}: the probes that fail`);
+    for (const item of failed(run.results)) if (maybe.includes(item.name)) assert.ok(onlyTiming(item, checkOf(slug).probes[item.name]), `${overlay}: "${item.name}" failed for more than time: ${item.error}`);
     for (const name of fails) assert.ok(Object.hasOwn(checkOf(slug).probes, name), `${overlay}: "${name}" is not a probe of ${slug}`);
   }
 });
