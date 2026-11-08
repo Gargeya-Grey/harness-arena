@@ -1,0 +1,11 @@
+{"case_id":"ladder-agent-synthetic","model_key":"gpt-6-luna-low","repeat":0,"event":{"type":"thread.started","thread_id":"thread-1"}}
+{"case_id":"ladder-agent-synthetic","model_key":"gpt-6-luna-low","repeat":0,"event":{"type":"turn.started"}}
+{"case_id":"ladder-agent-synthetic","model_key":"gpt-6-luna-low","repeat":0,"event":{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"node --test","aggregated_output":"","exit_code":null,"status":"in_progress"}}}
+{"case_id":"ladder-agent-synthetic","model_key":"gpt-6-luna-low","repeat":0,"event":{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"node --test","aggregated_output":"not ok 1 - keeps digits\nℹ fail 1\n","exit_code":1,"status":"failed"}}}
+{"case_id":"ladder-agent-synthetic","model_key":"gpt-6-luna-low","repeat":0,"event":{"type":"item.completed","item":{"id":"item_2","type":"reasoning","text":"The test fails on digits."}}}
+{"case_id":"ladder-agent-synthetic","model_key":"gpt-6-luna-low","repeat":0,"event":{"type":"item.completed","item":{"id":"item_3","type":"file_change","changes":[{"path":"src/slugify.mjs","kind":"update"},{"path":"src/digits.mjs","kind":"add"}],"status":"completed"}}}
+{"case_id":"ladder-agent-synthetic","model_key":"gpt-6-luna-low","repeat":0,"event":{"type":"item.completed","item":{"id":"item_4","type":"command_execution","command":"Get-Content src/slugify.mjs","aggregated_output":"","exit_code":null,"status":"completed"}}}
+{"case_id":"ladder-agent-synthetic","model_key":"gpt-6-luna-low","repeat":0,"event":{"type":"mystery.event","payload":{"tool_call":"not a codex item"}}}
+{"case_id":"ladder-agent-synthetic","model_key":"gpt-6-luna-low","repeat":0,"event":{"type":"item.completed","item":{"id":"item_5","type":"command_execution","command":"node --test","aggregated_output":"ℹ pass 3\nℹ fail 0\n","exit_code":0,"status":"completed"}}}
+{"case_id":"ladder-agent-synthetic","model_key":"gpt-6-luna-low","repeat":0,"event":{"type":"item.completed","item":{"id":"item_6","type":"agent_message","text":"Fixed the digits case. All tests pass."}}}
+{"case_id":"ladder-agent-synthetic","model_key":"gpt-6-luna-low","repeat":0,"event":{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":90,"reasoning_output_tokens":10}}}
