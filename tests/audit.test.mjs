@@ -344,3 +344,22 @@ test('stability needs runs, and says so when a run is unknown', () => {
   assert.notEqual(unknown.code, 0);
   assert.match(unknown.err, /No run matches "no-such-run"/);
 });
+
+// ---- specificity -------------------------------------------------------------------------------
+
+test('five solutions written from the task text alone (drawn with a recorded seed) pass the hidden checks of the frozen version', async () => {
+  const { getEvaluator } = await import('../lab/evaluators/index.mjs');
+  const dir = path.join(HERE, 'fixtures', 'ladder-code-alternatives');
+  const draw = JSON.parse(fs.readFileSync(path.join(dir, 'draw.json'), 'utf8'));
+  assert.equal(draw.seed, 20261108);
+  assert.equal(draw.drawn.length, 5);
+  assert.ok(draw.drawn.every((id) => draw.pool.includes(id)));
+  assert.deepEqual(fs.readdirSync(dir).filter((name) => name.endsWith('.mjs')).sort(), draw.drawn.map((id) => `${id}.mjs`).sort());
+  const suite = loadSuite(REPO, 'ladder-code', { version: draw.suite_version });
+  const evaluator = getEvaluator('js-function', '2');
+  for (const id of draw.drawn) {
+    const testCase = suite.cases.find((item) => item.case_id === id);
+    const result = evaluator.score({ raw: { response: { text: fs.readFileSync(path.join(dir, `${id}.mjs`), 'utf8') } }, testCase });
+    assert.deepEqual([id, result.value, result.passed], [id, 1, true]);
+  }
+});
