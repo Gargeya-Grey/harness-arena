@@ -212,7 +212,7 @@ export function signTestP(a, b) {
     tail += term;
     term = (term * (n - i)) / (i + 1);
   }
-  return Number(Math.min(1, 2 * tail).toFixed(6));
+  return Math.min(1, 2 * tail);
 }
 
 /**
@@ -277,10 +277,11 @@ export function compareVersions(a, b) {
  * or the version named in `chosen` (Map suite id -> version). Runs of other versions are left out,
  * because a task reworked under the same case_id in a new version is a different measurement.
  * One suite version that mixes prompt versions, or quality evaluator versions, is refused: the scores
- * would not be comparable (AGENTS.md invariant 4).
+ * would not be comparable (AGENTS.md invariant 4). With `keepOtherSuites` only that suite is left out,
+ * and its `versions` entry holds the reason in `refused`; without it the whole report is refused.
  * Returns { rows, versions }; versions lists the suite, version, prompt, run count and runs left out.
  */
-function selectVersions(observations, contextOf, chosen) {
+function selectVersions(observations, contextOf, chosen, keepOtherSuites) {
   const runs = new Map();
   for (const row of observations) {
     if (!runs.has(row.run_id)) {
@@ -300,12 +301,16 @@ function selectVersions(observations, contextOf, chosen) {
     const version = chosen.get(suiteId) ?? newest;
     const used = own.filter((run) => run.version === version);
     const prompts = [...new Set(used.map((run) => run.prompt))].sort();
-    if (prompts.length > 1) {
-      throw new Error(`${suiteId}@${version} has counted runs with different prompt versions (${prompts.join(', ')}); scores of different prompts are not comparable. Choose the runs with --runs.`);
-    }
     const evaluators = [...new Set(used.map((run) => run.evaluators))].sort();
-    if (evaluators.length > 1) {
-      throw new Error(`${suiteId}@${version} has counted runs scored with different quality evaluator versions (${evaluators.join(', ')}); scores of different evaluator versions are not comparable. Choose the runs with --runs.`);
+    const refusal = prompts.length > 1
+      ? `${suiteId}@${version} has counted runs with different prompt versions (${prompts.join(', ')}); scores of different prompts are not comparable. Choose the runs with --runs.`
+      : evaluators.length > 1
+        ? `${suiteId}@${version} has counted runs scored with different quality evaluator versions (${evaluators.join(', ')}); scores of different evaluator versions are not comparable. Choose the runs with --runs.`
+        : null;
+    if (refusal && !keepOtherSuites) throw new Error(refusal);
+    if (refusal) {
+      versions.push({ suite: suiteId, version: version ?? null, prompt: null, runs: 0, left_out_runs: own.length, left_out_versions: [], refused: refusal });
+      continue;
     }
     used.forEach((run) => keep.add(run.run_id));
     const other = own.filter((run) => run.version !== version);
@@ -343,7 +348,7 @@ function selectVersions(observations, contextOf, chosen) {
  * their abilities are their means over the other tasks both ran. The case is flagged when the pair's
  * higher-ability configuration scored under 0.5 on every repeat of the case and the other scored 1 on every repeat.
  */
-export function ladderReport({ state, ladder, ladderCases, suite = null, runs = null, suiteVersions = null, diskVersions = null, frozenCopy = null }) {
+export function ladderReport({ state, ladder, ladderCases, suite = null, runs = null, suiteVersions = null, diskVersions = null, frozenCopy = null, keepOtherSuites = false }) {
   const onDiskScope = ladderCases.filter((entry) => !suite || entry.suite === suite || entry.kind === suite);
   const kindOf = new Map(onDiskScope.map((entry) => [entry.suite, entry.kind]));
   const withQuality = new Set((state.contexts || []).filter((ctx) => (ctx.evaluators || []).some((item) => item.dimension === 'quality')).map((ctx) => ctx.key));
@@ -358,6 +363,7 @@ export function ladderReport({ state, ladder, ladderCases, suite = null, runs = 
     state.observations.filter((row) => row.trusted !== false && kindOf.has(contextOf.get(row.context_key)?.suite?.id) && withQuality.has(row.context_key) && (!runSet || runSet.has(row.run_id))),
     contextOf,
     chosen,
+    keepOtherSuites,
   );
   const { versions } = selected;
   // Per suite, the case set and tiers of the version used: the suite on disk, or the frozen copy of
@@ -414,6 +420,10 @@ export function ladderReport({ state, ladder, ladderCases, suite = null, runs = 
   });
   configs.sort((a, b) => (b._mean ?? -1) - (a._mean ?? -1) || a.config_id.localeCompare(b.config_id));
   for (const config of configs) delete config._mean;
+  // A short label leaves out the harness version, so two configurations can share one. Then only the id tells them apart.
+  const labelUses = new Map();
+  for (const config of configs) labelUses.set(config.label, (labelUses.get(config.label) || 0) + 1);
+  for (const config of configs) if (labelUses.get(config.label) > 1) config.label = config.config_id;
 
   const cases = inScope
     .map(({ kind, suite: suiteId, item }) => {
@@ -504,13 +514,15 @@ export function ladderState(root, state, { suiteAt }) {
   };
   let report;
   try {
-    report = ladderReport({ state, ladder: status.ladder, ladderCases: status.cases, diskVersions, frozenCopy });
+    report = ladderReport({ state, ladder: status.ladder, ladderCases: status.cases, diskVersions, frozenCopy, keepOtherSuites: true });
   } catch (error) {
     return emptyLadder({ problems: status.problems, error: error.message });
   }
   const suites = Object.values(status.ladder.suites).map((id) => ({
     id,
     version: report.versions.find((item) => item.suite === id)?.version ?? diskVersions.get(id) ?? null,
+    // Set when the suite's counted runs are not comparable: its cases then show no result.
+    refused: report.versions.find((item) => item.suite === id)?.refused ?? null,
     cases: report.cases.filter((entry) => entry.suite === id),
   }));
   const { cases, ...rest } = report;

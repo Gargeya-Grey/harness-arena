@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { adoptCommand } from '../lab/commands/adopt.mjs';
-import { compareVersions, ladderCommand, ladderReport } from '../lab/commands/ladder.mjs';
+import { compareVersions, formatLadder, ladderCommand, ladderReport, pairLine } from '../lab/commands/ladder.mjs';
 import { ensureLedger } from '../lab/lib/ledger.mjs';
 import { ladderStatus, pairEvidence, signTestP, taskInformation } from '../lab/lib/ladder.mjs';
 import { loadSuite } from '../lab/lib/repo.mjs';
@@ -57,19 +57,19 @@ const SCORES = {
   'model-c': { c1: [1, 1], c2: [0, 0], c3: [0, 0], c4: [1, 1], c5: [0, 0], c6: [0, 1] },
 };
 
-function manifest(runId, modelKey, { status = 'completed', suiteVersion = '1.0.0', suiteSha = 'a'.repeat(64), promptVersion = '1', evaluatorVersion = '1', harnessName = 'fake', harnessSettings = {} } = {}) {
+function manifest(runId, modelKey, { status = 'completed', suite = 'ladder-code', suiteVersion = '1.0.0', suiteSha = 'a'.repeat(64), promptVersion = '1', evaluatorVersion = '1', harnessName = 'fake', harnessVersion = '1.0.0', harnessSettings = {} } = {}) {
   return {
     run_id: runId,
     created_at: '2026-11-01T10:00:00.000Z',
     finished_at: status === 'completed' ? '2026-11-01T10:30:00.000Z' : null,
     status,
-    suite: { id: 'ladder-code', version: suiteVersion, sha256: suiteSha },
+    suite: { id: suite, version: suiteVersion, sha256: suiteSha },
     prompt: { id: 'js-function', version: promptVersion, sha256: 'b'.repeat(64) },
-    experiment: { id: 'ladder-code', suite: 'ladder-code', prompt: 'js-function', repeats: 2 },
+    experiment: { id: suite, suite, prompt: 'js-function', repeats: 2 },
     models: [{ model_key: modelKey, provider: 'fake', model: modelKey, params: {} }],
     repeats: 2,
     evaluators: [{ ...QUALITY, version: evaluatorVersion }],
-    harness: { name: harnessName, version: '1.0.0', entrypoint: 'headless', access_method: 'subscription', platform: 'win32', session_id: null, settings: harnessSettings },
+    harness: { name: harnessName, version: harnessVersion, entrypoint: 'headless', access_method: 'subscription', platform: 'win32', session_id: null, settings: harnessSettings },
     ...(status === 'running' ? { runner: { pid: 1, heartbeat_at: '2026-11-01T10:00:00.000Z' } } : {}),
   };
 }
@@ -77,12 +77,13 @@ function manifest(runId, modelKey, { status = 'completed', suiteVersion = '1.0.0
 // One run: rows = [{ slug, repeat, value }] or [{ slug, repeat, error: { type } }].
 function writeRun(root, rand, modelKey, rows, options = {}) {
   const evaluatorVersion = options.evaluatorVersion ?? '1';
-  const runId = `20261101T100000Z__ladder-code__ladder-code__${rand}`;
+  const suite = options.suite ?? 'ladder-code';
+  const runId = `20261101T100000Z__${suite}__${suite}__${rand}`;
   const dir = path.join(root, 'results', runId);
   write(path.join(dir, 'run.json'), `${JSON.stringify(manifest(runId, modelKey, options), null, 2)}\n`);
   const raw = rows.map(({ slug, repeat, error }) => ({
     run_id: runId,
-    case_id: `ladder-code-${slug}`,
+    case_id: `${suite}-${slug}`,
     model_key: modelKey,
     repeat,
     started_at: '2026-11-01T10:00:00.000Z',
@@ -98,7 +99,7 @@ function writeRun(root, rand, modelKey, rows, options = {}) {
   }));
   const scores = rows
     .filter(({ error }) => !error)
-    .map(({ slug, repeat, value }) => ({ run_id: runId, case_id: `ladder-code-${slug}`, model_key: modelKey, repeat, evaluator_id: 'workspace-tests', evaluator_version: evaluatorVersion, dimension: 'quality', value, passed: value === 1, details: {} }));
+    .map(({ slug, repeat, value }) => ({ run_id: runId, case_id: `${suite}-${slug}`, model_key: modelKey, repeat, evaluator_id: 'workspace-tests', evaluator_version: evaluatorVersion, dimension: 'quality', value, passed: value === 1, details: {} }));
   write(path.join(dir, 'raw.jsonl'), jsonl(raw));
   write(path.join(dir, 'scores', `workspace-tests@${evaluatorVersion}.jsonl`), jsonl(scores));
   return { runId, dir };
@@ -655,7 +656,94 @@ test('an old saved board that names the legacy id still shows that setup, and so
   assert.equal(S.sel.length, 3);
 });
 
+test('a pair rated after the split keeps both of its ids', (t) => {
+  const { root } = claudeRoot(t, {
+    extra: ({ root: dir, leaked }) => {
+      write(path.join(dir, 'annotations', 'human@1.jsonl'), jsonl([{ ...annotation('p1', leaked.runId, 'ladder-code-c1', 0, LEAKED, null, '2026-11-03T10:00:00.000Z'), pair_id: 'pair-1', pair_choice: 'B', pair_config_id: LEGACY }]));
+    },
+  });
+  const [item] = buildState(root, { validate: false }).annotations;
+  assert.deepEqual([item.config_id, item.pair_config_id], [LEAKED, LEGACY]);
+});
+
+test('a board at the limit of eight setups keeps every setup it names; a smaller one also shows the sibling', (t) => {
+  const { root } = claudeRoot(t);
+  const state = buildState(root, { validate: false });
+  const names = [...'abcdefgh'].map((letter) => `${letter}__h-1__default__isolated`);
+  const sibling = `${names[0]}-leaked`;
+  for (const id of names) state.configs[id] = { ...state.configs[LEGACY], id, legacy_id: id };
+  state.configs[sibling] = { ...state.configs[LEAKED], id: sibling, legacy_id: names[0] };
+  const [ctx] = state.contexts;
+  ctx.config_ids = [names[0], sibling, ...names.slice(1)];
+  setData(state);
+  chooseContext(ctx.key, names);
+  assert.deepEqual(S.sel, names);
+  chooseContext(ctx.key, names.slice(0, 2));
+  assert.deepEqual(S.sel, [names[0], sibling, names[1]]);
+});
+
+test('a suite that mixes prompt versions is refused alone in state.ladder; the other suites stay', (t) => {
+  const root = makeRoot(t);
+  write(path.join(root, 'datasets', 'ladder-answer', 'suite.yaml'), 'id: ladder-answer\nversion: "1.0.0"\n');
+  write(path.join(root, 'datasets', 'ladder-answer', 'cases.jsonl'), jsonl([ladderCase('ladder-answer', 'a1', 1, 1), ladderCase('ladder-answer', 'a2', 2, 5)]));
+  writeRun(root, 'r00001', 'model-a', rowsOf(SCORES['model-a']));
+  writeRun(root, 'r00002', 'model-b', rowsOf(SCORES['model-b']), { promptVersion: '2' });
+  writeRun(root, 'r00003', 'model-a', rowsOf({ a1: [1, 1], a2: [0, 0] }), { suite: 'ladder-answer' });
+  writeRun(root, 'r00004', 'model-b', rowsOf({ a1: [1, 1], a2: [1, 1] }), { suite: 'ladder-answer' });
+  ensureLedger(root);
+  const { ladder } = buildState(root, { validate: false });
+  assert.equal(ladder.error, undefined);
+  const byId = Object.fromEntries(ladder.suites.map((suite) => [suite.id, suite]));
+  assert.match(byId['ladder-code'].refused, /ladder-code@1\.0\.0 has counted runs with different prompt versions/);
+  assert.deepEqual(byId['ladder-answer'].cases.map((entry) => [entry.case_id, entry.information]), [['ladder-answer-a1', 'all-solved'], ['ladder-answer-a2', 'disagree']]);
+  assert.equal(byId['ladder-answer'].refused, null);
+  assert.equal(ladder.pairs.length, 1, 'only the suite that is not refused gives a pair');
+  assert.throws(() => reportOf(root), /different prompt versions/, 'the command still refuses and names --runs');
+});
+
+test('the exact sign test keeps a very small p; the text says it is small', () => {
+  assert.equal(signTestP(22, 0), 4.76837158203125e-7);
+  assert.equal(pairLine({ a_label: 'A', b_label: 'B', shared: 22, a_only: 22, b_only: 0, sign_p: signTestP(22, 0) }), 'A vs B: 22 shared, 22 and 0, p < 0.01');
+});
+
+test('two configurations with one short label are named by their ids in the report', (t) => {
+  const root = makeRoot(t);
+  writeRun(root, 'v00001', 'model-a', rowsOf(SCORES['model-a']));
+  writeRun(root, 'v00002', 'model-a', rowsOf(SCORES['model-b']), { harnessVersion: '2.0.0' });
+  writeRun(root, 'v00003', 'model-c', rowsOf(SCORES['model-c']));
+  ensureLedger(root);
+  const report = reportOf(root);
+  assert.deepEqual(report.configs.map((config) => config.label).sort(), ['Model C · fake', 'model-a__fake-1.0.0__default', 'model-a__fake-2.0.0__default']);
+  const twoVersions = report.pairs.find((pair) => pair.a.startsWith('model-a') && pair.b.startsWith('model-a'));
+  assert.ok(pairLine(twoVersions).includes('model-a__fake-1.0.0__default') && pairLine(twoVersions).includes('model-a__fake-2.0.0__default'), pairLine(twoVersions));
+});
+
+test('the calibrate legend does not say unsolved tasks have no difference', (t) => {
+  const { root } = mainRoot(t);
+  const text = formatLadder(reportOf(root), { calibrate: true }).join('\n');
+  assert.doesNotMatch(text, /no difference/);
+  assert.match(text, /all-solved \/ all-unsolved = the configurations agree on solved or not/);
+});
+
 // ---- Stopped runs and tests with no scores ----
+
+const shownFacts = (tries, passed, unscoredAnswers = 0) => ({ tries, errors: 0, failed: 0, lost: 0, mismatched: 0, checked: tries, passed, unchecked: 0, unscoredAnswers, decided: tries, rate: tries ? passed / tries : null, time: null, timed: 0, slow: null, price: null, pricePerPass: null, rating: null, ratings: 0 });
+
+test('stored answers with no score are counted even when another setup has scores', () => {
+  const said = answer({ setups: [{ id: 'a', name: 'A', facts: shownFacts(3, 3), errorReason: null }, { id: 'b', name: 'B', facts: shownFacts(0, 0, 58), errorReason: null }], cases: 3 });
+  assert.equal(said.kind, 'few');
+  assert.ok(said.more.includes('58 answers are stored with no score, so they count nowhere yet.'), JSON.stringify(said.more));
+  const one = answer({ setups: [{ id: 'a', name: 'A', facts: shownFacts(3, 3), errorReason: null }, { id: 'b', name: 'B', facts: shownFacts(0, 0, 1), errorReason: null }], cases: 3 });
+  assert.ok(one.more.includes('1 answer is stored with no score, so it counts nowhere yet.'), JSON.stringify(one.more));
+});
+
+test('an answer the evaluator left unchecked in a scored run is not also an unscored answer', (t) => {
+  const root = makeRoot(t);
+  writeRun(root, 'u00001', 'model-a', [{ slug: 'c1', repeat: 0, value: 1 }, { slug: 'c1', repeat: 1, value: null }]);
+  ensureLedger(root);
+  const [ctx] = buildState(root, { validate: false }).contexts;
+  assert.deepEqual(ctx.unscored_answers, {});
+});
 
 const fakeNode = (id) => ({ id, innerHTML: '', textContent: '', hidden: false, classList: { add() {}, remove() {}, toggle() {}, contains: () => false }, setAttribute() {}, getAttribute: () => null });
 

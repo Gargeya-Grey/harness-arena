@@ -206,8 +206,14 @@ export function chooseContext(key, wanted = null) {
   // (config.legacy_id). It shows every setup of this test that had that id: the clean setup keeps the
   // old id, so a name that is still valid can mean its leaked sibling too. A view saved after the split
   // that names the kept out setup therefore shows the leaked one beside it, which is the safer error.
-  const named = (wanted || []).flatMap((id) => c.config_ids.filter((other) => other === id || cfgOf(other)?.legacy_id === id));
-  const sel = named.filter((id, i, arr) => arr.indexOf(id) === i).slice(0, MAX_SHOWN);
+  // The limit never drops a setup the view named: a sibling only takes a place that is left over.
+  const groups = (wanted || []).map((id) => ({ id, setups: c.config_ids.filter((other) => other === id || cfgOf(other)?.legacy_id === id) })).filter((group) => group.setups.length);
+  const unique = (ids) => ids.filter((id, i, arr) => arr.indexOf(id) === i);
+  const firstChoice = unique(groups.map((group) => (group.setups.includes(group.id) ? group.id : group.setups[0])));
+  const all = unique(groups.flatMap((group) => group.setups));
+  const room = Math.max(0, MAX_SHOWN - firstChoice.length);
+  const keep = new Set([...firstChoice.slice(0, MAX_SHOWN), ...all.filter((id) => !firstChoice.includes(id)).slice(0, room)]);
+  const sel = all.filter((id) => keep.has(id));
   S.custom = sel.length > 0;
   S.sel = S.custom ? sel : defaultSel(c);
 }

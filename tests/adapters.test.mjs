@@ -167,3 +167,21 @@ test('answer env: a value the caller already set is merged by the harness, and O
   assert.deepEqual(JSON.parse(opencode.answerEnv({ OPENCODE_CONFIG_CONTENT: 'not json' }).OPENCODE_CONFIG_CONTENT), { permission: { '*': 'deny' } });
   assert.deepEqual(JSON.parse(opencode.answerEnv({}).OPENCODE_CONFIG_CONTENT), { permission: { '*': 'deny' } });
 });
+
+test('an isolated call clears inherited config variables, in any spelling; a normal call keeps them', async () => {
+  const echo = defineCli({
+    name: 'clear-env',
+    bin: 'node',
+    isolation: { clearEnv: ['LAB_TEST_OWN_CONFIG'], note: 'test' },
+    answer: { env: { LAB_TEST_OWN_CONFIG: 'ours' }, note: 'test', merge: (key, current, ours) => `${current}+${ours}` },
+    args: () => ['-e', 'process.stdout.write(String(process.env.LAB_TEST_OWN_CONFIG))'],
+    parse: ({ stdout }) => ({ text: stdout, error: null }),
+  });
+  const messages = [{ role: 'user', content: 'hi' }];
+  const mine = { env: { LAB_TEST_OWN_CONFIG: 'mine' } };
+  assert.equal((await echo.call({ messages, timeoutMs: 30000, ...mine })).text, 'mine+ours');
+  assert.equal((await echo.call({ messages, timeoutMs: 30000, isolated: true, ...mine })).text, 'ours', 'nothing inherited reaches the merge');
+  assert.equal((await echo.call({ messages, timeoutMs: 30000, isolated: true, access: 'edit', ...mine })).text, 'undefined', 'an edit call has no value of ours');
+  assert.equal((await echo.call({ messages, timeoutMs: 30000, isolated: true, access: 'edit', env: { lab_test_own_config: 'mine' } })).text, 'undefined', 'another spelling is cleared too');
+  assert.deepEqual(getAdapter('opencode').isolation.clearEnv, ['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'OPENCODE_CONFIG_CONTENT']);
+});

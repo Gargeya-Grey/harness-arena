@@ -47,7 +47,7 @@ export function formatLadder(report, { calibrate = false } = {}) {
   if (rows.some((row) => row.some((text) => String(text).includes('*')))) lines.push('* the configuration has counted results for fewer tasks than the tier holds.');
   if (calibrate) {
     lines.push('', 'Information: what each task can tell about the configurations that ran it (a tier is an estimate label, not a result).');
-    lines.push('  disagree = some solved it and some did not; one-config = one configuration has a result; all-solved / all-unsolved = no difference; no-data = no counted result.');
+    lines.push('  disagree = some solved it and some did not; one-config = one configuration has a result; all-solved / all-unsolved = the configurations agree on solved or not (scores of unsolved tasks can still differ); no-data = no counted result.');
     const caseRows = report.cases.map((entry) => [
       entry.case_id,
       `${entry.tier ?? '?'} ${entry.tier_name ?? ''}`.trim(),

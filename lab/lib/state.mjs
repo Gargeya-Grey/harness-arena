@@ -631,11 +631,12 @@ export function buildState(root, { validate = true } = {}) {
       ctx.aggregates[id] = aggregate(ctxRows.filter((row) => row.config_id === id), configs[id], { hasQuality });
     }
     ctx.comparison = comparisonMode(ctx.config_ids.map((id) => configs[id]));
-    // Answers stored with no score, counted whether or not their run counts: a run that stopped
+    // Answers stored in a run with no scores, counted whether or not the run counts: a run that stopped
     // before scoring has answers and no aggregate, and the page must say so instead of "no answers".
+    // An answer the evaluator left unchecked in a scored run is already in the aggregate's unscored_n.
     ctx.unscored_answers = {};
     for (const row of observations) {
-      if (row.context_key !== ctx.key || row.error || row.quality != null) continue;
+      if (row.context_key !== ctx.key || row.error || row.quality != null || row.run_scored) continue;
       ctx.unscored_answers[row.config_id] = (ctx.unscored_answers[row.config_id] || 0) + 1;
     }
     ctx.latest_run_at = ctx.runs
@@ -665,7 +666,8 @@ export function buildState(root, { validate = true } = {}) {
     const now = idsOfRun.get(item.run_id);
     const resolve = (id) => (id && now?.has(id) ? now.get(id) : id);
     const config_id = resolve(item.config_id);
-    const pair_config_id = resolve(item.pair_config_id);
+    // A line whose own id is not a legacy id of its run was written after the split: its pair is current too.
+    const pair_config_id = now?.has(item.config_id) ? resolve(item.pair_config_id) : item.pair_config_id;
     return config_id === item.config_id && pair_config_id === item.pair_config_id ? item : { ...item, config_id, pair_config_id, stored_config_id: item.config_id };
   });
 

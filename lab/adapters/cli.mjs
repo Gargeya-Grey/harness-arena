@@ -17,6 +17,7 @@ import { cliVersion, flattenMessages, runProcess } from './process.mjs';
  *   isolation?: {
  *     args?: string[],              // flags that keep the user setup out
  *     env?: object,                 // env vars set on an isolated call
+ *     clearEnv?: string[],          // upper-case names of inherited env vars an isolated call must not see
  *     home?: {                      // isolate through a temp home folder instead of (or with) flags
  *       files: string[],            // sign-in files to copy, relative to the real home; nothing else is copied
  *       store?: object,             // sign-in that is not a file (see lab/lib/temphome.mjs)
@@ -61,7 +62,7 @@ export function defineCli(spec) {
     // non-empty list). With a temp home it also lists the env vars, as KEY=<temp home>/sub;
     // the env vars of `isolation.env` are listed as KEY=value.
     // `flags` is the part that goes on the command line.
-    isolation: { args: [...flags, ...Object.entries(isolation.env || {}).map(([key, value]) => `${key}=${value}`), ...(home ? describeEnv(homeEnv) : [])], flags, env: isolation.env || {}, home, note: isolation.note },
+    isolation: { args: [...flags, ...Object.entries(isolation.env || {}).map(([key, value]) => `${key}=${value}`), ...(home ? describeEnv(homeEnv) : [])], flags, env: isolation.env || {}, clearEnv: isolation.clearEnv || [], home, note: isolation.note },
     // access: edit (agent tasks) lets the harness edit files and run commands in its folder.
     edit: edit ? { args: edit.args || [], note: edit.note || '' } : null,
     // access: answer (the default) turns the CLI's tools off where only config can do it.
@@ -85,7 +86,9 @@ export function defineCli(spec) {
     async call({ model, messages, effort, cwd, timeoutMs, persist = false, maxTurns = null, isolated = false, access = 'answer', env: callEnv = {}, homeDir }) {
       const { prompt, system, user } = flattenMessages(messages);
       const extra = [...(isolated ? this.isolation.flags : []), ...(access === 'edit' && this.edit ? this.edit.args : [])];
-      const setupEnv = { ...callEnv, ...(isolated ? this.isolation.env : {}) };
+      // Node leaves an undefined value out of the child's environment. A Windows variable can have any spelling.
+      const cleared = isolated ? Object.fromEntries(Object.keys({ ...process.env, ...callEnv }).filter((key) => this.isolation.clearEnv.includes(key.toUpperCase())).map((key) => [key, undefined])) : {};
+      const setupEnv = { ...callEnv, ...cleared, ...(isolated ? this.isolation.env : {}) };
       const baseEnv = { ...setupEnv, ...(access !== 'edit' && this.answer ? this.answerEnv({ ...process.env, ...setupEnv }) : {}) };
 
       // One process call. `tempHome` is the temp home folder of an isolated call, else null.

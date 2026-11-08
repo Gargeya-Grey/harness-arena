@@ -169,13 +169,14 @@ const both = (n) => (n === 2 ? 'Both' : `All ${n}`);
 // setups: [{ id, name, facts, errorReason }] in table order. The words count the tries stored,
 // which can be more than the experiment declared when a test was run twice.
 export function answer({ setups, cases = 0 }) {
-  const say = (kind, sentences, more = []) => ({ kind, sentences, more: more.filter(Boolean), firm: kind === 'gap' || kind === 'noise' || kind === 'level' });
+  // A run that stopped before scoring holds answers that count nowhere yet. Say how many.
+  const stored = setups.reduce((sum, s) => sum + (s.facts.unscoredAnswers || 0), 0);
+  const unscored = stored > 0 ? `${plural(stored, 'answer')} ${stored === 1 ? 'is' : 'are'} stored with no score, so ${stored === 1 ? 'it counts' : 'they count'} nowhere yet.` : null;
+  const say = (kind, sentences, more = []) => ({ kind, sentences, more: [...more, kind === 'empty' || kind === 'unchecked' ? null : unscored].filter(Boolean), firm: kind === 'gap' || kind === 'noise' || kind === 'level' });
   if (!setups.length) return say('empty', ['No answers yet.']);
   const decided = setups.filter((s) => s.facts.decided > 0);
   if (!decided.length || setups.every((s) => s.facts.checked === 0 && s.facts.errors < s.facts.tries)) {
     if (setups.every((s) => s.facts.tries === 0)) {
-      // A run that stopped before scoring holds answers that count nowhere yet. Say how many.
-      const stored = setups.reduce((sum, s) => sum + (s.facts.unscoredAnswers || 0), 0);
       if (stored > 0) return say('empty', [`${plural(stored, 'answer')} ${stored === 1 ? 'is' : 'are'} stored with no score, so nothing counts yet.`], [errorSentence(setups)]);
       return say('empty', ['No answers yet.']);
     }
