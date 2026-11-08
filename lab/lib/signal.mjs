@@ -58,7 +58,7 @@ function plannedSetups(root, plan) {
         setup_state: state,
         answer_tools: answerTools,
         // Asked to stay out, and the lab cannot show that it did.
-        unproved_setup: isolated && state === 'unknown',
+        unproved_setup: isolated && (state === 'unknown' || state === 'leaked'),
         label: `${model} · ${harness}${used ? ` · ${used}` : ''}`,
         planned_id: configId(model, { name: harness, version: 'unknown' }, used, state, answerTools),
       });
@@ -313,6 +313,9 @@ export function signalReport(root, experiment, options = {}) {
     }
     for (const setup of matched.filter((item) => item.unproved_setup)) {
       reasons.push(`${setup.label} was asked to stay out of your setup, but the lab cannot show that it does. Its results may carry your own setup.`);
+    }
+    for (const setup of matched.filter((item) => item.setup_state === 'partly kept out')) {
+      reasons.push(`${setup.label} can be only partly kept out of your setup. Its results may carry part of it, so a comparison with a setup fully kept out is not clean.`);
     }
   }
   reasons.push(...history.notes);

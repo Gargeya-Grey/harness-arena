@@ -330,6 +330,14 @@ test('a setup that cannot be kept out is flagged, and a pair with it is not clea
   assert.deepEqual(loaded.setups.map((setup) => setup.setup_state), ['loaded', 'loaded']);
 });
 
+test('a setup that can be only partly kept out is named in the reasons', (t) => {
+  const root = makeRoot(t, { tasks: 8 });
+  const report = signalReport(root, addExperiment(root, [['m-a', 'claude-code'], ['m-b', 'command-code']]));
+  assert.deepEqual(report.setups.map((setup) => setup.setup_state), ['kept out', 'partly kept out']);
+  assert.match(report.reasons.join('\n'), /m-b · command-code can be only partly kept out of your setup\./);
+  assert.doesNotMatch(report.reasons.join('\n'), /m-a · claude-code can be only partly/);
+});
+
 // ---- check quality -----------------------------------------------------------------------------
 
 test('check quality reads reports/audit, and a suite with no audit, or an audit of other content, reads not audited', (t) => {

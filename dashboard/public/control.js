@@ -654,6 +654,7 @@ function paintSignal(r) {
     ['Disagreements a pair needs', r.pairs.length ? r.pairs[0].needed : 'no pair'],
     ['History predicts, best pair', r.pairs.length ? (predicted.length ? Math.max(...predicted) : 'unknown') : 'no pair'],
     ['Check quality', r.checks.state === 'audited' ? `audited${r.checks.kill_rate == null ? '' : `, ${Math.round(r.checks.kill_rate * 100)}% caught`}` : 'not audited'],
+    ['Setup state', [...new Set(r.setups.map((s) => s.setup_state))].map((state) => `${r.setups.filter((s) => s.setup_state === state).length} ${state}`).join(', ')],
   ];
   const box = signalBox();
   box.hidden = false;
