@@ -72,7 +72,7 @@ export function pairOf(ladder, a, b) {
  * A pair compares cleanly only when both setups kept the user's own setup out to the same proved degree.
  * Otherwise a gap between them may come from that setup, not from the model or the harness.
  */
-export function cleanPair(ladder, pair) {
+function cleanPair(ladder, pair) {
   const stateOf = (id) => configsOf(ladder).find((config) => config.config_id === id)?.setup_state ?? 'unknown';
   const state = stateOf(pair.a);
   return state === stateOf(pair.b) && state !== 'leaked' && state !== 'unknown';
