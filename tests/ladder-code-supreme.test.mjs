@@ -56,7 +56,8 @@ const LAYOUT_LIMIT = 3e7;
 
 const slugs = fs.readdirSync(DEFS).filter((name) => name.endsWith('.mjs') && !name.startsWith('_')).map((name) => name.slice(0, -4)).sort();
 const ids = new Set(slugs.map((slug) => `ladder-code-${slug}`));
-const cases = (await buildCases()).filter((item) => ids.has(item.case_id));
+// Every definition of this folder; all of them are retired in suite 2.0.0 (defs/_retired.mjs), and their proofs keep running.
+const cases = (await buildCases({ includeRetired: true })).filter((item) => ids.has(item.case_id));
 const efficiency = cases.filter((item) => item.tags.includes('efficiency'));
 const specs = cases.filter((item) => item.tags.includes('spec'));
 const defs = new Map((await loadDefinitions(DEFS)).map((def) => [`ladder-code-${def.slug}`, def]));

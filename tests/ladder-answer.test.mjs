@@ -20,10 +20,13 @@ import { caseProblems, loadLadder } from '../lab/lib/ladder.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const QUOTA = { 1: 2, 2: 3, 3: 5, 4: 6, 5: 8 };
-const cases = await buildCases();
+// The suite's cases, and every case including the retired ones (defs/_retired.mjs): the quota and
+// the tier table hold for the suite; the proofs run for every definition, retired or not.
+const all = await buildCases({ includeRetired: true });
+const cases = all.filter((item) => !item.metadata.tier.retired);
 const level = (item) => item.metadata.tier.level;
-const generated = cases.filter((item) => level(item) >= 4);
-const folded = cases.filter((item) => item.metadata.tier.origin);
+const generated = all.filter((item) => level(item) >= 4);
+const folded = all.filter((item) => item.metadata.tier.origin);
 
 // ---- quota and tier table ------------------------------------------------------------------
 
@@ -57,8 +60,17 @@ test('every answer is one number, one word or an ISO date', () => {
   }
 });
 
+test('the retired tasks are left out of the suite, each with a reason, and their slugs stay taken', async () => {
+  const retired = all.filter((item) => item.metadata.tier.retired);
+  assert.equal(retired.length, 13);
+  for (const item of retired) assert.match(item.metadata.tier.retired, /^Pilot 1 \(suite 1\.0\.0\): panel mean /, item.case_id);
+  assert.equal(all.length, cases.length + retired.length);
+  const stored = fs.readFileSync(path.join(ROOT, 'datasets', 'ladder-answer', 'cases.jsonl'), 'utf8');
+  for (const item of retired) assert.ok(!stored.includes(`"${item.case_id}"`), `${item.case_id} is still in cases.jsonl`);
+});
+
 test('tier 5 uses at least three different families, tier 4 at least three', () => {
-  const families = (n) => new Set(generated.filter((item) => level(item) === n).map((item) => item.metadata.family));
+  const families = (n) => new Set(cases.filter((item) => level(item) === n).map((item) => item.metadata.family));
   assert.ok(families(5).size >= 3, [...families(5)].join(', '));
   assert.ok(families(4).size >= 3, [...families(4)].join(', '));
 });
@@ -66,7 +78,7 @@ test('tier 5 uses at least three different families, tier 4 at least three', () 
 // ---- generated cases solve again from the stored instance -------------------------------------
 
 test('every generated case re-solves from its metadata to the stored answer, and the question is its rendering', () => {
-  assert.equal(generated.length, 14);
+  assert.equal(generated.length, 27); // 14 from suite 1.0.0 (13 of them retired) and 13 from round 2
   for (const item of generated) {
     const family = FAMILIES[item.metadata.family];
     assert.ok(family, `${item.case_id}: unknown family ${item.metadata.family}`);

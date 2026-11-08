@@ -90,7 +90,7 @@ The ladder suites (`ladder-answer`, `ladder-code`, `ladder-agent`) are built fro
 3. Run `node datasets/<suite>/generate.mjs --write`, then bump `version` in `suite.yaml`. `--check` exits 1 when `cases.jsonl` is not what the definitions give.
 4. Add or update the test in `tests/ladder-<kind>-*.test.mjs`: the reference passes, and a plausible wrong answer does not.
 
-Moving a task keeps its `case_id`; only its tier changes, in a new suite version. A tier must keep the task counts of `configs/ladder.yaml`.
+Moving a task keeps its `case_id`; only its tier changes, in a new suite version, and the definition records `tier.moved: { from, evidence }`. Retiring a task is one line in `datasets/<suite>/defs/_retired.mjs` (slug and reason); its definition and proofs stay, so the `case_id` stays taken. A tier must keep the task counts of `configs/ladder.yaml`.
 
 Done when `node lab validate` and `npm test` pass, and `node lab ladder` prints no ladder problem (it lists them first).
 

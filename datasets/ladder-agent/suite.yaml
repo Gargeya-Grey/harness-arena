@@ -1,5 +1,5 @@
 id: ladder-agent
-version: "1.0.0"
+version: "1.1.0"
 description: >
   The agent tasks of the difficulty ladder (docs/difficulty.md). Each case copies a
   starter project into the run's isolated workdir; the agent edits files and may

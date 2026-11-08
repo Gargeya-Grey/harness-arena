@@ -1,5 +1,5 @@
 id: ladder-answer
-version: "1.0.0"
+version: "2.0.0"
 description: >
   The answer tasks of the difficulty ladder (docs/difficulty.md): problems with one
   exact answer, a number, one word or a date, from easy (under 2 minutes for an

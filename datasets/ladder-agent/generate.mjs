@@ -6,18 +6,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assembleCases, casesText, loadDefinitions, loadLadder } from '../../lab/lib/ladder.mjs';
+import { assembleCases, casesText, loadDefinitions, loadLadder, loadRetired } from '../../lab/lib/ladder.mjs';
 import { generateMain } from '../../lab/lib/ladder-cli.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..', '..');
 
-export async function buildCases() {
+// includeRetired: also the tasks in defs/_retired.mjs (for the tests that prove them).
+export async function buildCases({ includeRetired = false } = {}) {
   const defs = await loadDefinitions(path.join(HERE, 'defs'));
   return assembleCases({
     suiteId: 'ladder-agent',
     defs,
     ladder: loadLadder(ROOT),
+    retired: await loadRetired(path.join(HERE, 'defs')),
+    includeRetired,
     toCase: (def) => {
       for (const part of ['workspaces', 'checks']) {
         if (!fs.existsSync(path.join(HERE, part, def.slug))) throw new Error(`${def.file}: ${part}/${def.slug} not found`);

@@ -9,7 +9,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { ladderStatus } from '../lib/ladder.mjs';
+import { ladderStatus, withinMoveRange } from '../lib/ladder.mjs';
 import { mean } from '../lib/metrics.mjs';
 import { loadYamlFile, paths } from '../lib/repo.mjs';
 import { buildState, countedRows } from '../lib/state.mjs';
@@ -34,7 +34,7 @@ export function verdictFor({ mean: value, tier, minutes, ladder }) {
   const candidates = ladder.tiers
     .filter((other) => other.level !== tier.level && value >= other.band[0] - EPS && value <= other.band[1] + EPS)
     .sort((a, b) => Math.abs(a.level - tier.level) - Math.abs(b.level - tier.level) || a.level - b.level);
-  const target = candidates.find((other) => typeof minutes === 'number' && minutes >= other.minutes[0] / 4 && minutes <= other.minutes[1] * 4);
+  const target = candidates.find((other) => withinMoveRange(minutes, other));
   return target ? { verdict: `move to ${target.name}`, move_to: target.level, distance } : { verdict: 'rework', move_to: null, distance };
 }
 

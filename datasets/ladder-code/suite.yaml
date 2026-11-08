@@ -1,5 +1,5 @@
 id: ladder-code
-version: "1.0.0"
+version: "2.0.0"
 description: >
   The code tasks of the difficulty ladder (docs/difficulty.md): one JavaScript
   function per case, run against hidden tests in a sandboxed Node process, from

@@ -57,7 +57,8 @@ const ORIGINS = {
 };
 
 const slugs = (await loadDefinitions(CORE_DEFS)).map((def) => def.slug);
-const cases = (await buildCases()).filter((item) => slugs.includes(item.case_id.slice('ladder-code-'.length)));
+// Every core definition, also the tier-4 ones retired in suite 2.0.0 (defs/_retired.mjs): their proofs keep running.
+const cases = (await buildCases({ includeRetired: true })).filter((item) => slugs.includes(item.case_id.slice('ladder-code-'.length)));
 const efficiency = cases.filter((item) => item.tags.includes('efficiency'));
 const tierOf = (item) => item.metadata.tier.level;
 const isHuge = (label) => label.startsWith('huge');

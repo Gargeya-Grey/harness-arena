@@ -45,7 +45,7 @@ const METHODS = {
 };
 
 const before = process.cpuUsage();
-const cases = await buildCases();
+const cases = await buildCases({ includeRetired: true }); // every definition, retired ones too
 const used = process.cpuUsage(before);
 const generationCpuMs = (used.user + used.system) / 1000;
 const level = (item) => item.metadata.tier.level;
@@ -145,6 +145,9 @@ test('each case has at least three shortcuts, at least two and most of them wron
 
 // ---- the old definitions are unchanged --------------------------------------------------------------
 
+// Before suite 2.0.0 this compared all 24 old cases with the 1.0.0 cases.jsonl (it passed at a00a418).
+// From 2.0.0 the file holds the 11 old cases that stayed and the 13 round-2 cases; 13 old cases are
+// retired (defs/_retired.mjs) and still build, unchanged, from their definitions.
 test('the cases of the old definitions are byte for byte what cases.jsonl stores', () => {
   const stored = fs.readFileSync(path.join(ROOT, 'datasets', 'ladder-answer', 'cases.jsonl'), 'utf8').split('\n').filter(Boolean);
   assert.equal(stored.length, 24);
