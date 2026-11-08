@@ -13,6 +13,13 @@ import * as congsq from './_congsq.mjs';
 import * as seqdp from './_seqdp.mjs';
 import * as tour from './_tour.mjs';
 import * as cal from './_cal.mjs';
+import * as optJobs from './_opt-jobs.mjs';
+import * as optPack from './_opt-pack.mjs';
+import * as optCover from './_opt-cover.mjs';
+import * as optBinpack from './_opt-binpack.mjs';
+import * as optSteiner from './_opt-steiner.mjs';
+import * as optEdit from './_opt-edit.mjs';
+import * as optRcpsp from './_opt-rcpsp.mjs';
 
 const listFamily = (module) => ({
   render: module.render,
@@ -43,6 +50,14 @@ export const FAMILIES = {
   seqdp: listFamily(seqdp),
   tour: listFamily(tour),
   cal: listFamily(cal),
+  // Round 2: exact optimisation of one stated instance (see defs/round2/ and _opt-*.mjs).
+  jobs: listFamily(optJobs),
+  pack: listFamily(optPack),
+  cover: listFamily(optCover),
+  binpack: listFamily(optBinpack),
+  steiner: listFamily(optSteiner),
+  edit: listFamily(optEdit),
+  rcpsp: listFamily(optRcpsp),
 };
 
 /** A ladder definition for one generated instance; the answer comes from the family's exact method. */
