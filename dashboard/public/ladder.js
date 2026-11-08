@@ -68,6 +68,16 @@ export function pairOf(ladder, a, b) {
   return { ...found, a_id: a, b_id: b, a_label: found.b_label, b_label: found.a_label, a_only: found.b_only, b_only: found.a_only, mean_diff: isNum(found.mean_diff) ? -found.mean_diff : found.mean_diff };
 }
 
+/**
+ * A pair compares cleanly only when both setups kept the user's own setup out to the same proved degree.
+ * Otherwise a gap between them may come from that setup, not from the model or the harness.
+ */
+export function cleanPair(ladder, pair) {
+  const stateOf = (id) => configsOf(ladder).find((config) => config.config_id === id)?.setup_state ?? 'unknown';
+  const state = stateOf(pair.a);
+  return state === stateOf(pair.b) && state !== 'leaked' && state !== 'unknown';
+}
+
 const separates = (task, a, b) => {
   const x = task.per_config?.find((entry) => entry.config_id === a);
   const y = task.per_config?.find((entry) => entry.config_id === b);
@@ -80,9 +90,13 @@ function pairsSentence(ladder) {
   const pairs = ladder.pairs || [];
   if (configs.length < 2) return 'No pair exists: only one setup has results, so nothing can be compared.';
   if (!pairs.length) return 'No two setups ran a task in common, so the runs cannot compare any pair.';
-  const apart = pairs.filter((pair) => pair.sign_p < ALPHA);
+  const differ = pairs.filter((pair) => pair.sign_p < ALPHA);
+  const apart = differ.filter((pair) => cleanPair(ladder, pair));
+  const unclean = differ.length - apart.length;
+  const caveat = unclean ? ` ${unclean} more ${unclean === 1 ? 'pair differs, but its setups were' : 'pairs differ, but their setups were'} not kept out of your own setup equally, so the difference may come from that.` : '';
   const total = `${apart.length} of ${plural(pairs.length, 'pair')} of setups`;
-  if (!apart.length) return `The runs cannot tell any of the ${plural(pairs.length, 'pair')} of setups apart (sign test, p below ${ALPHA}).`;
+  if (!differ.length) return `The runs cannot tell any of the ${plural(pairs.length, 'pair')} of setups apart (sign test, p below ${ALPHA}).`;
+  if (!apart.length) return `The runs cannot cleanly tell any of the ${plural(pairs.length, 'pair')} of setups apart (sign test, p below ${ALPHA}).${caveat}`;
   const common = [...new Set(apart.flatMap((pair) => [pair.a, pair.b]))].filter((id) => apart.every((pair) => pair.a === id || pair.b === id));
   let who;
   if (apart.length > 1 && common.length) who = `All ${apart.length} include ${labelOf(ladder, common[0])}.`;
@@ -90,7 +104,7 @@ function pairsSentence(ladder) {
     const shown = apart.slice(0, 3).map((pair) => `${pair.a_label} and ${pair.b_label}`);
     who = `They are ${shown.join('; ')}${apart.length > 3 ? `; and ${apart.length - 3} more` : ''}.`;
   }
-  return `The runs can tell ${total} apart (sign test, p below ${ALPHA}). ${who}`;
+  return `The runs can tell ${total} apart (sign test, p below ${ALPHA}). ${who}${caveat}`;
 }
 
 /** The sentence the page opens with and the lines under it; null when the ladder holds no task. */
@@ -187,7 +201,7 @@ export function renderSetups(ladder) {
 }
 
 /* ---------- Pairs ---------- */
-const readingText = (pair) => (pair.sign_p < ALPHA ? 'Can tell apart' : 'Cannot tell apart');
+const readingText = (pair, clean) => (pair.sign_p >= ALPHA ? 'Cannot tell apart' : clean ? 'Can tell apart' : 'Differ, not a clean comparison');
 
 export function renderPairs(ladder, ui = {}) {
   const pairs = ladder?.pairs || [];
@@ -196,7 +210,7 @@ export function renderPairs(ladder, ui = {}) {
   if (!pairs.length) return String(html`<p class="ld-quiet" data-no-pair>No two setups ran a task in common, so the runs cannot compare any pair.</p>`);
   const chosen = ui.a && ui.b ? pairOf(ladder, ui.a, ui.b) : null;
   const on = (pair) => chosen && ((pair.a === ui.a && pair.b === ui.b) || (pair.a === ui.b && pair.b === ui.a));
-  return String(html`<table class="ld-tbl ld-pairs"><thead><tr><th scope="col" class="c-pair">Pair</th><th scope="col">Tasks both ran</th><th scope="col">Only the first solved</th><th scope="col">Only the second solved</th><th scope="col">Sign test p</th><th scope="col">What the runs show</th><th scope="col" class="c-act"><span class="sr">Show the tasks</span></th></tr></thead><tbody>${pairs.map((pair) => html`<tr data-pair="${pair.a}|${pair.b}"${on(pair) ? html` class="is-on"` : ''}><th scope="row" class="c-pair"><span class="ld-vs"><span class="lt" aria-hidden="true">${letters.get(pair.a)}</span><span class="who-name">${pair.a_label}</span></span><span class="ld-vs"><span class="lt" aria-hidden="true">${letters.get(pair.b)}</span><span class="who-name">${pair.b_label}</span></span></th><td data-label="Tasks both ran" class="num">${pair.shared}</td><td data-label="Only the first solved" class="num">${pair.a_only}</td><td data-label="Only the second solved" class="num">${pair.b_only}</td><td data-label="Sign test p" class="num">${pText(pair.sign_p)}</td><td data-label="What the runs show"><span class="ld-read${pair.sign_p < ALPHA ? ' is-apart' : ''}">${readingText(pair)}</span></td><td class="c-act"><button type="button" class="btn quiet small" data-act="pair-row" data-a="${pair.a}" data-b="${pair.b}" data-fk="pair:${pair.a}|${pair.b}">Show tasks</button></td></tr>`)}</tbody></table>`);
+  return String(html`<table class="ld-tbl ld-pairs"><thead><tr><th scope="col" class="c-pair">Pair</th><th scope="col">Tasks both ran</th><th scope="col">Only the first solved</th><th scope="col">Only the second solved</th><th scope="col">Sign test p</th><th scope="col">What the runs show</th><th scope="col" class="c-act"><span class="sr">Show the tasks</span></th></tr></thead><tbody>${pairs.map((pair) => html`<tr data-pair="${pair.a}|${pair.b}"${on(pair) ? html` class="is-on"` : ''}><th scope="row" class="c-pair"><span class="ld-vs"><span class="lt" aria-hidden="true">${letters.get(pair.a)}</span><span class="who-name">${pair.a_label}</span></span><span class="ld-vs"><span class="lt" aria-hidden="true">${letters.get(pair.b)}</span><span class="who-name">${pair.b_label}</span></span></th><td data-label="Tasks both ran" class="num">${pair.shared}</td><td data-label="Only the first solved" class="num">${pair.a_only}</td><td data-label="Only the second solved" class="num">${pair.b_only}</td><td data-label="Sign test p" class="num">${pText(pair.sign_p)}</td><td data-label="What the runs show"><span class="ld-read${pair.sign_p < ALPHA && cleanPair(ladder, pair) ? ' is-apart' : ''}">${readingText(pair, cleanPair(ladder, pair))}</span></td><td class="c-act"><button type="button" class="btn quiet small" data-act="pair-row" data-a="${pair.a}" data-b="${pair.b}" data-fk="pair:${pair.a}|${pair.b}">Show tasks</button></td></tr>`)}</tbody></table>`);
 }
 
 /** Which letter is which setup, above the task table, where the columns show only the letter. */
@@ -216,7 +230,7 @@ export function renderPairCard(ladder, ui = {}) {
   if (!pair) return String(html`<div class="ld-card" data-pair-card><p class="ld-say-sm">${a} and ${b} ran no task in common, so the runs cannot compare them.</p></div>`);
   const apart = pair.sign_p < ALPHA;
   const gap = pair.a_only + pair.b_only;
-  return String(html`<div class="ld-card" data-pair-card><p class="ld-say-sm">${a} solved <b class="num">${pair.a_only}</b> ${pair.a_only === 1 ? 'task' : 'tasks'} that ${b} did not. ${b} solved <b class="num">${pair.b_only}</b> that ${a} did not.</p><p class="ld-more">They both ran ${plural(pair.shared, 'task')}. ${apart ? html`The runs can tell them apart: sign test p ${pText(pair.sign_p)}.` : html`The runs cannot tell them apart: sign test p ${pText(pair.sign_p)}. A split at least this uneven could be chance.`}${isNum(pair.mean_diff) ? ` Mean score gap over those tasks: ${pair.mean_diff > 0 ? '+' : ''}${fixed(pair.mean_diff)} (${a} minus ${b}).` : ''}</p>${gap ? html`<button type="button" class="switch" role="switch" aria-checked="${ui.split ? 'true' : 'false'}" data-act="split" data-fk="split"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>Show only the ${gap} ${gap === 1 ? 'task' : 'tasks'} that tell them apart</button>` : ''}</div>`);
+  return String(html`<div class="ld-card" data-pair-card><p class="ld-say-sm">${a} solved <b class="num">${pair.a_only}</b> ${pair.a_only === 1 ? 'task' : 'tasks'} that ${b} did not. ${b} solved <b class="num">${pair.b_only}</b> that ${a} did not.</p><p class="ld-more">They both ran ${plural(pair.shared, 'task')}. ${apart && cleanPair(ladder, pair) ? html`The runs can tell them apart: sign test p ${pText(pair.sign_p)}.` : apart ? html`Their scores differ (sign test p ${pText(pair.sign_p)}), but the two setups were not kept out of your own setup equally, so the difference may come from that.` : html`The runs cannot tell them apart: sign test p ${pText(pair.sign_p)}. A split at least this uneven could be chance.`}${isNum(pair.mean_diff) ? ` Mean score gap over those tasks: ${pair.mean_diff > 0 ? '+' : ''}${fixed(pair.mean_diff)} (${a} minus ${b}).` : ''}</p>${gap ? html`<button type="button" class="switch" role="switch" aria-checked="${ui.split ? 'true' : 'false'}" data-act="split" data-fk="split"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>Show only the ${gap} ${gap === 1 ? 'task' : 'tasks'} that tell them apart</button>` : ''}</div>`);
 }
 
 /* ---------- Tasks ---------- */

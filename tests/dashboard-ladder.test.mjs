@@ -37,8 +37,27 @@ test('the fixture opens with the answer sentence, built from the server counts',
   ]);
 });
 
+test('a gap between setups that were not kept out equally is never read as telling them apart', () => {
+  const ladder = clone().ladder;
+  for (const config of ladder.configs) config.setup_state = 'kept out';
+  ladder.pairs = ladder.pairs.map((pair) => ({ ...pair, sign_p: 0.5 }));
+  const [first, second] = ladder.pairs;
+  Object.assign(first, { sign_p: 0.001 });
+  Object.assign(second, { sign_p: 0.002 });
+  ladder.configs.find((config) => config.config_id === second.b).setup_state = 'partly kept out';
+  assert.match(headline(ladder).pairs, /^The runs can tell 1 of 6 pairs of setups apart \(sign test, p below 0\.05\)\. They are .+ and .+\. 1 more pair differs, but its setups were not kept out of your own setup equally, so the difference may come from that\.$/);
+  const rows = text(renderPairs(ladder));
+  assert.equal((rows.match(/Differ, not a clean comparison/g) || []).length, 1);
+  assert.equal((rows.match(/Can tell apart/g) || []).length, 1);
+  assert.match(text(renderPairCard(ladder, { ...defaultUi(), a: second.a, b: second.b })), /Their scores differ \(sign test p < 0\.01\), but the two setups were not kept out of your own setup equally/);
+
+  ladder.configs.find((config) => config.config_id === first.a).setup_state = 'leaked';
+  assert.match(headline(ladder).pairs, /^The runs cannot cleanly tell any of the 6 pairs of setups apart/, 'a leaked setup is not clean, even next to another of the same state');
+});
+
 test('the answer names the pairs the sign test separates, and the setup they share', () => {
   const ladder = clone().ladder;
+  for (const config of ladder.configs) config.setup_state = 'kept out';
   ladder.pairs = ladder.pairs.map((pair) => ({ ...pair, sign_p: 0.5 }));
   const [first, second] = ladder.pairs;
   Object.assign(first, { a_only: 28, b_only: 0, sign_p: 7.45e-9 });
@@ -307,6 +326,7 @@ test('the page shows the same numbers as node lab ladder for the same suite vers
 
 test('a pair row marks the pair that tells two setups apart', () => {
   const ladder = clone().ladder;
+  for (const config of ladder.configs) config.setup_state = 'kept out';
   ladder.pairs[0].sign_p = 0.0001;
   const markup = renderPairs(ladder, { ...defaultUi(), a: ladder.pairs[1].a, b: ladder.pairs[1].b });
   assert.equal((markup.match(/Can tell apart/g) || []).length, 1);
