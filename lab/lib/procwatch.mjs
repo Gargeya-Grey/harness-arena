@@ -32,6 +32,7 @@ public static class LabJob {
   [DllImport("kernel32.dll", SetLastError = true)] public static extern bool TerminateJobObject(IntPtr job, uint exitCode);
   [DllImport("kernel32.dll", SetLastError = true)] public static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
   [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+  [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);
   [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr handle);
   public static IntPtr Create() {
     IntPtr job = CreateJobObject(IntPtr.Zero, null);
@@ -51,8 +52,11 @@ public static class LabJob {
     if (process == IntPtr.Zero) return "fail OpenProcess " + Marshal.GetLastWin32Error();
     bool ok = AssignProcessToJobObject(job, process);
     int error = Marshal.GetLastWin32Error();
+    // From this handle, so the start time belongs to this process even if its id is reused later. 0 means unknown.
+    long created = 0, exited, kernel, user;
+    if (ok && !GetProcessTimes(process, out created, out exited, out kernel, out user)) created = 0;
     CloseHandle(process);
-    return ok ? "ok" : "fail AssignProcessToJobObject " + error;
+    return ok ? "ok " + created : "fail AssignProcessToJobObject " + error;
   }
   public static bool InJob(IntPtr job, uint pid) {
     IntPtr process = OpenProcess(0x1000, false, pid);
@@ -87,16 +91,15 @@ while ($null -ne ($request = [Console]::In.ReadLine())) {
     if ($parts[0] -eq 'assign') {
       $id = [uint32]$parts[1]
       $answer = [LabJob]::Assign($job, $id)
-      if ($answer -eq 'ok') {
+      if ($answer.StartsWith('ok ')) {
+        $started = $answer.Substring(3)
+        $answer = 'ok'
         # A child the harness started before it was in the job is outside it. Windows
         # itself starts System32\conhost.exe for every console program; that one is not.
         $console = Join-Path $env:SystemRoot 'System32\conhost.exe'
-        $outside = @(Get-CimInstance -ClassName Win32_Process -Filter "ParentProcessId = $id" | Where-Object { $_.ExecutablePath -ne $console -and -not [LabJob]::InJob($job, [uint32]$_.ProcessId) } | ForEach-Object { "$($_.Name):$($_.ProcessId):$($_.CreationDate.ToUniversalTime().Ticks)" })
-        if ($outside.Count) {
-          $self = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $id"
-          $started = if ($self) { $self.CreationDate.ToUniversalTime().Ticks } else { 0 }
-          $answer = "children $started " + ($outside -join ',')
-        }
+        $outside = @(Get-CimInstance -ClassName Win32_Process -Filter "ParentProcessId = $id" | Where-Object { $_.ExecutablePath -ne $console -and -not [LabJob]::InJob($job, [uint32]$_.ProcessId) } | ForEach-Object { "$($_.Name):$($_.ProcessId):$($_.CreationDate.ToFileTimeUtc())" })
+        # A file name cannot hold a | sign.
+        if ($outside.Count) { $answer = "children $started " + ($outside -join '|') }
       }
     } elseif ($parts[0] -eq 'list') {
       $names = foreach ($p in [LabJob]::Pids($job)) { $n = (Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName; "$($n):$p" }
@@ -175,15 +178,16 @@ function lineHelper(command, args) {
 }
 
 /**
- * The real children in the helper's answer `children <start ticks> <name:pid:start ticks>,...`, as
- * name:pid. Windows keeps a parent id after that parent has ended, and reuses ids: a process older
- * than the new process only has its number. A start of 0 means unknown, and then every child counts.
+ * The real children in the helper's answer `children <start> <name:pid:start>|...`, as name:pid.
+ * Windows keeps a parent id after that parent has ended, and reuses ids: a process older than the
+ * new process only has its number. A start of 0 means unknown, and then every child counts.
  */
 export function escapedChildren(answer) {
-  const [, started, list] = /^children (\d+) (.*)$/.exec(answer);
-  return list.split(',').flatMap((item) => {
+  const match = /^children (\d+) ([^|]+:\d+:\d+(?:\|[^|]+:\d+:\d+)*)$/.exec(answer);
+  if (!match) throw new Error(`the process watch gave an answer it cannot read (${answer.slice(0, 200)})`);
+  return match[2].split('|').flatMap((item) => {
     const cut = item.lastIndexOf(':');
-    return BigInt(item.slice(cut + 1)) >= BigInt(started) ? [item.slice(0, cut)] : [];
+    return BigInt(item.slice(cut + 1)) >= BigInt(match[1]) ? [item.slice(0, cut)] : [];
   });
 }
 
@@ -205,12 +209,16 @@ export async function jobWatch({ settleMs = 300 } = {}) {
   return {
     assign(pid) {
       const work = (async () => {
-        const answer = await helper.ask(`assign ${pid}`).catch((error) => `fail ${error.message}`);
-        if (answer === 'ok') return;
-        const children = answer.startsWith('children ') ? escapedChildren(answer) : null;
-        if (children?.length === 0) return;
-        failure = failure || (children ? `the harness started a process before the job held it (${children.join(',')})` : `a harness process could not be put in the job (${answer.slice(5)})`);
-        throw new Error(failure);
+        try {
+          const answer = await helper.ask(`assign ${pid}`).catch((error) => `fail ${error.message}`);
+          if (answer === 'ok') return;
+          const children = answer.startsWith('children ') ? escapedChildren(answer) : null;
+          if (children?.length === 0) return;
+          throw new Error(children ? `the harness started a process before the job held it (${children.join(',')})` : `a harness process could not be put in the job (${answer.slice(5)})`);
+        } catch (error) {
+          failure = failure || error.message;
+          throw new Error(failure);
+        }
       })();
       pending.add(work);
       work.catch(() => {}).finally(() => pending.delete(work));
