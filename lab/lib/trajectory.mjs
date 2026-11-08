@@ -100,10 +100,13 @@ function classifyCommand(command) {
   const segments = segmentsOf(command);
   if (segments.some((segment) => runnerAtStart(segment.text))) return 'test';
   const first = segments.find((segment) => !PREFIX_VERBS.has(verbOf(segment.text)));
-  if (!first) return 'shell';
+  if (!first || WRITES_FILE.test(first.text.replace(/"[^"]*"|'[^']*'/g, ''))) return 'shell';
   const verb = verbOf(first.text);
   return READ_VERBS.has(verb) || (verb === 'sed' && SED_PRINT.test(first.text.replace(new RegExp(`^${ENV_PREFIX}`), ''))) ? 'read' : 'shell';
 }
+
+// `cat > a << EOF` writes a file. 2>/dev/null and 2>&1 do not.
+const WRITES_FILE = /(?:^|[^0-9&>])>{1,2}(?!&)/;
 
 const verbOf = (segment) => (segment.replace(new RegExp(`^${ENV_PREFIX}`), '').split(/\s+/)[0] ?? '').toLowerCase();
 
@@ -114,8 +117,10 @@ function testStatusHidden(command) {
   return last >= 0 && ['|', '||', ';'].includes(segments[last].after);
 }
 
-// The shell said it did not run the command: a parse error, or no such command.
-const DID_NOT_RUN = /ParserError|not a valid statement separator|syntax error near unexpected token|is not recognized as (?:the name of a cmdlet|an internal or external command)|command not found/i;
+// The shell said the test did not run: it refused the whole command, or did not find the runner. A missing pipe target
+// ("'tail' is not recognized") is not this: the test ran, and only its output was lost.
+const RUNNER_WORDS = 'node|npm|npx|yarn|pnpm|bun|pytest|python3?|jest|vitest|mocha|cargo|go|dotnet|deno|make';
+const DID_NOT_RUN = new RegExp(`ParserError|not a valid statement separator|syntax error near unexpected token|'(?:${RUNNER_WORDS})' is not recognized|The term '(?:${RUNNER_WORDS})' is not recognized|\\b(?:${RUNNER_WORDS}): (?:command )?not found`, 'i');
 
 export function toolKind(name, command = null) {
   const tool = String(name ?? '').toLowerCase();

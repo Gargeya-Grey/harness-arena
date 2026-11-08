@@ -123,6 +123,14 @@ test('a test runner counts only in command position; echo and a shell parse erro
   const error = bash('p', 'cd <workdir> && node --test', 'At line:1 char:22\r\nThe token && is not a valid statement separator.\r\n    + FullyQualifiedErrorId : InvalidEndOfLine\r\n    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException', true);
   assert.deepEqual(traceSteps('claude-code', error), [step(0, 'shell', false, { command: 'cd <workdir> && node --test' })]);
   assert.deepEqual(traceSteps('claude-code', bash('r', 'node --test', 'ℹ pass 2\nℹ fail 1', true)).map((item) => [item.kind, item.ok]), [['test', false]], 'a test that ran and failed is still a test run');
+  // The test ran and its output went to a pipe target that does not exist: a test run with a result nobody can read.
+  const noTail = "tail : The term 'tail' is not recognized as the name of a cmdlet, function, script file, or operable program.";
+  assert.deepEqual(traceSteps('claude-code', bash('t', 'node --test 2>&1 | tail -40', noTail, true)), [step(0, 'test', null, { command: 'node --test 2>&1 | tail -40' })]);
+  assert.deepEqual(traceSteps('claude-code', bash('t', 'node --test 2>&1 | tail -n 12', "'tail' is not recognized as an internal or external command,\r\noperable program or batch file.", true)).map((item) => [item.kind, item.ok]), [['test', null]]);
+  // The runner itself was not found: no test ran.
+  for (const output of ["'node' is not recognized as an internal or external command,", "node : The term 'node' is not recognized as the name of a cmdlet", 'bash: node: command not found']) {
+    assert.deepEqual(traceSteps('claude-code', bash('n', 'node --test', output, true)).map((item) => [item.kind, item.ok]), [['shell', false]], output);
+  }
   assert.equal(traceSteps('opencode', eventsOf('opencode')).filter((item) => item.kind === 'test').length, 2, 'the OpenCode sample: two test runs, not three');
 });
 
@@ -131,7 +139,7 @@ test('a shell call that reads files is a read step; a test in the chain wins; th
     ['ls -la', 'read'], ['cat a.mjs', 'read'], ['head -n 5 a.mjs', 'read'], ['tail a.log', 'read'], ['less a.log', 'read'], ['type a.txt', 'read'], ['dir', 'read'],
     ['find . -name x', 'read'], ['grep -n x a.mjs', 'read'], ['rg foo src', 'read'], ['sed -n 1,5p a.mjs', 'read'], ['Get-Content a.mjs', 'read'],
     ['Get-ChildItem -Recurse', 'read'], ['Select-String -Path a.mjs -Pattern x', 'read'], ['cd x && head -n 5 a && tail b', 'read'],
-    ['sed -i s/a/b/ a.mjs', 'shell'], ['mkdir x', 'shell'], ['echo hi && cat a.mjs', 'shell'], ['cd x', 'shell'], ['', 'shell'], ['cat a.mjs && node --test', 'test'],
+    ['sed -i s/a/b/ a.mjs', 'shell'], ['mkdir x', 'shell'], ["cat > /tmp/t1.mjs << 'EOF'\nimport x from 'y'\nEOF", 'shell'], ['cat a.mjs >> b.txt', 'shell'], ['ls 2>/dev/null', 'read'], ['cat a.mjs 2>&1 | head', 'read'], ['echo hi && cat a.mjs', 'shell'], ['cd x', 'shell'], ['', 'shell'], ['cat a.mjs && node --test', 'test'],
   ];
   for (const [command, kind] of cases) assert.equal(toolKind('Bash', command), kind, command);
   assert.equal(readShareBeforeFirstEdit(traceSteps('claude-code', eventsOf('claude-code'))), 1, 'the ls and cat call is the only read, and it comes before the edit');
