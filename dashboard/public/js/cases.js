@@ -14,6 +14,11 @@ function caseDiffers(caseId, ids) {
   return new Set(ids.map(sig)).size > 1;
 }
 
+// Does any shown setup have a scored try on any case? Without one, "the setups agree" says nothing.
+export function anyScored(caseIds, ids) {
+  return caseIds.some((caseId) => ids.some((id) => cellObs(caseId, id).some((o) => outcome(o).kind === 'pass' || outcome(o).kind === 'fail')));
+}
+
 const markHtml = (o, who, caseText, total) => {
   const out = outcome(o);
   const label = `${who}, ${caseText}, try ${o.repeat + 1}${total > 1 ? ` of ${total}` : ''}: ${out.text}`;
@@ -29,15 +34,17 @@ export function renderCases() {
   const setups = shownSetups();
   const ids = setups.map((s) => s.id);
   const multi = setups.length > 1;
+  const scored = anyScored(c.cases, ids);
+  // Without a score no case can differ, so the filter and the agreement line have nothing to say.
   const differing = multi ? c.cases.filter((id) => caseDiffers(id, ids)) : c.cases;
-  const only = multi && onlyOn();
+  const only = multi && scored && onlyOn();
   const shown = only ? differing : c.cases;
   const total = repeatsOf(c);
-  toggle.hidden = !multi;
+  toggle.hidden = !multi || !scored;
   toggle.setAttribute('aria-checked', String(only));
   note.textContent = multi ? (only ? `${differing.length} of ${plural(c.cases.length, 'case')} differ` : plural(c.cases.length, 'case')) : plural(c.cases.length, 'case');
   if (!shown.length) {
-    setHtml(host, html`<p class="quiet-line">The setups agree on every case. <button type="button" class="link-btn" data-act="only" data-fk="only-all">Show all cases</button></p>`);
+    setHtml(host, scored ? html`<p class="quiet-line">The setups agree on every case. <button type="button" class="link-btn" data-act="only" data-fk="only-all">Show all cases</button></p>` : html`<p class="quiet-line">This test has no cases.</p>`);
     host.classList.add('is-empty');
     return;
   }

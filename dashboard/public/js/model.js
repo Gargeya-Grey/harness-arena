@@ -45,6 +45,9 @@ export function setData(data) {
 export const contexts = () => (S.data ? S.data.contexts : []);
 export const ctx = () => contexts().find((c) => c.key === S.ctxKey) || null;
 export const cfgOf = (id) => (S.data && S.data.configs ? S.data.configs[id] : null) || null;
+// What a setup kept out of the harness's own setup: loaded, kept out, partly kept out, leaked or unknown.
+// A state from before setup_state existed has only user_config.
+export const setupOf = (cfg) => cfg.setup_state || (cfg.user_config === 'isolated' ? 'kept out' : 'loaded');
 export const selectedCfgs = () => S.sel.map(cfgOf).filter(Boolean);
 // The short letter of a shown setup: A for the first row of the table. Empty when not shown.
 export const letterOf = (id) => {
@@ -96,6 +99,8 @@ export function chartNames(cfgs) {
     (c) => `${base(c)} · ${c.harness.name}`,
     (c) => `${base(c)} · ${c.harness.name} ${c.harness.version}`,
     (c) => `${base(c)} · ${c.harness.name} ${c.harness.version} · ${c.effort || 'default'}`,
+    // Two setups that differ only in what the user setup did (kept out against leaked) need it in the name.
+    (c) => `${base(c)} · ${c.harness.name} ${c.harness.version} · ${c.effort || 'default'} · user setup ${setupOf(c)}`,
   ];
   const level = new Map(cfgs.map((c) => [c.id, 0]));
   for (let pass = 0; pass < steps.length; pass += 1) {
@@ -129,7 +134,7 @@ export function comparison(cfgs) {
   if (differs((c) => `${c.harness.name}@${c.harness.version}`)) axes.push('harness');
   if (differs((c) => c.effort ?? '')) axes.push('effort');
   if (differs(decodingOf)) axes.push('decoding');
-  if (differs((c) => c.user_config || 'loaded')) axes.push('setup');
+  if (differs((c) => c.setup_state || c.user_config || 'loaded')) axes.push('setup');
   if (axes.length === 0) return { mode: 'replicate', axes };
   if (axes.length === 1) return { mode: 'controlled', axes };
   return { mode: 'descriptive', axes };
@@ -140,7 +145,8 @@ export function setupsOf(ids, c = ctx()) {
   const cfgs = ids.map(cfgOf).filter(Boolean);
   const names = chartNames(cfgs);
   const byCfg = (index.get(c && c.key) || { byCfg: new Map() }).byCfg;
-  return cfgs.map((cfg) => ({ id: cfg.id, cfg, name: names.get(cfg.id), facts: facts(aggOf(cfg.id, c)), errorReason: errorReason(byCfg.get(cfg.id) || []) }));
+  // Answers stored with no score count for nothing; `unscoredAnswers` lets the page say how many there are.
+  return cfgs.map((cfg) => ({ id: cfg.id, cfg, name: names.get(cfg.id), facts: { ...facts(aggOf(cfg.id, c)), unscoredAnswers: (c && c.unscored_answers && c.unscored_answers[cfg.id]) || 0 }, errorReason: errorReason(byCfg.get(cfg.id) || []) }));
 }
 export const shownSetups = () => setupsOf(S.sel);
 
@@ -196,7 +202,12 @@ export function chooseContext(key, wanted = null) {
     return;
   }
   const valid = new Set(c.config_ids);
-  const sel = (wanted || []).filter((id, i, arr) => valid.has(id) && arr.indexOf(id) === i).slice(0, MAX_SHOWN);
+  // A saved view or an old link can name the id a setup had before its user-setup state split it
+  // (config.legacy_id). It shows every setup of this test that had that id: the clean setup keeps the
+  // old id, so a name that is still valid can mean its leaked sibling too. A view saved after the split
+  // that names the kept out setup therefore shows the leaked one beside it, which is the safer error.
+  const named = (wanted || []).flatMap((id) => c.config_ids.filter((other) => other === id || cfgOf(other)?.legacy_id === id));
+  const sel = named.filter((id, i, arr) => arr.indexOf(id) === i).slice(0, MAX_SHOWN);
   S.custom = sel.length > 0;
   S.sel = S.custom ? sel : defaultSel(c);
 }
