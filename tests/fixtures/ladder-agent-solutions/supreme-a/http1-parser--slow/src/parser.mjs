@@ -34,7 +34,6 @@ export class RequestParser {
   #bodySize = 0;
   #chunkLeft = 0;
   #out = [];
-  #nextLine = -1;
 
   constructor(options = {}) {
     this.#limits = resolveLimits(options);
@@ -200,8 +199,6 @@ export class RequestParser {
         this.#lineByte(bytes[i]);
         i += 1;
       }
-      // The next 256 KB of input is decoded as text after each message, to look for the next request line.
-      if (this.#state !== state && this.#state === 'start' && i < n) this.#nextLine = Buffer.from(bytes.subarray(i, i + 262144)).toString('latin1').indexOf('\r\n');
     }
     const messages = this.#out;
     this.#out = [];

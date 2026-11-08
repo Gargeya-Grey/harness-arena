@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { loadCheck, runWorkspaceCheckV2 } from '../lab/evaluators/index.mjs';
 import { copyTree, snapshotWorkspace } from '../lab/lib/workspace.mjs';
 import { buildCases } from '../datasets/ladder-agent/generate.mjs';
+import { onlyTiming } from './ladder-agent-timing.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, '..');
@@ -254,6 +255,7 @@ test('a slow solution fails the speed probes and passes the rest', () => {
     assert.equal(run.error, undefined, `${overlay}: the check itself broke: ${run.error}`);
     const names = failed(run.results).map((item) => item.name);
     assert.deepEqual(names.filter((name) => !maybe.includes(name)), fails, `${overlay}: the probes that fail`);
+    for (const item of failed(run.results)) if (maybe.includes(item.name)) assert.ok(onlyTiming(item, checkData.probes[item.name]), `${overlay}: "${item.name}" failed for more than time: ${item.error}`);
     for (const name of fails) assert.ok(names.includes(name), `${overlay}: "${name}" passes`);
     for (const name of fails) assert.ok(Object.hasOwn(checkData.probes, name), `${overlay}: "${name}" is not a probe of ${slug}`);
   }
