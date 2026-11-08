@@ -280,6 +280,7 @@ export function createServer({ root = labRoot(), jobOptions } = {}) {
       if (route === 'GET /api/health') return sendJson(res, 200, { ok: true, root: path.basename(root), version: VERSION, generated_at: isoNow() });
       if (route === 'GET /api/state') return sendJson(res, 200, buildState(root));
       if (route === 'GET /api/artifact') return serveArtifact(req, res, url);
+      if (route === 'GET /api/signal') return sendJson(res, 200, (await import('../lab/lib/signal.mjs')).signalForQuery(root, Object.fromEntries(url.searchParams)));
       if (route === 'GET /api/catalog') return sendJson(res, 200, catalog(root));
       if (route === 'GET /api/jobs') return sendJson(res, 200, jobs.list());
       if (route === 'POST /api/jobs') {
