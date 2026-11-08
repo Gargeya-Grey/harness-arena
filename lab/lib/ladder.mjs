@@ -15,6 +15,9 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadYamlFile, paths } from './repo.mjs';
 import { readJsonl } from './fsutil.mjs';
+import { mean } from './metrics.mjs';
+// state.mjs imports this file for state.ladder; both only call each other's functions at run time.
+import { countedRows } from './state.mjs';
 
 const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
@@ -100,7 +103,7 @@ export async function assembleCases({ suiteId, defs, ladder, toCase, retired = n
 
 export const casesText = (cases) => cases.map((item) => `${JSON.stringify(item)}\n`).join('');
 
-// Calibration rule 3 (docs/difficulty.md): a task may move to a tier whose expert-time range is
+// docs/difficulty.md, Moving a task: a task may carry the label of a tier whose expert-time range is
 // within this factor of the task's own expert time.
 export const MOVE_FACTOR = 4;
 export const withinMoveRange = (minutes, tier) =>
@@ -160,4 +163,370 @@ export function ladderStatus(root) {
     }
   }
   return { ladder, cases, counts, problems };
+}
+
+// ---------------------------------------------------------------------------------------------
+// What the stored scores say about a task and about a pair of configurations. A tier is an estimate
+// label (docs/difficulty.md); nothing here compares a score with a target.
+
+const EPS = 1e-9;
+// A task is failed on every repeat when each score is under this (the cut the dashboard uses for a
+// pass when an evaluator gives no pass flag).
+const FAIL_BELOW = 0.5;
+const round = (value, digits = 3) => (value == null ? null : Number(value.toFixed(digits)));
+
+/** The information classes of a task, most useful first. */
+export const INFORMATION = ['disagree', 'one-config', 'all-solved', 'all-unsolved', 'no-data'];
+
+// A configuration solves a task when its mean over its counted repeats is 1.
+const solvedBy = (entry) => (typeof entry.solved === 'boolean' ? entry.solved : entry.mean != null && entry.mean >= 1 - EPS);
+const meanOf = (entry) => (Array.isArray(entry.scores) && entry.scores.length ? mean(entry.scores) : entry.mean);
+
+/**
+ * What a task can tell about the configurations that ran it. `caseRow` holds per_config, one entry
+ * per configuration that has counted results for the task.
+ *   no-data      no configuration has a counted result
+ *   one-config   one configuration has: nothing to compare, whatever it scored
+ *   all-solved   every configuration solved it
+ *   all-unsolved none solved it (equal partial scores are here too)
+ *   disagree     some solved it and some did not
+ */
+export function taskInformation(caseRow) {
+  const list = Array.isArray(caseRow) ? caseRow : caseRow?.per_config || [];
+  if (!list.length) return 'no-data';
+  if (list.length === 1) return 'one-config';
+  const solved = list.filter(solvedBy).length;
+  if (solved === list.length) return 'all-solved';
+  if (solved === 0) return 'all-unsolved';
+  return 'disagree';
+}
+
+/** Two-sided exact sign test: the chance of a split at least this uneven among n tasks only one side solved, if both were equally likely to win. */
+export function signTestP(a, b) {
+  const n = a + b;
+  if (n === 0) return 1;
+  const k = Math.min(a, b);
+  let term = 0.5 ** n;
+  let tail = 0;
+  for (let i = 0; i <= k; i += 1) {
+    tail += term;
+    term = (term * (n - i)) / (i + 1);
+  }
+  return Math.min(1, 2 * tail);
+}
+
+/**
+ * The evidence two configurations give each other, from the tasks both have counted results for.
+ * `a_only` is the tasks only a solved, `b_only` the tasks only b solved; the other shared tasks
+ * (both solved, or neither) do not separate them. `sign_p` is the exact two-sided sign test on
+ * a_only against b_only. `mean_diff` is the mean over shared tasks of a's task mean minus b's.
+ */
+export function pairEvidence(cases, a, b) {
+  let shared = 0;
+  let aOnly = 0;
+  let bOnly = 0;
+  let diff = 0;
+  for (const item of cases) {
+    const x = item.per_config?.find((entry) => entry.config_id === a);
+    const y = item.per_config?.find((entry) => entry.config_id === b);
+    if (!x || !y) continue;
+    shared += 1;
+    const sx = solvedBy(x);
+    const sy = solvedBy(y);
+    if (sx && !sy) aOnly += 1;
+    else if (sy && !sx) bOnly += 1;
+    diff += meanOf(x) - meanOf(y);
+  }
+  return { shared, a_only: aOnly, b_only: bOnly, sign_p: signTestP(aOnly, bOnly), mean_diff: shared ? round(diff / shared) : null };
+}
+
+/** One config's counted rows grouped by case: Map case_id -> { n, mean, solved, failed, scores }. */
+function taskResults(rows) {
+  const byCase = new Map();
+  for (const row of countedRows(rows, true)) {
+    if (!byCase.has(row.case_id)) byCase.set(row.case_id, []);
+    byCase.get(row.case_id).push(row);
+  }
+  return new Map(
+    [...byCase].map(([id, list]) => {
+      const value = mean(list.map((row) => row.value));
+      const scores = list.map((row) => row.value);
+      return [id, { n: list.length, mean: value, solved: value >= 1 - EPS, failed: scores.every((score) => score < FAIL_BELOW), scores }];
+    }),
+  );
+}
+
+const versionParts = (version) => String(version).split('.').map((part) => (/^\d+$/.test(part) ? Number(part) : part));
+
+/** Dotted versions in order: 1.9.0 before 1.10.0; a non-numeric part compares as text. */
+export function compareVersions(a, b) {
+  const left = versionParts(a);
+  const right = versionParts(b);
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const x = left[index] ?? 0;
+    const y = right[index] ?? 0;
+    if (x === y) continue;
+    if (typeof x === 'number' && typeof y === 'number') return x - y;
+    return String(x).localeCompare(String(y));
+  }
+  return 0;
+}
+
+/**
+ * Keep, per suite, only the counted runs of one suite version: the newest that has counted runs,
+ * or the version named in `chosen` (Map suite id -> version). Runs of other versions are left out,
+ * because a task reworked under the same case_id in a new version is a different measurement.
+ * One suite version that mixes prompt versions, or quality evaluator versions, is refused: the scores
+ * would not be comparable (AGENTS.md invariant 4). With `keepOtherSuites` only that suite is left out,
+ * and its `versions` entry holds the reason in `refused`; without it the whole report is refused.
+ * Returns { rows, versions }; versions lists the suite, version, prompt, run count and runs left out.
+ */
+function selectVersions(observations, contextOf, chosen, keepOtherSuites) {
+  const runs = new Map();
+  for (const row of observations) {
+    if (!runs.has(row.run_id)) {
+      const ctx = contextOf.get(row.context_key);
+      const evaluators = (ctx.evaluators || []).filter((item) => item.dimension === 'quality').map((item) => `${item.id}@${item.version}`).sort().join(' + ');
+      runs.set(row.run_id, { run_id: row.run_id, suite: ctx.suite.id, version: String(ctx.suite.version), prompt: `${ctx.prompt.id}@${ctx.prompt.version}`, evaluators, rows: [] });
+    }
+    runs.get(row.run_id).rows.push(row);
+  }
+  const counted = [...runs.values()].filter((run) => countedRows(run.rows, true).length > 0);
+  const suites = [...new Set([...counted.map((run) => run.suite), ...chosen.keys()])].sort();
+  const keep = new Set();
+  const versions = [];
+  for (const suiteId of suites) {
+    const own = counted.filter((run) => run.suite === suiteId);
+    const newest = [...new Set(own.map((run) => run.version))].sort(compareVersions).pop();
+    const version = chosen.get(suiteId) ?? newest;
+    const used = own.filter((run) => run.version === version);
+    const prompts = [...new Set(used.map((run) => run.prompt))].sort();
+    const evaluators = [...new Set(used.map((run) => run.evaluators))].sort();
+    const refusal = prompts.length > 1
+      ? `${suiteId}@${version} has counted runs with different prompt versions (${prompts.join(', ')}); scores of different prompts are not comparable. Choose the runs with --runs.`
+      : evaluators.length > 1
+        ? `${suiteId}@${version} has counted runs scored with different quality evaluator versions (${evaluators.join(', ')}); scores of different evaluator versions are not comparable. Choose the runs with --runs.`
+        : null;
+    if (refusal && !keepOtherSuites) throw new Error(refusal);
+    if (refusal) {
+      versions.push({ suite: suiteId, version: version ?? null, prompt: null, runs: 0, left_out_runs: own.length, left_out_versions: [], refused: refusal });
+      continue;
+    }
+    used.forEach((run) => keep.add(run.run_id));
+    const other = own.filter((run) => run.version !== version);
+    versions.push({ suite: suiteId, version: version ?? null, prompt: prompts[0] ?? null, runs: used.length, left_out_runs: other.length, left_out_versions: [...new Set(other.map((run) => run.version))].sort(compareVersions) });
+  }
+  return { rows: observations.filter((row) => keep.has(row.run_id)), versions };
+}
+
+/**
+ * The ladder report, from data alone.
+ *   state         { observations, contexts, configs, runs } as buildState returns them
+ *   ladder        loadLadder(root)
+ *   ladderCases   [{ kind, suite, item }] as ladderStatus(root).cases returns them
+ *   suite, runs   optional filters: a ladder suite id (or kind), and run ids
+ *   suiteVersions optional ['<suite>@<version>', ...]: use that version of a suite instead of its newest
+ *   diskVersions  optional Map suite id -> the suite version on disk (suite.yaml).
+ *   frozenCopy    optional (suite id, version) => { cases, sha256 } | null: the frozen copy of an older
+ *                 suite version (datasets/<suite>/versions/<version>/). Tiers, tier sizes and the case set
+ *                 come from the version the scores are from: the suite on disk, or the frozen copy of an
+ *                 older version (`versions[].cases_from` says which). A run stores no case metadata, so an
+ *                 older version without a copy, or with a copy whose hash is not the one its runs recorded,
+ *                 falls back to the suite on disk, and `warnings` says so, one entry per suite.
+ *
+ * A task is solved by a configuration when its mean score over the configuration's counted
+ * repeats is 1. A tier cell holds solved / counted tasks and the mean of those tasks' means.
+ * `tasks` is the tier's size in scope; `counted` is how many of them the configuration has.
+ * A configuration's total mean is the mean over its counted tasks; it only orders the table.
+ * Every case in scope is listed, those no configuration ran too (information `no-data`), with its
+ * information class (taskInformation). `pairs` holds pairEvidence for every two configurations
+ * that share a counted task.
+ *
+ * Per suite, only the counted runs of one suite version are used (selectVersions); `versions` says which.
+ *
+ * Negative discrimination, per pair of configurations that both ran the case:
+ * their abilities are their means over the other tasks both ran. The case is flagged when the pair's
+ * higher-ability configuration scored under 0.5 on every repeat of the case and the other scored 1 on every repeat.
+ */
+export function ladderReport({ state, ladder, ladderCases, suite = null, runs = null, suiteVersions = null, diskVersions = null, frozenCopy = null, keepOtherSuites = false }) {
+  const onDiskScope = ladderCases.filter((entry) => !suite || entry.suite === suite || entry.kind === suite);
+  const kindOf = new Map(onDiskScope.map((entry) => [entry.suite, entry.kind]));
+  const withQuality = new Set((state.contexts || []).filter((ctx) => (ctx.evaluators || []).some((item) => item.dimension === 'quality')).map((ctx) => ctx.key));
+  const runSet = runs ? new Set(runs) : null;
+  const contextOf = new Map((state.contexts || []).map((ctx) => [ctx.key, ctx]));
+  const chosen = new Map();
+  for (const entry of suiteVersions || []) {
+    const at = entry.lastIndexOf('@');
+    if (kindOf.has(entry.slice(0, at))) chosen.set(entry.slice(0, at), entry.slice(at + 1));
+  }
+  const selected = selectVersions(
+    state.observations.filter((row) => row.trusted !== false && kindOf.has(contextOf.get(row.context_key)?.suite?.id) && withQuality.has(row.context_key) && (!runSet || runSet.has(row.run_id))),
+    contextOf,
+    chosen,
+    keepOtherSuites,
+  );
+  const { versions } = selected;
+  // Per suite, the case set and tiers of the version used: the suite on disk, or the frozen copy of
+  // an older version. Without a copy the disk's case set stands, and `warnings` says so.
+  // A copy counts only when it is the content every chosen run of that suite recorded (its hash).
+  const inScope = [];
+  const badCopies = new Map();
+  for (const suiteId of kindOf.keys()) {
+    const used = versions.find((item) => item.suite === suiteId);
+    // Its runs are not comparable, and no case set can be named for them.
+    if (used?.refused) continue;
+    const onDisk = diskVersions?.get(suiteId);
+    let frozen = used?.version != null && onDisk != null && String(onDisk) !== used.version ? frozenCopy?.(suiteId, used.version) ?? null : null;
+    if (frozen) {
+      // From each run, not its context: a context keeps only the first hash of the runs it merges.
+      const suiteOfRun = new Map((state.runs || []).map((run) => [run.run_id, run.suite]));
+      const recorded = new Set(selected.rows.map((row) => suiteOfRun.get(row.run_id)).filter((item) => item?.id === suiteId).map((item) => item.sha256));
+      if ([...recorded].some((sha) => sha !== frozen.sha256)) {
+        badCopies.set(suiteId, frozen.sha256);
+        frozen = null;
+      }
+    }
+    if (used) used.cases_from = frozen ? 'frozen copy' : 'disk';
+    if (frozen) inScope.push(...frozen.cases.map((item) => ({ kind: kindOf.get(suiteId), suite: suiteId, item })));
+    else inScope.push(...onDiskScope.filter((entry) => entry.suite === suiteId));
+  }
+  const caseIds = new Set(inScope.map((entry) => entry.item.case_id));
+  const observations = selected.rows.filter((row) => caseIds.has(row.case_id));
+
+  const rowsByConfig = new Map();
+  for (const row of observations) {
+    if (!rowsByConfig.has(row.config_id)) rowsByConfig.set(row.config_id, []);
+    rowsByConfig.get(row.config_id).push(row);
+  }
+  const results = new Map([...rowsByConfig].map(([id, rows]) => [id, taskResults(rows)]));
+
+  const tiers = ladder.tiers.map((tier) => ({
+    level: tier.level,
+    name: tier.name,
+    minutes: tier.minutes,
+    tasks: inScope.filter((entry) => entry.item.metadata?.tier?.level === tier.level).length,
+  }));
+  const tierOf = new Map(inScope.map((entry) => [entry.item.case_id, entry.item.metadata?.tier?.level]));
+
+  const configs = [...results].map(([id, tasks]) => {
+    const cells = {};
+    const all = [];
+    for (const tier of tiers) {
+      const own = [...tasks].filter(([caseId]) => tierOf.get(caseId) === tier.level).map(([, task]) => task);
+      cells[tier.level] = { tasks: tier.tasks, counted: own.length, solved: own.filter((task) => task.solved).length, mean: round(mean(own.map((task) => task.mean))) };
+      all.push(...own);
+    }
+    const total = { tasks: inScope.length, counted: all.length, solved: all.filter((task) => task.solved).length, mean: round(mean(all.map((task) => task.mean))) };
+    const config = state.configs?.[id];
+    return { config_id: id, label: config?.short_label ?? id, setup_state: config?.setup_state ?? null, tiers: cells, total, _mean: mean(all.map((task) => task.mean)) };
+  });
+  configs.sort((a, b) => (b._mean ?? -1) - (a._mean ?? -1) || a.config_id.localeCompare(b.config_id));
+  for (const config of configs) delete config._mean;
+  // A short label leaves out the harness version, so two configurations can share one. Then only the id tells them apart.
+  const labelUses = new Map();
+  for (const config of configs) labelUses.set(config.label, (labelUses.get(config.label) || 0) + 1);
+  for (const config of configs) if (labelUses.get(config.label) > 1) config.label = config.config_id;
+
+  const cases = inScope
+    .map(({ kind, suite: suiteId, item }) => {
+      const level = item.metadata?.tier?.level;
+      const tier = ladder.byLevel.get(level);
+      const perConfig = [...results]
+        .filter(([, tasks]) => tasks.has(item.case_id))
+        .map(([id, tasks]) => ({ config_id: id, ...tasks.get(item.case_id), mean: round(tasks.get(item.case_id).mean) }));
+      // Negative discrimination: of two configurations, the one with the higher mean on the other tasks
+      // both ran scores under 0.5 on every repeat of this task while the other scores 1 on every repeat.
+      const flags = [];
+      for (const weak of perConfig.filter((entry) => entry.solved)) {
+        for (const strong of perConfig.filter((entry) => entry.failed)) {
+          const weakTasks = results.get(weak.config_id);
+          const strongTasks = results.get(strong.config_id);
+          const shared = [...weakTasks.keys()].filter((id) => id !== item.case_id && strongTasks.has(id));
+          if (!shared.length) continue;
+          const weakMean = mean(shared.map((id) => weakTasks.get(id).mean));
+          const strongMean = mean(shared.map((id) => strongTasks.get(id).mean));
+          if (strongMean > weakMean + EPS) {
+            flags.push({ flag: 'negative discrimination', solved_by: weak.config_id, failed_by: strong.config_id, shared_tasks: shared.length, solved_by_mean: round(weakMean), failed_by_mean: round(strongMean) });
+          }
+        }
+      }
+      return {
+        case_id: item.case_id,
+        suite: suiteId,
+        kind,
+        tier: level ?? null,
+        tier_name: tier?.name ?? null,
+        human_minutes: item.metadata?.tier?.human_minutes ?? null,
+        configs_n: perConfig.length,
+        information: taskInformation({ per_config: perConfig }),
+        flags,
+        per_config: perConfig,
+      };
+    })
+    .sort((a, b) => (a.tier ?? 99) - (b.tier ?? 99) || a.case_id.localeCompare(b.case_id));
+
+  const pairs = [];
+  for (let i = 0; i < configs.length; i += 1) {
+    for (let j = i + 1; j < configs.length; j += 1) {
+      const evidence = pairEvidence(cases, configs[i].config_id, configs[j].config_id);
+      if (evidence.shared) pairs.push({ a: configs[i].config_id, b: configs[j].config_id, a_label: configs[i].label, b_label: configs[j].label, ...evidence });
+    }
+  }
+  const information = Object.fromEntries(INFORMATION.map((name) => [name, cases.filter((entry) => entry.information === name).length]));
+
+  const warnings = [];
+  for (const item of versions) {
+    const onDisk = diskVersions?.get(item.suite);
+    if (!item.runs || item.version == null || onDisk == null || String(onDisk) === item.version || item.cases_from === 'frozen copy') continue;
+    warnings.push({
+      suite: item.suite,
+      scored_version: item.version,
+      disk_version: String(onDisk),
+      tier_source: 'disk',
+      message: `${item.suite}: scores are from suite version ${item.version}, but the suite on disk is ${onDisk}. Tiers, tier sizes and the case set are those of ${onDisk}${badCopies.has(item.suite) ? `; the frozen copy of ${item.version} is not the content its runs used (hash ${badCopies.get(item.suite).slice(0, 12)}), so it is not read` : `; the tiers of ${item.version} are not stored in a run`}, so a task that changed tier between them is judged against its new tier.`,
+    });
+  }
+
+  return { configs, tiers, cases, information, pairs, versions, warnings };
+}
+
+const emptyLadder = (extra = {}) => ({ suites: [], tiers: [], configs: [], information: {}, pairs: [], versions: [], warnings: [], problems: [], ...extra });
+
+/**
+ * state.ladder: every case of the suite versions the ladder report uses (the newest with counted
+ * runs per suite), unrun cases included, each with its information class, and the pair table.
+ * The only source the dashboard reads for the ladder. A root with no usable ladder gives no suites.
+ * `suiteAt(id, version)` is buildState's cached suite load.
+ */
+export function ladderState(root, state, { suiteAt }) {
+  let status;
+  try {
+    status = ladderStatus(root);
+  } catch {
+    return emptyLadder();
+  }
+  const diskVersions = new Map();
+  for (const id of Object.values(status.ladder.suites)) {
+    const version = suiteAt(id)?.version;
+    if (version != null) diskVersions.set(id, String(version));
+  }
+  const frozenCopy = (id, version) => {
+    const copy = suiteAt(id, version);
+    return copy?.frozen ? { cases: copy.cases, sha256: copy.sha256 } : null;
+  };
+  let report;
+  try {
+    report = ladderReport({ state, ladder: status.ladder, ladderCases: status.cases, diskVersions, frozenCopy, keepOtherSuites: true });
+  } catch (error) {
+    return emptyLadder({ problems: status.problems, error: error.message });
+  }
+  const suites = Object.values(status.ladder.suites).map((id) => ({
+    id,
+    version: report.versions.find((item) => item.suite === id)?.version ?? diskVersions.get(id) ?? null,
+    // Set when the suite's counted runs are not comparable: its cases then show no result.
+    refused: report.versions.find((item) => item.suite === id)?.refused ?? null,
+    cases: report.cases.filter((entry) => entry.suite === id),
+  }));
+  const { cases, ...rest } = report;
+  return { suites, ...rest, problems: status.problems };
 }

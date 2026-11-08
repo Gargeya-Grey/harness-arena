@@ -1,5 +1,5 @@
 // Side panel: one try in full. Answer (the check first, then what the setup returned) and Evidence.
-import { S, obsById, cellObs, cfgOf, caseOf, outcome, setupsOf, ctx, repeatsOf } from './model.js';
+import { S, obsById, cellObs, cfgOf, caseOf, outcome, setupsOf, ctx, repeatsOf, setupOf } from './model.js';
 import { caseName, durText, shortDate } from './words.js';
 import { errorWord } from './verdict.js';
 import { html, raw, setHtml, isNum, usdText, tokText, dateTime, download } from './util.js';
@@ -106,7 +106,7 @@ function evidenceTab(o, cfg) {
     ['Model', mono(cfg.model)],
     ['Harness', html`${cfg.harness.name} <span class="mono">${cfg.harness.version}</span>`],
     ['Effort', cfg.effort ? mono(cfg.effort) : nil('default')],
-    ['User setup', cfg.user_config === 'isolated' ? 'kept out' : 'loaded'],
+    ['User setup', setupOf(cfg) + ((cfg.setup_missing || []).length ? ` (missing ${cfg.setup_missing.join(', ')})` : '')],
     ['Settings applied', params ? mono(params) : nil()],
     ['Prompt', mono(o.request ? `${o.request.prompt_id} v${o.request.prompt_version}` : null)],
     ['Case', mono(o.case_id)],

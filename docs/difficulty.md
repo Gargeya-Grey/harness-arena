@@ -2,15 +2,17 @@
 
 The ladder is 80 tasks in five tiers. Each tier holds more tasks than the one below it, so the hard end of the scale has the most resolution: strong configurations all pass the low tiers, and the comparison is decided in the high ones.
 
-| Level | Tier | Tasks | Expert time (one person, no AI) | Panel mean score target |
-|---|---|---|---|---|
-| 1 | easy | 5 | up to 2 min | 0.90 or more |
-| 2 | medium | 10 | 2 to 8 min | 0.65 to 0.95 |
-| 3 | hard | 15 | 8 to 30 min | 0.35 to 0.75 |
-| 4 | extra-hard | 20 | 30 min to 2 h | 0.10 to 0.45 |
-| 5 | supreme | 30 | 2 to 16 h | 0.20 or less |
+| Level | Tier | Tasks | Expert time (one person, no AI) |
+|---|---|---|---|
+| 1 | easy | 5 | up to 2 min |
+| 2 | medium | 10 | 2 to 8 min |
+| 3 | hard | 15 | 8 to 30 min |
+| 4 | extra-hard | 20 | 30 min to 2 h |
+| 5 | supreme | 30 | 2 to 16 h |
 
 `configs/ladder.yaml` holds this table and the share of each task kind per tier. `lab/lib/ladder.mjs` checks every ladder case against it.
+
+**A tier is a label of an estimate.** It says how long an expert needs for the task. It does not say how often a model solves it. The lab states no target score for a tier and gives no verdict on a task. Only stored runs speak about models, and only as far as they reach (Evidence).
 
 ## Three kinds, one ladder
 
@@ -29,7 +31,7 @@ Agent tasks take the largest share of the top tiers, because long tasks are wher
 Difficulty is not guessed from how a task looks. It is set in two steps.
 
 1. **A prior from expert time.** Each case records `metadata.tier.human_minutes`: the time a competent professional needs to read the task, solve it and check the result, without AI help. It also records `basis`, one line that says how the estimate was made (a timed solve, the size of the reference solution, or a published anchor below).
-2. **A measured position.** A pilot run gives each task a mean score across the panel. A task outside its tier's target band moves tier or is reworked (Calibration).
+2. **What the runs show.** A pilot run tells, for each task, whether the configurations that ran it solved it (Evidence). That is a prompt to look at the task. It does not change the tier.
 
 The professional works under the same conditions as the model:
 
@@ -43,21 +45,36 @@ Expert time is the scale because it is the best-supported measure of task diffic
 - **Competitive programming ratings.** LiveCodeBench Pro groups problems by Codeforces rating: up to 2000, 2000 to 3000, above 3000. In 2025 the best model scored about 83%, 53% and 0% on those groups. The ladder's code tiers use rating-like anchors: tier 3 is around 1600 to 2000, tier 4 around 2000 to 2600, tier 5 above 2600, with huge inputs that rule out the naive method.
 - **Graded mathematics.** FrontierMath grades its problems from olympiad and hard undergraduate (tier 1) to research level (tier 4). The ladder's answer tiers rise from word problems with a trap, through multi-step contest problems, to instances that need a search too large to do without a systematic method.
 
-## Calibration
+## Evidence
 
-The panel is the targets of the ladder experiments. Each task runs once per target in the pilot.
+The panel is the targets of the ladder experiments. Each task runs once per target in the pilot. A configuration **solves** a task when its mean score over its counted repeats is 1 (a score is the share of hidden tests passed, so partial work does not solve).
 
-1. Compute each task's mean score across the panel (a score is the share of hidden tests passed, so partial work counts).
-2. A task whose mean is inside its tier's target band stays.
-3. A task outside its band moves to the nearest tier whose band holds its mean, as long as its expert time is within a factor of 4 of that tier's range. Otherwise the task is wrong for the scale (too easy for its length, or broken) and is reworked. `node lab ladder --calibrate` applies this rule and prints a verdict per task.
-4. A task is checked for a defect before anything else when, for two configurations that both ran it, the one with the higher mean on the other tasks both ran scores under 0.5 on every repeat of it while the other scores 1 on every repeat (`node lab ladder --calibrate` flags it). Item response theory work on public benchmarks finds that such negative discrimination usually means an error in the item (ATLAS, 2025).
-5. Moving a task keeps its `case_id`. Its tier changes in a new suite version. Before the change, run `node lab freeze <suite>` (`docs/strategy.md`, Frozen suite versions), so the old runs keep their cases and tiers. The definition sets the new `tier.level`, keeps its `human_minutes`, and adds `tier.moved: { from: <old level>, evidence: '<the pilot and the mean>' }`; the expert-time check then allows a factor of 4 around the new tier's range, the same rule as step 3.
-6. A task that leaves the suite is retired, not deleted: its slug goes into `datasets/<suite>/defs/_retired.mjs` with the reason. Its definition and its proofs stay, so its `case_id` stays taken and the task can come back by deleting one line. `generate.mjs` leaves retired tasks out of `cases.jsonl`; `buildCases({ includeRetired: true })` keeps them for the tests.
+`node lab ladder --calibrate` prints, per task, how much the runs can tell. Each task is in one class:
+
+| Class | Meaning |
+|---|---|
+| `no-data` | No configuration has a counted result. |
+| `one-config` | One configuration has a result. A comparison is not possible. |
+| `all-solved` | Two or more configurations ran it and all solved it. It does not separate them. |
+| `all-unsolved` | Two or more configurations ran it and none solved it. A partial score does not make it solved. Check the task for a defect. |
+| `disagree` | Two or more configurations ran it; some solved it and some did not. Only these tasks separate configurations. |
+
+For each pair of configurations it also prints the tasks both ran (`shared`), the tasks only the first solved, the tasks only the second solved, and an exact two-sided sign test on those two counts. With few such tasks the test cannot reject chance, and the output says what it is: a count and a p value, not a ranking.
+
+Runs of different setup states never pool. A run is `loaded`, `kept out`, `partly kept out`, `leaked` or `unknown`, from the flags the run recorded. Each state is its own configuration. A leaked run (the harness loaded the owner's own instructions although the experiment asked to keep them out) is shown, and is never mixed with a clean run of the same model.
+
+Rules for a task that the runs flag:
+
+1. A task in `all-unsolved` is checked for a defect before anything else.
+2. A task with negative discrimination is checked for a defect too: for two configurations that both ran it, the one with the higher mean on the other tasks both ran scores under 0.5 on every repeat of it while the other scores 1 on every repeat. Item response theory work on public benchmarks finds that such negative discrimination usually means an error in the item (ATLAS, 2025).
+3. A tier does not change because of a score. A tier changes when the expert-time estimate was wrong. The new tier's expert-time range must be within a factor of 4 of the task's `human_minutes`.
+4. Moving a task keeps its `case_id`. Its tier changes in a new suite version. Before the change, run `node lab freeze <suite>` (`docs/strategy.md`, Frozen suite versions), so the old runs keep their cases and tiers. The definition sets the new `tier.level`, keeps its `human_minutes`, and adds `tier.moved: { from: <old level>, evidence: '<why the estimate was wrong>' }`.
+5. A task that leaves the suite is retired, not deleted: its slug goes into `datasets/<suite>/defs/_retired.mjs` with the reason. Its definition and its proofs stay, so its `case_id` stays taken and the task can come back by deleting one line. `generate.mjs` leaves retired tasks out of `cases.jsonl`; `buildCases({ includeRetired: true })` keeps them for the tests.
 
 ### Pilot history
 
 - **Pilot 1 (8 Nov 2026, suites 1.0.0).** Claude Haiku, Claude Opus, DeepSeek and Codex at low effort, one repeat. Tiers 3 to 5 were far too easy: answer means 0.50 to 1.00 except `route-twelve-towns` (0.0), code means 0.57 to 1.00, with Opus solving all ten supreme code tasks in one reply. Two levers worked: exact optimisation, where strong models stop at a near optimum (every model gave 186 for `route-twelve-towns`, whose optimum is 180), and code whose every test depends on many rules. Limit: the Claude Code runs of this pilot and of the first minutes of pilot 2 say `isolated`, but they loaded the owner's global `CLAUDE.md` and the auto memory of the home folder's project. The call folder is under the home folder, and the isolation flags did not cover instruction files. Some answers begin with a tier line from those instructions. The fix (8 Nov 2026) sets `CLAUDE_CODE_DISABLE_CLAUDE_MDS` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY`, and later runs list both in `user_config_flags`, so a run without them in that list had the leak.
-- **Suites 2.0.0 (calibration round 2).** Tiers 1 and 2 and the tier-3 tasks stay. The old tier 4 and 5 answer and code tasks are retired (their reasons and pilot-1 means are in `_retired.mjs`), except `route-twelve-towns`. New tasks take the slots: 13 answer tasks of exact optimisation in seven families (`defs/round2/`), 7 tier-4 code tasks (`defs/extra-hard-b/`), and 10 tier-5 code tasks: long single-reply programs with dense rules (`defs/supreme-b/`) and deep algorithms with a CPU margin of at least 10x (`defs/supreme-c/`). Pilot 2 measures them; tasks then move by the rules above.
+- **Suites 2.0.0 (calibration round 2).** Tiers 1 and 2 and the tier-3 tasks stay. The old tier 4 and 5 answer and code tasks are retired (their reasons and pilot-1 means are in `_retired.mjs`), except `route-twelve-towns`. New tasks take the slots: 13 answer tasks of exact optimisation in seven families (`defs/round2/`), 7 tier-4 code tasks (`defs/extra-hard-b/`), and 10 tier-5 code tasks: long single-reply programs with dense rules (`defs/supreme-b/`) and deep algorithms with a CPU margin of at least 10x (`defs/supreme-c/`). Pilot 2 measures them; a task that the runs flag is checked by the rules above.
 
 Timing limits. Every verdict limit of the ladder is CPU time of the process that runs the answer, so a busy machine does not change a verdict. The speed probes in agent checks and the speed checks in the ladder's own tests judge by CPU time too. The ladder experiments use `js-function@2` and `workspace-tests@2`:
 
@@ -76,7 +93,7 @@ Ladder references stay at least 3x inside each limit (`tests/ladder-code-*.test.
 
 Speed probes proved to fail a natural slow solution (tests under `tests/fixtures/ladder-agent-solutions/*/<slug>--slow*/`): build-scheduler, http1-parser (2 of 4: a body in one-byte pieces, tiny chunks), regex-engine (many matches), markdown-renderer (md35, md37), rrule-expander (rr40 to rr43), spreadsheet-engine (sp33, sp34). Not proved, because every natural slow method either stays under the threshold or never ends: sql-engine (LIKE), regex-engine (exponential patterns), rga-text-crdt (rg33 to rg36: the slow method stays within 1.2 times each limit, and at rg33 the reference is quadratic too), bytecode-vm (vm23), diff-patch (3 probes), log-kv-store (2 probes), http1-parser (long headers). Not claimed, because the natural slow method is under 2 times the limit and passed on a faster CI runner: http1-parser (many pipelined requests), rrule-expander (rr44). These still check the result at size; a method that never ends meets the CPU limit of the evaluator.
 
-Four targets are a small panel. The bands are wide on purpose, and a tier needs both its expert-time prior and its measured mean to agree before a task is settled. A frontier configuration in the panel is the next step: without one, the top tier's headroom above the strongest models is not measured.
+Four targets are a small panel. Most tasks are run by few configurations, so many pairs share only some tasks and the sign test is weak. A frontier configuration in the panel is the next step: without one, the top tier's headroom above the strongest models is not measured.
 
 ## Rules for a task at any tier
 

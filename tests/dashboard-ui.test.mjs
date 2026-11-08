@@ -15,7 +15,7 @@ import { csv, markdown, answerLines } from '../dashboard/public/js/exporter.js';
 
 const data = buildState(fileURLToPath(new URL('./fixtures/repo/', import.meta.url)));
 const SIX = data.contexts.find((c) => c.repeats === 3).key; // smoke: 4 cases, 3 tries, 6 setups
-const ONE = data.contexts.find((c) => c.config_ids.length === 1).key; // smoke: 1 case, 1 setup
+const ONE = data.contexts.find((c) => c.suite.id === 'smoke' && c.config_ids.length === 1).key; // smoke: 1 case, 1 setup
 const UNCHECKED = data.contexts.find((c) => c.suite.id === 'svg-mini').key; // pictures, no automatic check
 
 function fakeNode(id) {

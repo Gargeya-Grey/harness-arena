@@ -1,0 +1,10 @@
+version: "1"
+messages:
+  - role: user
+    content: |
+      Solve the problem below. You may think it through in a few lines.
+      Reply in text only. Do not use tools and do not create files.
+      End your reply with one line in exactly this form:
+      Answer: <the answer only, a number or a single word, with no units>
+
+      Problem: {{question}}

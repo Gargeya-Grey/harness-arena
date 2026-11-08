@@ -1,13 +1,26 @@
 // Setups: one row per shown setup, best first. A column shows only when one of the setups has a value;
 // the best value carries the accent only when the answer could name a winner.
-import { S, ctx, shownSetups, aggOf, letterOf } from './model.js';
+import { S, ctx, shownSetups, aggOf, letterOf, setupOf } from './model.js';
 import { bestMarks, passedText, wilson } from './verdict.js';
 import { durText, plural } from './words.js';
 import { html, setHtml, isNum, usdText, tokText } from './util.js';
 
 const none = () => html`<span class="nil">–</span>`;
 
-export const harnessLine = (cfg) => [`${cfg.harness.name} ${cfg.harness.version}`, cfg.effort ? `${cfg.effort} effort` : null, cfg.user_config === 'isolated' ? 'user setup kept out' : null].filter(Boolean).join(' · ');
+const setupText = (cfg) => (setupOf(cfg) === 'loaded' ? null : `user setup ${setupOf(cfg)}`);
+
+const warned = (cfg) => setupOf(cfg) !== 'loaded' && setupOf(cfg) !== 'kept out';
+
+// `withWarning: false` leaves out a state the table row shows on a line of its own (setupWarning).
+export const harnessLine = (cfg, { withWarning = true } = {}) => [`${cfg.harness.name} ${cfg.harness.version}`, cfg.effort ? `${cfg.effort} effort` : null, withWarning || !warned(cfg) ? setupText(cfg) : null].filter(Boolean).join(' · ');
+
+// A setup whose user setup is not known to be out says so on its own line, as the model warning does.
+function setupWarning(cfg) {
+  const state = setupOf(cfg);
+  if (!warned(cfg)) return '';
+  const missing = (cfg.setup_missing || []).length ? ` (missing ${cfg.setup_missing.join(', ')})` : '';
+  return html`<span class="who-sub warn" data-setup-state="${state}" title="${setupText(cfg)}${missing}">${setupText(cfg)}</span>`;
+}
 
 function passedCell(s, best) {
   const f = s.facts;
@@ -61,7 +74,7 @@ export function renderSetups() {
   const multi = list.length > 1;
   const head = cols.map((col) => html`<th scope="col" class="c-${col.key}">${col.label}</th>`);
   const rows = list.map((s) => html`<tr>
-    <th scope="row" class="c-setup"><span class="who">${multi ? html`<span class="lt" aria-hidden="true">${letterOf(s.id)}</span>` : ''}<span class="who-text"><span class="who-name">${s.cfg.display_name}</span><span class="who-sub">${harnessLine(s.cfg)}</span>${modelWarning(s)}</span></span></th>
+    <th scope="row" class="c-setup"><span class="who">${multi ? html`<span class="lt" aria-hidden="true">${letterOf(s.id)}</span>` : ''}<span class="who-text"><span class="who-name">${s.cfg.display_name}</span><span class="who-sub">${harnessLine(s.cfg, { withWarning: false })}</span>${setupWarning(s.cfg)}${modelWarning(s)}</span></span></th>
     ${cols.map((col) => {
       const on = best(col, s);
       return html`<td class="c-${col.key}${on ? ' is-best' : ''}" data-label="${col.label}">${col.cell(s, on)}${on ? html`<span class="sr"> (best)</span>` : ''}</td>`;

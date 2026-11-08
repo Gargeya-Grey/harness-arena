@@ -177,9 +177,11 @@ test('user_config isolated: the flags reach the call, the run records them, and 
 
   assert.deepEqual(validateRepo(root).problems, []);
   const state = buildState(root);
-  assert.ok(state.configs['claude-haiku__fake-iso-0.0.1__default__isolated']);
+  // No table of required flags names this fake harness, so its record proves nothing: setup state unknown.
+  assert.ok(state.configs['claude-haiku__fake-iso-0.0.1__default__isolated-unknown']);
+  assert.equal(state.configs['claude-haiku__fake-iso-0.0.1__default__isolated-unknown'].legacy_id, 'claude-haiku__fake-iso-0.0.1__default__isolated');
   assert.ok(state.configs['claude-haiku__fake-iso-0.0.1__default']);
-  const context = state.contexts.find((c) => c.config_ids.includes('claude-haiku__fake-iso-0.0.1__default__isolated'));
+  const context = state.contexts.find((c) => c.config_ids.includes('claude-haiku__fake-iso-0.0.1__default__isolated-unknown'));
   assert.ok(context.config_ids.includes('claude-haiku__fake-iso-0.0.1__default'), 'both setups sit in one context');
 });
 

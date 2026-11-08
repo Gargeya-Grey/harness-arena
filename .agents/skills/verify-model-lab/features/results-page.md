@@ -6,9 +6,9 @@
 
 - `head` - `#test-title` (the suite id, capitalised) and `#test-meta` ("4 cases · 3 tries each · 6 setups · <date>"). Change test (`[data-act=change-test]`) and Share (`#share-btn`) on the right.
 - `answer` - `#answer`: one large sentence, then errors and unchecked answers, then the fairness line ("Fair test: …" or "Mixed test: …"). One setup: a run report with a link to Run.
-- `setups` - `#setups`: one row per setup, best first. Columns appear only when they hold a value. Best values carry the accent and a dot, explained in `#setups-foot`. `#details-btn` adds Slow end, Pass range, Price per pass, Tokens per try.
+- `setups` - `#setups`: one row per setup, best first. Columns appear only when they hold a value. Best values carry the accent and a dot, explained in `#setups-foot`. `#details-btn` adds Slow end, Pass range, Price per pass, Tokens per try. A setup whose run kept the user setup out only in part, leaked it, or did not record the proof carries a chip under its name (`.who-sub.warn[data-setup-state]`: `partly kept out`, `leaked` or `unknown`). A kept-out or loaded setup has no chip.
 - `choose` - `#choose-btn` opens `dialog#pick-setups`: tick up to 8 setups, Show them (`#choose-apply`).
-- `cases` - `#cases`: one row per case, one mark per try (`.tm-pass` ✓, `.tm-fail` ×, `.tm-error` !, `.tm-unscored` ○). `#only-btn` (a switch) keeps only the cases where setups differ.
+- `cases` - `#cases`: one row per case, one mark per try (`.tm-pass` ✓, `.tm-fail` ×, `.tm-error` !, `.tm-unscored` ○). `#only-btn` (a switch) keeps only the cases where setups differ. A test with no score at all has no switch and no agreement line. When answers are stored with no score (for example a stopped run), `#answer` says "N answers are stored with no score, so nothing counts yet."
 - `side-panel` - a mark opens `#inspector`: Answer and Evidence tabs, next try and next setup buttons. Escape closes it; focus returns to the mark.
 - `charts` - `#charts-main` holds the charts that carry a result; `details#charts-more` holds the rest. Below 440px of chart width a chart is drawn 1.35 times narrower and shown at full width.
 - `ratings` - `#ratings-sect`, only when the test has ratings: one row per saved rating, newest first (when, case and try, setup, rating, choice, notes).

@@ -1,0 +1,105 @@
+{
+  "run_id": "20261022T090000Z__ladder-answer__ladder-answer-pilot__c1aa01",
+  "created_at": "2026-10-22T09:00:00.000Z",
+  "finished_at": "2026-10-22T09:00:20.000Z",
+  "status": "completed",
+  "suite": {
+    "id": "ladder-answer",
+    "version": "2.0.0",
+    "sha256": "61b7455f0288cdaef0f4bf4295a3b812fe7bb354f63b08d9c41ad32bda9fcd7d"
+  },
+  "prompt": {
+    "id": "reasoning-final-answer",
+    "version": "1",
+    "sha256": "ee8bd0b2dcebf841191d15bece79babe7cdaf7cb178878166f29156fbff5b200"
+  },
+  "experiment": {
+    "id": "ladder-answer-pilot",
+    "description": "Fixture ladder pilot: one repeat per task.",
+    "suite": "ladder-answer",
+    "prompt": "reasoning-final-answer",
+    "repeats": 1,
+    "cases": [
+      "ladder-answer-fx-a1",
+      "ladder-answer-fx-a2",
+      "ladder-answer-fx-b1",
+      "ladder-answer-fx-b2",
+      "ladder-answer-fx-c1",
+      "ladder-answer-fx-c2",
+      "ladder-answer-fx-c3",
+      "ladder-answer-fx-d1",
+      "ladder-answer-fx-d2",
+      "ladder-answer-fx-e1"
+    ],
+    "targets": [
+      {
+        "model": "claude-haiku",
+        "harness": "claude-code"
+      },
+      {
+        "model": "claude-haiku",
+        "harness": "claude-code"
+      },
+      {
+        "model": "deepseek-v4.1-flash-max",
+        "harness": "command-code"
+      },
+      {
+        "model": "gpt-5-mini-high",
+        "harness": "codex"
+      }
+    ],
+    "evaluators": [
+      {
+        "id": "final-answer",
+        "version": "1",
+        "dimension": "quality"
+      }
+    ]
+  },
+  "models": [
+    {
+      "model_key": "claude-haiku",
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5-20251001",
+      "params": {},
+      "context_window": 200000,
+      "reasoning_effort": null,
+      "pricing": {
+        "input_per_1m": 1,
+        "output_per_1m": 5,
+        "cache_read_per_1m": 0.1,
+        "cache_write_per_1m": 1.25
+      }
+    }
+  ],
+  "repeats": 1,
+  "evaluators": [
+    {
+      "id": "final-answer",
+      "version": "1",
+      "dimension": "quality"
+    }
+  ],
+  "harness": {
+    "name": "claude-code",
+    "version": "2.1.306",
+    "entrypoint": "headless",
+    "access_method": "subscription",
+    "platform": "win32",
+    "session_id": null,
+    "settings": {
+      "max_turns": 1,
+      "workdir": "isolated",
+      "user_config": "isolated",
+      "user_config_requested": "isolated",
+      "user_config_flags": [
+        "--setting-sources",
+        "project,local",
+        "--strict-mcp-config",
+        "--disable-slash-commands"
+      ]
+    }
+  },
+  "notes": "Synthetic fixture run for tests and UI work. Not evidence."
+}

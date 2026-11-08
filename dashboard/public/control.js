@@ -569,7 +569,8 @@ function pickExp() {
     `<span class="chip muted">${esc(plural(caseIds(e).length, 'case'))}</span>`,
     `<span class="chip muted">${esc(e.repeats > 1 ? `${e.repeats} tries each` : '1 try')}</span>`,
     e.access === 'edit' ? '<span class="chip warn">agent task: edits files</span>' : '',
-    `<span class="chip muted">user setup ${e.user_config === 'isolated' ? 'kept out' : 'loaded'}</span>`,
+    // The experiment only asks. Each run records what stayed out: kept out, partly kept out, leaked or unknown.
+    `<span class="chip muted"${e.user_config === 'isolated' ? ' title="The result of each run says whether it stayed out: kept out, partly kept out, leaked or unknown."' : ''}>user setup ${e.user_config === 'isolated' ? 'asked to stay out' : 'loaded'}</span>`,
   ].join('');
   const targets = (e.targets || []).map((t) => `<div class="target"><span class="mark-s"></span><b>${esc(t.model)}</b><span>through ${esc(t.harness)}${t.effort ? ` · effort ${esc(t.effort)}` : ''}</span></div>`).join('');
   const problems = e.problems.length ? `<div class="notice warn">${e.problems.map(esc).join('<br>')}</div>` : '';

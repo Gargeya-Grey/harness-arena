@@ -51,6 +51,8 @@ export default defineCli({
   // plugins, rules, sessions and all other settings stay out. OAuth tokens refresh on use,
   // so a refreshed credential goes back to the real database.
   isolation: {
+    // These point OpenCode at a config outside the temp home, so an inherited one would load the user's setup.
+    clearEnv: ['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'OPENCODE_CONFIG_CONTENT'],
     home: {
       files: [],
       store: signIn,

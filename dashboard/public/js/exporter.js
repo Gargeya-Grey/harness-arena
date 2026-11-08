@@ -1,6 +1,6 @@
 // Share: the result as a Markdown table, CSV, JSON, or a picture (PNG drawn on a canvas, always light).
 // Every export says the same as the page: the test, the answer, the fairness line, the setups.
-import { S, ctx, shownSetups, selectedCfgs, comparison, aggOf, cfgOf } from './model.js';
+import { S, ctx, shownSetups, selectedCfgs, comparison, aggOf, cfgOf, setupOf } from './model.js';
 import { bestMarks, passedText, wilson } from './verdict.js';
 import { verdictFor, caseLabel } from './summary.js';
 import { testTitle, testMeta, fairLine, durText } from './words.js';
@@ -75,7 +75,7 @@ function csvRows() {
     const share = f.decided ? f.passed / f.decided : null;
     const n = (v, d = 4) => (isNum(v) ? Number(v.toFixed(d)) : '');
     return [
-      s.name, s.cfg.model_key || s.cfg.display_name, s.cfg.harness.name, s.cfg.harness.version, s.cfg.effort || '', s.cfg.user_config || 'loaded',
+      s.name, s.cfg.model_key || s.cfg.display_name, s.cfg.harness.name, s.cfg.harness.version, s.cfg.effort || '', setupOf(s.cfg),
       f.tries, f.passed, f.decided - f.errors, f.unchecked, f.errors, n(share), range ? n(range[0]) : '', range ? n(range[1]) : '',
       n(f.time, 0), n(f.slow, 0), n(f.price, 6), n(a.mean_cost_usd, 6), n(f.pricePerPass, 6),
       n(a.mean_input_tokens, 1), n(a.mean_cache_read_tokens, 1), n(a.mean_output_tokens, 1), f.ratings ? n(f.rating, 2) : '', f.ratings,

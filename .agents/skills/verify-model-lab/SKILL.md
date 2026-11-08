@@ -16,7 +16,7 @@ The feature map is in [features/README.md](features/README.md). Read it, then us
 
 ## Launch
 
-1. Make a disposable data root. It is a copy of `tests/fixtures/repo` (9 runs, 77 observations, 3 contexts) plus the real experiments (retired ones in `experiments/archive/`), prompts, registry and ladder table, and every suite the fixtures lack (retired ones in `datasets/archive/`):
+1. Make a disposable data root. It is a copy of `tests/fixtures/repo` (14 runs, 123 observations, 5 contexts, a 12-task `ladder-answer` suite with its pilot runs) plus the real experiments (retired ones in `experiments/archive/`), prompts, registry and ladder table, and every suite the fixtures lack (retired ones in `datasets/archive/`):
 
    ```bash
    ROOT=$(node .agents/skills/verify-model-lab/scripts/temp-root.mjs)
@@ -32,7 +32,7 @@ The feature map is in [features/README.md](features/README.md). Read it, then us
    echo $! > "$ROOT/dashboard.pid"
    ```
 
-   Ready means `curl -s http://127.0.0.1:$PORT/api/state` returns JSON with 3 `contexts`. The log line `Model Lab dashboard: http://127.0.0.1:<port>` alone is not enough.
+   Ready means `curl -s http://127.0.0.1:$PORT/api/health` names the temp root, and `curl -s http://127.0.0.1:$PORT/api/state` lists a known fixture run id (for example `20261022T090000Z__ladder-answer__ladder-answer-pilot__c1aa01` in `runs`). A fixed count is not the check: a fixture change moves it. The log line `Model Lab dashboard: http://127.0.0.1:<port>` alone is not enough.
 
 Two instances can run side by side on different ports and data roots.
 
