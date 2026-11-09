@@ -29,7 +29,7 @@ lab/commands/             run, score, validate, doctor/runs/report, ladder (the 
 lab/lib/                  yaml.mjs, schema.mjs (subsets), metrics.mjs, state.mjs (derived view), ledger.mjs, procwatch.mjs, ladder.mjs (tier table and checks), ladder-cli.mjs (a generator's --write and --check)
 dashboard/server.mjs      Local server: /api/state, /api/artifact, annotations, boards, /api/catalog, /api/jobs
 dashboard/jobs.mjs        Starts allowlisted `node lab` commands for the control page (no shell)
-dashboard/public/         Static UI, no build step: index.html (Home, Run, Lab), results.html (one test compared)
+dashboard/public/         Static UI, no build step: index.html (Home, Run, Lab), results.html (one test compared), ladder.html (the ladder evidence, read from `state.ladder`)
 configs/models.yaml       Model registry: exact id, params, optional pricing, harness_models
 configs/harnesses.yaml    CLI harnesses declared with no code
 datasets/<suite>/         suite.yaml + cases.jsonl (one case per line); agent suites add workspaces/ and checks/; ladder suites add generate.mjs and defs/; versions/<version>/ holds frozen copies of earlier versions

@@ -469,6 +469,7 @@ export function ladderReport({ state, ladder, ladderCases, suite = null, runs = 
         tier: level ?? null,
         tier_name: tier?.name ?? null,
         human_minutes: item.metadata?.tier?.human_minutes ?? null,
+        basis: item.metadata?.tier?.basis ?? null,
         configs_n: perConfig.length,
         information: taskInformation({ per_config: perConfig }),
         flags,

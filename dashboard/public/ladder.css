@@ -1,0 +1,188 @@
+/* Model Lab Ladder page. Tokens, the rail, buttons, glass, section labels and status marks come from
+   theme.css; this file holds what only this page draws. Class names start with ld- or l (select). */
+
+.page { max-width: 1120px; margin: 0 auto; }
+.num, .ld-tbl td, .ld-tbl th, .ld-say, .ld-say-sm { font-variant-numeric: tabular-nums; }
+
+/* ---------- Head ---------- */
+.ld-head h1 { font: 500 34px/1.1 var(--sans); letter-spacing: -0.03em; }
+.ld-meta { margin-top: 10px; font-size: 14.5px; line-height: 22px; color: var(--muted); overflow-wrap: anywhere; }
+@media (max-width: 900px) { .ld-head h1 { font-size: 28px; } }
+
+/* ---------- The answer ---------- */
+.ld-answer { margin-top: 28px; padding: 26px 30px 24px 34px; }
+.ld-answer::before { content: ''; position: absolute; left: 16px; top: 31px; width: 2px; height: 20px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 8px var(--glow), 0 0 2px var(--accent); }
+.ld-say { font: 500 22px/31px var(--sans); letter-spacing: -0.012em; max-width: 64ch; text-wrap: pretty; }
+.ld-more { margin-top: 10px; max-width: 74ch; font-size: 14.5px; line-height: 22px; color: var(--muted); overflow-wrap: anywhere; }
+.ld-more.ld-pairs-say { color: var(--text); }
+.ld-foot { margin-top: 20px; padding-top: 16px; box-shadow: inset 0 1px 0 var(--line); }
+.fair { display: flex; align-items: baseline; gap: 10px; font-size: 13.5px; line-height: 20px; color: var(--muted); max-width: 80ch; }
+.fair .mark-s { position: relative; top: -1px; }
+@media (max-width: 720px) {
+  .ld-answer { padding: 22px 20px 20px 28px; }
+  .ld-answer::before { left: 12px; top: 27px; }
+  .ld-say { font-size: 18px; line-height: 26px; }
+}
+
+/* ---------- Notices and the empty page ---------- */
+.ld-notices { display: grid; gap: 10px; }
+.ld-notices:not(:empty) { margin-top: 20px; }
+.ld-note { display: flex; align-items: flex-start; gap: 12px; padding: 12px 16px; border-radius: 12px; background: var(--well); box-shadow: var(--well-in); font-size: 13.5px; line-height: 20px; color: var(--muted); overflow-wrap: anywhere; }
+.ld-note.is-warn { box-shadow: var(--well-in), inset 0 0 0 1px color-mix(in srgb, var(--warn) 35%, transparent); }
+.ld-note strong { color: var(--text); font-weight: 500; }
+.ld-note .mark-s { margin-top: 7px; }
+.ld-empty { margin-top: 28px; padding: 36px 34px; display: grid; justify-items: start; gap: 10px; }
+.ld-empty h2 { font: 500 22px/28px var(--sans); letter-spacing: -0.01em; }
+.ld-empty p { max-width: 60ch; font-size: 14.5px; line-height: 22px; color: var(--muted); margin-bottom: 10px; }
+
+/* ---------- Sections ---------- */
+.ld-sect { margin-top: 44px; min-width: 0; }
+.ld-sect .sect-label { flex-wrap: wrap; }
+.ld-quiet { padding: 20px; font-size: 14.5px; line-height: 21px; color: var(--muted); }
+.link-btn { all: unset; color: var(--accent); cursor: pointer; font-weight: 500; }
+.link-btn:hover { text-decoration: underline; text-underline-offset: 3px; }
+.link-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.ld-sect .sect-note { font-size: 12px; }
+.ld-evidence { display: grid; gap: 10px; padding: 0 4px; max-width: 68ch; font-size: 13.5px; line-height: 20px; color: var(--muted); }
+.ld-evidence p { margin: 0; }
+.ld-problems summary { width: max-content; cursor: pointer; }
+.ld-problems ul { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 4px; }
+
+/* ---------- Selects and the pair card ---------- */
+.ld-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 270px)); gap: 12px; margin-bottom: 14px; }
+.ld-pick[hidden] { display: none; }
+.ld-pick.is-pair { grid-template-columns: repeat(2, minmax(0, 270px)); }
+@media (max-width: 720px) { .ld-pick.is-pair { grid-template-columns: minmax(0, 1fr); } }
+.ld-field { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
+.ld-flabel { padding: 0 2px; font: 500 12px/16px var(--sans); color: var(--muted); }
+.lsel { all: unset; box-sizing: border-box; position: relative; display: flex; align-items: center; width: 100%; height: 44px; padding: 0 40px 0 14px; border-radius: 12px;
+  background: var(--well); box-shadow: var(--well-in); cursor: pointer; font: 400 14.5px/20px var(--sans); color: var(--text); transition: box-shadow var(--t-fast) var(--ease); }
+.lsel:hover { box-shadow: var(--well-in), 0 0 0 1px var(--border-ctl); }
+.lsel:focus-visible, .lsel[aria-expanded="true"] { box-shadow: var(--well-in), var(--halo); outline: none; }
+.lsel-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lsel > .i { position: absolute; right: 14px; top: 14px; width: 16px; height: 16px; stroke-width: 2; color: var(--muted); transition: transform var(--t-med) var(--ease); }
+.lsel[aria-expanded="true"] > .i { transform: rotate(180deg); }
+.lmenu { position: fixed; z-index: 200; padding: 6px; max-height: 320px; overflow-y: auto; border-radius: 12px; background: var(--float); outline: none;
+  box-shadow: inset 0 1px 0 var(--rim), inset 0 0 0 1px var(--line), var(--shadow); animation: lmenu-in var(--t-fast) var(--ease); }
+.lmenu.up { animation-name: lmenu-in-up; }
+@keyframes lmenu-in { from { opacity: 0; transform: translateY(-4px); } }
+@keyframes lmenu-in-up { from { opacity: 0; transform: translateY(4px); } }
+.lopt { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 9px 12px; border-radius: 9px; font-size: 13.5px; line-height: 19px; cursor: pointer; }
+.lopt-text { flex: 1; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.lopt.active { background: var(--hover); }
+.lopt[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); }
+.lopt .i { width: 16px; height: 16px; stroke-width: 2.2; visibility: hidden; }
+.lopt[aria-selected="true"] .i { visibility: visible; }
+.lmenu:focus-visible .lopt.active { box-shadow: inset 0 0 0 2px var(--accent); }
+
+.ld-card { display: grid; gap: 8px; justify-items: start; margin-bottom: 14px; padding: 18px 22px; border-radius: var(--r-group); background: var(--glass); box-shadow: var(--lift); }
+.ld-say-sm { font: 500 19px/26px var(--sans); max-width: 70ch; overflow-wrap: anywhere; }
+.ld-card .ld-more { margin-top: 0; }
+.ld-card .switch { margin-top: 4px; }
+.switch { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 10px 0 0; border-radius: 10px; font-size: 13.5px; color: var(--muted); cursor: pointer; }
+.switch:hover { color: var(--text); }
+.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch-track { position: relative; width: 34px; height: 20px; border-radius: 999px; background: var(--well); box-shadow: var(--well-in); flex: none; transition: background-color var(--t-med) var(--ease); }
+.switch-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--raised-2); transition: transform var(--t-med) var(--ease), background-color var(--t-med) var(--ease); }
+.switch[aria-checked="true"] { color: var(--text); }
+.switch[aria-checked="true"] .switch-track { background: var(--action); box-shadow: none; }
+.switch[aria-checked="true"] .switch-knob { transform: translateX(14px); background: var(--on-action); }
+
+/* ---------- Tables ---------- */
+.ld-wrap { overflow-x: auto; }
+.ld-wrap:focus { outline: none; }
+.ld-wrap:has(.ld-quiet) { overflow: visible; }
+.ld-tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; line-height: 20px; }
+.ld-tbl thead th { padding: 14px 16px 10px; font: 500 12.5px/16px var(--sans); color: var(--muted); text-align: left; vertical-align: bottom; box-shadow: inset 0 -1px 0 var(--line); }
+.ld-tbl tbody th, .ld-tbl tbody td { padding: 14px 16px; text-align: left; vertical-align: top; font-weight: 400; }
+.ld-tbl tbody tr + tr > * { box-shadow: inset 0 1px 0 var(--line); }
+.ld-tbl tbody tr.is-on > * { background: var(--accent-soft); }
+.ld-tbl .v { display: block; font-weight: 500; }
+.ld-tbl .sub { display: block; margin-top: 2px; font-size: 12.5px; line-height: 17px; color: var(--muted); }
+.ld-tbl .nil, .ld-quiet .nil { color: var(--faint); }
+.ld-tbl .warn { color: var(--warn); }
+.ld-tbl .c-act { width: 1%; white-space: nowrap; text-align: right; }
+.lt { display: inline-grid; place-items: center; flex: none; width: 22px; height: 22px; border-radius: 6px; background: var(--well); box-shadow: inset 0 0 0 1px var(--line); font: 600 12px/1 var(--sans); color: var(--text); }
+.ld-tierv { display: grid; gap: 2px; }
+.ld-tierv .v { display: block; }
+thead .ld-tierv .v { font-weight: 500; color: var(--text); }
+thead .ld-tierv .sub { font-weight: 400; }
+
+/* Setups */
+.ld-setups .c-setup { min-width: 240px; }
+.ld-setups td { white-space: nowrap; }
+.ld-setups td .sub { white-space: normal; max-width: 20ch; }
+.ld-setups thead .sub { white-space: normal; max-width: 18ch; }
+.who { display: flex; align-items: flex-start; gap: 12px; }
+.who-text { min-width: 0; display: grid; gap: 2px; }
+.who-name { font-weight: 500; font-size: 15px; overflow-wrap: anywhere; }
+.who-sub { font-size: 12.5px; line-height: 17px; color: var(--muted); overflow-wrap: anywhere; }
+.ld-state { display: inline-flex; align-items: center; gap: 8px; }
+.ld-state .mark-s { margin-top: 1px; }
+
+/* Pairs */
+.ld-pairs .c-pair { min-width: 260px; }
+.ld-vs { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.ld-vs + .ld-vs { margin-top: 6px; }
+.ld-pairs td { white-space: nowrap; }
+.ld-read { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
+.ld-read::before { content: ''; width: 7px; height: 7px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--faint); flex: none; }
+.ld-read.is-apart { color: var(--text); font-weight: 500; }
+.ld-read.is-apart::before { background: var(--accent); box-shadow: 0 0 8px var(--glow); }
+
+/* Tasks */
+.ld-tasks .c-task { width: 34%; min-width: 260px; }
+.ld-tasks .c-tier { min-width: 128px; }
+.ld-tasks .c-info { min-width: 140px; }
+.ld-tasks .c-score { min-width: 96px; max-width: 150px; font-weight: 400; }
+.col-name { min-width: 0; overflow-wrap: anywhere; }
+.ld-key { list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 8px 22px; margin: 0 0 12px; padding: 0 4px; font-size: 13.5px; line-height: 20px; color: var(--muted); }
+.ld-key li { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.ld-tasks th.c-score { text-align: center; }
+.ld-tasks td.ld-score { text-align: left; }
+.ld-name { display: block; font-weight: 500; font-size: 15px; overflow-wrap: anywhere; }
+.ld-id { display: block; margin-top: 2px; font: 400 12px/17px var(--mono); color: var(--faint); overflow-wrap: anywhere; }
+.ld-basis { display: block; margin-top: 6px; font-size: 12.5px; line-height: 17px; color: var(--muted); }
+.ld-flags { margin-top: 8px; font-size: 12.5px; line-height: 18px; color: var(--warn); }
+.ld-flags summary { width: max-content; max-width: 100%; cursor: pointer; font-weight: 500; }
+.ld-flags p { margin-top: 6px; color: var(--muted); overflow-wrap: anywhere; }
+.ld-info { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }
+.ld-ishape { width: 8px; height: 8px; flex: none; border-radius: 50%; }
+.ld-info[data-info="disagree"] .ld-ishape { background: var(--accent); box-shadow: 0 0 8px var(--glow); }
+.ld-info[data-info="one-config"] .ld-ishape { box-shadow: inset 0 0 0 1.5px var(--muted); }
+.ld-info[data-info="all-solved"] .ld-ishape { background: color-mix(in srgb, var(--text) 45%, transparent); }
+.ld-info[data-info="all-unsolved"] .ld-ishape { width: 7px; height: 7px; border-radius: 1.5px; background: var(--warn); transform: rotate(45deg); }
+.ld-info[data-info="no-data"] .ld-ishape { border: 1.5px dashed var(--faint); }
+.ld-score { white-space: nowrap; }
+.ld-score .v { display: inline; margin-left: 8px; line-height: 22px; }
+.ld-score .ld-mk { vertical-align: middle; }
+.ld-score .sub { margin-top: 4px; }
+.ld-tasks th.is-pick, .ld-tasks td.is-pick { background: var(--accent-soft); }
+.ld-mk { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; font: 600 12px/1 var(--sans); vertical-align: -5px; }
+.ld-pass { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--sel-line); }
+.ld-fail { background: transparent; color: var(--text); box-shadow: inset 0 0 0 1.5px var(--border-ctl); }
+.ld-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-top: 12px; padding: 0 4px; font-size: 13.5px; line-height: 20px; color: var(--muted); }
+.ld-legend > span { display: inline-flex; align-items: center; gap: 7px; }
+.ld-legend .nil { color: var(--faint); }
+
+/* ---------- Phone: each row becomes one card with labelled lines, nothing scrolls sideways ---------- */
+@media (max-width: 720px) {
+  .ld-tbl thead { display: none; }
+  .ld-tbl, .ld-tbl tbody { display: block; }
+  .ld-tbl tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; padding: 16px; }
+  .ld-tbl tbody tr + tr { box-shadow: inset 0 1px 0 var(--line); }
+  .ld-tbl tbody tr > * { padding: 0; box-shadow: none !important; width: auto; min-width: 0; max-width: none; background: none !important; }
+  .ld-tbl tbody tr.is-on { background: var(--accent-soft); }
+  .ld-tbl tbody tr > td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 2px; font-size: 12px; color: var(--muted); }
+  .ld-tbl .c-setup, .ld-tbl .c-task, .ld-tbl .c-pair { grid-column: 1 / -1; min-width: 0; width: auto; }
+  .ld-tasks .c-tier, .ld-tasks .c-info { min-width: 0; }
+  .ld-setups td, .ld-pairs td { white-space: normal; }
+  .ld-tbl .c-act { grid-column: 1 / -1; width: auto; text-align: left; }
+  .ld-tasks td.ld-score { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; white-space: normal; }
+  .ld-tasks td.ld-score::before { order: 0; flex: 1; min-width: 0; margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+  .ld-tasks td.ld-score .sub { margin: 0; }
+  .ld-tasks td.is-pick { background: var(--accent-soft) !important; margin: 0 -8px; padding: 6px 8px; border-radius: 8px; }
+  .ld-wrap { overflow: visible; }
+  .ld-field { flex-basis: 100%; max-width: none; }
+  .ld-card { padding: 16px; }
+}

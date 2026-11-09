@@ -7,6 +7,7 @@ const ICONS = {
   home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/>',
   run: '<path d="M7 4.5v15a.8.8 0 0 0 1.2.7l12-7.5a.8.8 0 0 0 0-1.4l-12-7.5A.8.8 0 0 0 7 4.5z"/>',
   results: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  ladder: '<path d="M8 3v18M16 3v18M8 8h8M8 13h8M8 18h8"/>',
   lab: '<path d="M9 3h6M10 3v6.2L4.6 18.4A1.7 1.7 0 0 0 6.1 21h11.8a1.7 1.7 0 0 0 1.5-2.6L14 9.2V3"/><path d="M7.2 14h9.6"/>',
   chev: '<path d="m9 18 6-6-6-6"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
@@ -17,11 +18,12 @@ const ICONS = {
   moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5Z"/>',
 };
 
-// Four pages. Home, Run and Lab are views of `/`; Results is its own page.
+// Five pages. Home, Run and Lab are views of `/`; Results and Ladder are their own pages.
 const PAGES = [
   ['home', 'Home', '/#home', 'home'],
   ['run', 'Run', '/#run', 'run'],
   ['results', 'Results', '/results.html', 'results'],
+  ['ladder', 'Ladder', '/ladder.html', 'ladder'],
   ['lab', 'Lab', '/#lab', 'lab'],
 ];
 
