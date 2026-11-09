@@ -595,6 +595,7 @@ function countCalls() {
   if (!e) {
     $('plan-n').textContent = '0';
     syncRunButtons();
+    scheduleSignal();
     return 0;
   }
   const cases = S.sel.cases.size || caseIds(e).length;
@@ -617,7 +618,83 @@ function countCalls() {
   $('repeats-hint').textContent = repeats < 3 ? 'Use 3 or more to compare setups. Fewer is fine for a first look.' : 'Enough tries to compare setups.';
   disarm();
   syncRunButtons();
+  scheduleSignal();
   return calls;
+}
+
+/* The signal check (GET /api/signal, node lab signal): an estimate from stored runs, shown before the buttons. */
+const SIGNAL_WORD = { 'worth running': ['ok', 'Worth running'], 'low signal': ['warn', 'Low signal'], unknown: ['info', 'Unknown'] };
+let signalSeq = 0;
+let signalTimer = null;
+function signalBox() {
+  let box = $('signal');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'signal';
+    box.className = 'signal';
+    box.setAttribute('aria-live', 'polite');
+    $('edit-notice').after(box);
+  }
+  return box;
+}
+const tokenTotal = (items) => {
+  const known = items.filter((item) => item.estimate != null);
+  if (!known.length) return 'unknown';
+  const total = known.reduce((sum, item) => sum + item.estimate, 0).toLocaleString('en-US');
+  return known.length === items.length ? total : `${total} and more (${plural(items.length - known.length, 'setup')} unknown)`;
+};
+function paintSignal(r) {
+  const [tone, word] = SIGNAL_WORD[r.result] || ['info', r.result];
+  const predicted = r.pairs.map((pair) => pair.predicted_disagreements).filter((n) => n != null);
+  const rows = [
+    ['Planned calls', r.planned_calls],
+    ['Little chance of new information', r.calls_low_information ?? 'unknown'],
+    ['Output tokens (estimate)', tokenTotal(r.output_tokens)],
+    ['Disagreements a pair needs', r.pairs.length ? r.pairs[0].needed : 'no pair'],
+    ['History predicts, best pair', r.pairs.length ? (predicted.length ? Math.max(...predicted) : 'unknown') : 'no pair'],
+    ['Check quality', `${r.checks.state}${r.checks.kill_rate == null ? '' : `, ${Math.round(r.checks.kill_rate * 100)}% caught`}`],
+    ['Setup state', [...new Set(r.setups.map((s) => s.setup_state))].map((state) => `${r.setups.filter((s) => s.setup_state === state).length} ${state}`).join(', ')],
+  ];
+  const box = signalBox();
+  box.hidden = false;
+  box.classList.remove('busy');
+  box.innerHTML = `<div class="signal-head"><span class="mark-s ${tone}" aria-hidden="true"></span><b>${esc(word)}</b></div>`
+    + `<ul class="signal-why">${r.reasons.slice(0, 2).map((reason) => `<li>${esc(reason)}</li>`).join('')}</ul>`
+    + (r.reasons.length > 2 ? `<details class="signal-more"><summary class="disclose">${esc(`${plural(r.reasons.length - 2, 'more reason')}`)}</summary><ul class="signal-why">${r.reasons.slice(2).map((reason) => `<li>${esc(reason)}</li>`).join('')}</ul></details>` : '')
+    + `<dl class="plan-break">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="num">${esc(v)}</dd>`).join('')}</dl>`
+    + `<p class="plan-foot">${esc(r.note)}</p>`;
+}
+async function loadSignal() {
+  const e = currentExp();
+  const box = signalBox();
+  if (!e || !chosenTargets().length || !repeatsOk()) {
+    box.hidden = true;
+    return;
+  }
+  const query = new URLSearchParams({ experiment: e.file });
+  if (S.sel.harness) query.set('harness', S.sel.harness);
+  if (S.sel.models.size) query.set('models', [...S.sel.models].join(','));
+  if (S.sel.cases.size) query.set('cases', [...S.sel.cases].join(','));
+  if (S.sel.repeats) query.set('repeats', S.sel.repeats);
+  const seq = ++signalSeq;
+  try {
+    const report = await api('GET', `/api/signal?${query}`);
+    if (seq === signalSeq) paintSignal(report);
+  } catch (error) {
+    if (seq !== signalSeq) return;
+    box.classList.remove('busy');
+    box.innerHTML = `<div class="signal-head"><span class="mark-s warn" aria-hidden="true"></span><b>No signal check</b></div><ul class="signal-why"><li></li></ul>`;
+    box.querySelector('li').textContent = `The check could not run: ${error.message}`;
+  }
+}
+function scheduleSignal() {
+  signalSeq += 1;
+  clearTimeout(signalTimer);
+  const box = signalBox();
+  box.hidden = false;
+  box.classList.add('busy');
+  box.innerHTML = '<p class="signal-why">Checking stored runs…</p>';
+  signalTimer = setTimeout(loadSignal, 300);
 }
 function syncRunButtons() {
   const none = !chosenTargets().length || !repeatsOk();

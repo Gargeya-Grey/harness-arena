@@ -87,6 +87,15 @@ a.meter:hover { text-decoration: none; }
 .plan-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .plan-actions .btn { width: 100%; }
 .plan-foot { font-size: 12px; line-height: 17px; color: var(--faint); }
+.signal { display: grid; gap: 10px; padding: 14px 16px; border-radius: 12px; background: var(--well); box-shadow: var(--well-in); transition: opacity var(--t-fast) var(--ease); }
+.signal[hidden] { display: none; }
+.signal.busy { opacity: .55; }
+.signal-head { display: flex; align-items: center; gap: 10px; font: 500 15px/20px var(--sans); }
+.signal-why { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 12.5px; line-height: 18px; color: var(--muted); }
+.signal-why li { overflow-wrap: anywhere; }
+.signal .plan-break { font-size: 12.5px; }
+.signal-more > summary { font-size: 12.5px; color: var(--muted); }
+.signal-more > .signal-why { margin-top: 8px; }
 .notice { padding: 12px 14px; border-radius: 12px; background: var(--well); box-shadow: var(--well-in); font-size: 13px; line-height: 18px; color: var(--muted); }
 .notice strong { color: var(--text); font-weight: 500; }
 .notice.warn { box-shadow: var(--well-in), inset 0 0 0 1px color-mix(in srgb, var(--warn) 35%, transparent); }
