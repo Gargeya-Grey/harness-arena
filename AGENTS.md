@@ -101,6 +101,7 @@ node lab run experiments/ladder-answer.yaml --dry-run   # also ladder-code, ladd
 node lab run experiments/ladder-code.yaml --repeats 1   # the pilot: one repeat per task
 node lab ladder                                         # configurations as rows, tiers as columns
 node lab ladder --calibrate                             # per task: information class; per pair: shared tasks
+node lab signal experiments/ladder-answer.yaml          # before a run: worth running, low signal or unknown (an estimate from stored runs, no model call)
 ```
 
 `node lab ladder` reads only the rows that count (closed, ledger-matched, scored runs), as the dashboard counts them. Unlike the dashboard, it pools the runs of one suite version across experiments: per suite, the newest version that has counted runs, or the one `--suite-version <suite>@<version>` names (repeat or comma-separate it). It prints which version of each suite it used and how many counted runs of other versions it left out. A suite version whose counted runs mix prompt versions is refused: pick runs with `--runs`. A cell is `solved/counted`, then the mean score. A task counts as solved when its mean score over the configuration's counted repeats is 1. A `*` marks a configuration that has results for fewer tasks than the tier holds. `--suite <ladder suite>` and `--runs <id,...>` filter; `--json` prints the same data.

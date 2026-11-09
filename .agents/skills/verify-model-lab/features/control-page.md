@@ -6,6 +6,7 @@
 
 - `home` - `#live-job` while a job runs (progress, `#live-stop`, `#live-open`); `#latest`: the three newest tests with their meta line and the first sentence of their answer, linked to Results; `#attention-sect` only when something is wrong; `#first-sect` only with no results.
 - `run-preview` - Run: `#exp-select` (custom select), `details#narrow` ("Narrow it down": `#harness-chips` with 2 or more harnesses, `#model-chips`, `#case-chips`, `#repeats`), the plan (`#plan-n`, `#plan-break`); Preview starts `run ... --dry-run`.
+- `run-signal` - `#signal`, above the Preview and Start buttons: Worth running, Low signal or Unknown with its reasons, from `GET /api/signal`. It reads stored runs only, calls no model and writes nothing. A change of selection clears the old result at once.
 - `run-start` - `#start-btn` asks once (`Start N calls?`, 5 s); the second press starts the run.
 - `run-progress` - `#run-output-sect`: a bar of answers done, the current case, errors so far, the log under "Show the log", and See results when the run ends.
 - `run-stop` - Stop: the first press writes `cancel` on stdin (job `stopping`, the run finishes its current call); a second press ends the process tree.
@@ -24,6 +25,7 @@ Preconditions: the Launch steps in SKILL.md (disposable data root, port 4391). N
 
 - **Home.** Each Latest results row shows a different meta line, and a click opens that test on Results.
 - **Preview.** Run, choose `ladder-agent` (keyboard: focus the trigger, arrows, Enter), open Narrow it down, select the chip of `ladder-agent-slugify-bug`, tries 1, Preview. The log ends with `Dry run: nothing was called or written.` and `$ROOT/results` gains no folder. The progress head reads "Preview of ladder-agent". The experiment list holds only the files at the top of `experiments/`: `opencode-agentic` (in `experiments/archive/`) is not in it.
+- **Signal.** Choose an experiment: `#signal` shows a verdict and its reasons, and `node lab signal experiments/<name>.yaml --json` gives the same verdict. Narrow to another model: the old verdict clears at once, and a new one follows. `$ROOT/results` gains no folder.
 - **Start guard.** Press Start once: the label reads `Start N calls?` and `GET /api/jobs` shows `running: null`.
 - **Stop.** With `slow-test`, Start twice, then Stop once: the job ends `stopped`, and the newest `run.json` has `status: failed`.
 - **Lab.** Check harnesses lists one row per harness; Validate ends with `All inputs and records are valid.`; Score all starts a `score --all` job that passes. Add a line that is not JSON (`{oops`) to `$ROOT/annotations/human@1.jsonl` and reload: Home shows "1 record does not match the schema", and Lab shows the file and the reason in its first Records row.
