@@ -4,13 +4,15 @@ import { mountShell, setCurrent, paintRunCard as shellRunCard, setNavDot, setOff
 import { runProgress, jobName, jobTitle } from './js/jobwatch.js';
 import { setData, contexts } from './js/model.js';
 import { verdictFor, caseLabel as soleCase } from './js/summary.js';
-import { keepParts } from './js/util.js';
 import { testTitle, testMeta, shortDate, caseName, plural as words } from './js/words.js';
+import { captureDisclosures, restoreDisclosures } from './js/ui.js';
+import { caseIds, harnessesOf, modelsOf, experimentTitle, experimentMatches, experimentProblems, initialExperiment, initialSelection, effortLevels, effortLabel, selectionView, runRequest, signalQuery } from './js/run-selection.js';
+import { preferredPreset, oneCallSelection, rerunSelection } from './js/control-onboarding.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const svg = icon;
-const plural = (n, word) => words(n, word, word === 'try' ? 'tries' : `${word}s`);
+const plural = (n, word) => words(n, word, /[^aeiou]y$/.test(word) ? `${word.slice(0, -1)}ies` : `${word}s`);
 const ago = (iso) => {
   if (!iso) return '';
   const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
@@ -19,10 +21,9 @@ const ago = (iso) => {
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
   return shortDate(iso);
 };
-const firstSentence = (text) => String(text || '').trim().split(/(?<=[.?!])\s/)[0];
 
-async function api(method, url, body) {
-  const res = await fetch(url, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+async function api(method, url, body, options = {}) {
+  const res = await fetch(url, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined, ...options });
   let data = null;
   try {
     data = await res.json();
@@ -36,14 +37,23 @@ async function api(method, url, body) {
 const S = {
   catalog: null,
   state: null,
+  stateError: '',
   jobs: [],
   running: null,
   lines: new Map(), // job id -> { next, lines: [] }
   panels: { run: null, lab: null },
   view: 'home',
   fails: 0,
-  sel: { exp: null, harness: '', models: new Set(), cases: new Set(), repeats: '' },
+  sel: initialSelection(null),
+  expSearch: '',
+  family: '',
+  preparation: null,
+  storage: null,
+  storageError: '',
+  storageBusy: false,
+  resetting: false,
 };
+const rerunId = new URLSearchParams(location.search).get('rerun');
 
 /* ---------- Toasts ---------- */
 function toast(text, tone = 'info') {
@@ -72,125 +82,15 @@ function showView(name, { instant = false } = {}) {
   S.view = name;
   for (const v of VIEWS) $(`view-${v}`).classList.toggle('active', v === name);
   setCurrent(name, { instant });
+  document.title = `${name === 'home' ? 'Model Lab' : name === 'run' ? 'Run' : 'Lab'}${name === 'home' ? '' : ' | Model Lab'}`;
   if (location.hash.slice(1) !== name) history.replaceState(null, '', `#${name}`);
   window.scrollTo({ top: 0, behavior: 'auto' });
 }
 window.addEventListener('hashchange', () => showView(location.hash.slice(1)));
 
-/* ---------- Custom select (the real <select> keeps the value and the change events) ---------- */
-let openMenu = null;
-function closeMenu() {
-  if (!openMenu) return;
-  openMenu.trigger.setAttribute('aria-expanded', 'false');
-  openMenu.menu.remove();
-  openMenu = null;
-}
-function enhanceSelect(select) {
-  const trigger = document.createElement('button');
-  trigger.type = 'button';
-  trigger.className = 'sel';
-  trigger.setAttribute('aria-haspopup', 'listbox');
-  trigger.setAttribute('aria-expanded', 'false');
-  trigger.innerHTML = `<span class="sel-text"></span>${svg('down')}`;
-  select.after(trigger);
-  select.setAttribute('aria-hidden', 'true');
-  select.tabIndex = -1;
-  const label = document.querySelector(`label[for="${select.id}"]`);
-  if (label) {
-    label.addEventListener('click', (e) => {
-      e.preventDefault();
-      trigger.focus();
-    });
-    trigger.setAttribute('aria-label', label.textContent);
-  }
-  const paint = () => {
-    const opt = select.selectedOptions[0];
-    const text = trigger.querySelector('.sel-text');
-    text.textContent = opt ? opt.textContent : '';
-  };
-  const choose = (value) => {
-    if (select.value !== value) {
-      select.value = value;
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-    paint();
-    closeMenu();
-    trigger.focus();
-  };
-  const setActive = (i) => {
-    if (!openMenu) return;
-    openMenu.active = i;
-    openMenu.menu.querySelectorAll('.opt').forEach((el, n) => el.classList.toggle('active', n === i));
-    openMenu.menu.children[i]?.scrollIntoView({ block: 'nearest' });
-  };
-  const move = (by) => {
-    if (!openMenu || !by) return;
-    const n = select.options.length;
-    setActive(Math.min(n - 1, Math.max(0, (openMenu.active ?? -1) + by)));
-  };
-  const open = (moveBy = 0) => {
-    if (openMenu?.trigger === trigger) {
-      move(moveBy);
-      return;
-    }
-    closeMenu();
-    const menu = document.createElement('div');
-    menu.className = 'menu';
-    menu.setAttribute('role', 'listbox');
-    [...select.options].forEach((o, i) => {
-      const el = document.createElement('div');
-      el.className = 'opt';
-      el.setAttribute('role', 'option');
-      el.setAttribute('aria-selected', String(o.selected));
-      el.innerHTML = `<span class="opt-text"><span></span></span>${svg('check')}`;
-      el.querySelector('.opt-text span').textContent = o.textContent;
-      if (o.dataset.detail) el.firstChild.insertAdjacentHTML('beforeend', `<small>${esc(o.dataset.detail)}</small>`);
-      el.addEventListener('mousedown', (e) => e.preventDefault());
-      el.addEventListener('click', () => choose(o.value));
-      el.addEventListener('mousemove', () => setActive(i));
-      menu.append(el);
-    });
-    document.body.append(menu);
-    openMenu = { trigger, menu, active: select.selectedIndex, place: null };
-    const place = () => {
-      const r = trigger.getBoundingClientRect();
-      menu.style.width = `${r.width}px`;
-      menu.style.left = `${r.left}px`;
-      const below = innerHeight - r.bottom;
-      const up = below < 260 && r.top > below;
-      menu.classList.toggle('up', up);
-      menu.style.top = up ? '' : `${r.bottom + 6}px`;
-      menu.style.bottom = up ? `${innerHeight - r.top + 6}px` : '';
-    };
-    openMenu.place = place;
-    place();
-    trigger.setAttribute('aria-expanded', 'true');
-    setActive(select.selectedIndex);
-    if (moveBy) move(moveBy);
-  };
-  trigger.addEventListener('click', () => (openMenu?.trigger === trigger ? closeMenu() : open()));
-  trigger.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      open(e.key === 'ArrowDown' ? 1 : -1);
-    } else if (e.key === 'Enter' && openMenu?.trigger === trigger) {
-      e.preventDefault();
-      const o = select.options[openMenu.active] || select.options[0];
-      if (o) choose(o.value);
-    } else if (e.key === 'Escape') closeMenu();
-  });
-  select.addEventListener('refresh', paint);
-  paint();
-}
-document.addEventListener('mousedown', (e) => {
-  if (openMenu && !openMenu.menu.contains(e.target) && !openMenu.trigger.contains(e.target)) closeMenu();
-});
-window.addEventListener('scroll', () => openMenu?.place(), true);
-window.addEventListener('resize', () => openMenu?.place());
-const refreshSelect = (select) => select.dispatchEvent(new Event('refresh'));
-
 /* ---------- Jobs ---------- */
 async function startJob(body, panel) {
+  if (!body) return null;
   try {
     const { job } = await api('POST', '/api/jobs', body);
     S.running = job.id;
@@ -288,6 +188,7 @@ function renderPanel(panel) {
   const live = job.status === 'running' || job.status === 'stopping';
   const p = progressOf(job);
   if (host.dataset.job !== id || host.dataset.status !== job.status) {
+    const disclosures = captureDisclosures(host);
     const stopWord = job.status === 'stopping' ? 'Stop now' : job.command === 'run' && !job.dry_run ? 'Stop after this call' : 'Stop';
     const ctxKey = !live && p ? contextOfRun(p) : null;
     const foot = !live && p && p.done > 0
@@ -295,13 +196,14 @@ function renderPanel(panel) {
       : !live && job.dry_run ? '<p class="job-note">Preview only: nothing was called or written. Press Start run to call the models.</p>' : '';
     host.innerHTML = `<div class="job-head">${statusTag(job, { shake: host.dataset.job === id && job.status === 'failed' })}<span class="job-name"></span>${live ? `<button type="button" class="btn danger small" data-stop="${esc(id)}">${stopWord}</button>` : ''}</div>
       ${p ? '<div class="prog"><div class="progress"><i></i></div><p class="prog-text"></p></div>' : ''}
-      <details class="log-box"${p ? '' : ' open'}><summary class="disclose">${p ? 'Show the log' : 'Log'}</summary><p class="job-cmd"><code></code></p><pre class="log" tabindex="0" aria-label="Log"></pre></details>
+      <details class="log-box" id="${panel}-log-${esc(id)}"${p ? '' : ' open'}><summary class="disclose">${p ? 'Show the log' : 'Log'}</summary><p class="job-cmd"><code></code></p><pre class="log" tabindex="0" aria-label="Log"></pre></details>
       <div class="job-foot">${foot}</div>`;
     host.querySelector('.job-name').textContent = jobTitle(job);
     host.querySelector('.job-cmd code').textContent = job.args.join(' ');
     host.dataset.job = id;
     host.dataset.status = job.status;
     host.dataset.shown = '0';
+    restoreDisclosures(disclosures, host);
   }
   if (p) {
     const share = p.total ? Math.min(1, p.done / p.total) : 0;
@@ -375,7 +277,7 @@ async function poll() {
       const was = before.get(job.id);
       return (was === 'running' || was === 'stopping') && job.status !== was;
     });
-    if (ended.some((job) => job.command === 'run' || job.command === 'score')) await loadState();
+    if (ended.some((job) => job.command === 'run' || job.command === 'score')) await Promise.all([loadState(), loadStorage()]);
     ended.forEach(finished);
     paint();
   } catch {
@@ -419,11 +321,24 @@ async function loadCatalog() {
 async function loadState() {
   try {
     S.state = await api('GET', '/api/state');
+    S.stateError = '';
     setData(S.state);
   } catch (error) {
+    S.stateError = error.message;
     toast(`The results did not load: ${error.message}`, 'err');
-    return;
+    renderHome();
+    renderProblems();
+    return false;
   }
+  renderHome();
+  renderProblems();
+  return true;
+}
+
+function invalidateEvidence() {
+  S.state = null;
+  S.stateError = '';
+  setData(null);
   renderHome();
   renderProblems();
 }
@@ -436,6 +351,15 @@ function doctorRows(id) {
     .map((m) => ({ name: m[1], source: m[2], ready: m[3] === 'ready', isolation: m[4], detail: m[5].trim() }));
 }
 const HALT = { left_workdir: 'the agent wrote outside its folder' };
+const FAMILY_DESCRIPTIONS = {
+  smoke: 'Short questions to check that your models, harnesses and scoring work.',
+  'ladder-answer': 'Reasoning and knowledge questions, from quick answers to demanding problems.',
+  'ladder-code': 'Write a JavaScript function for each task. Hidden tests check the results.',
+  'ladder-agent': 'Edit a starter project in an isolated folder. Hidden checks score the final files.',
+  'visual-web': 'Build web pages and interactive scenes. Scores check delivery; inspect the visual output separately.',
+  'foldaway-apartment': 'Build three versions of a folding 3D apartment, with increasing interaction and layout demands.',
+};
+const familyDescription = suite => FAMILY_DESCRIPTIONS[suite?.id] || suite?.description || '';
 
 const problemsTitle = (n) => `${plural(n, 'record')} ${n === 1 ? 'does' : 'do'} not match the schema`;
 
@@ -461,6 +385,7 @@ function attentionItems() {
 }
 
 function renderHome() {
+  renderLibrary();
   // Running job
   const job = S.jobs.find((j) => j.id === S.running);
   const card = $('live-job');
@@ -482,12 +407,14 @@ function renderHome() {
   const list = $('latest');
   const tests = S.state ? [...contexts()].sort((a, b) => String(b.latest_run_at || '').localeCompare(String(a.latest_run_at || ''))).slice(0, 3) : null;
   let html;
-  if (!tests) html = '<li class="row"><div class="row-text"><p>Reading the results</p></div></li>';
-  else if (!tests.length) html = '<li class="row"><div class="row-text"><h3>No results yet</h3><p>Run a test. Its result shows here.</p></div><div class="row-ctl"><a class="btn secondary small" href="#run">Open Run</a></div></li>';
+  if (!tests) html = S.stateError ? `<li class="row"><div class="row-text"><h3>Results unavailable</h3><p>${esc(S.stateError)}. Refresh to load current evidence.</p></div></li>` : '<li class="row"><div class="row-text"><p>Reading the results</p></div></li>';
+  else if (!tests.length) html = '<li class="row"><div class="row-text"><h3>No results yet</h3><p>Choose a test above. After your first run, Results will show its graphs and outputs.</p></div></li>';
   else {
     html = tests.map((c) => {
       const v = verdictFor(c);
-      return `<li><a class="meter" href="/results.html#ctx=${encodeURIComponent(c.key)}"><span class="meter-val"><b>${esc(testTitle(c))}</b><span class="meter-meta">${keepParts(testMeta(c, c.config_ids.length, soleCase(c)))}</span><span class="meter-say">${esc(v.sentences[0] || '')}</span></span>${svg('chev')}</a></li>`;
+      const meta = [`Suite v${c.suite.version}`, ...testMeta(c, c.config_ids.length, soleCase(c)).split(' · ').slice(1)];
+      const scope = c.cases.length === 1 && soleCase(c) ? `1 case: ${soleCase(c)}` : plural(c.cases.length, 'case');
+      return `<li><a class="meter recent-result" href="/results.html#ctx=${encodeURIComponent(c.key)}"><span class="meter-val"><b>${esc(testTitle(c))}<span class="recent-scope">${esc(scope)}</span></b><span class="meter-meta meta-parts">${meta.map((part) => `<span>${esc(part)}</span>`).join('')}</span><span class="meter-say">${esc(v.sentences[0] || '')}</span></span>${svg('chev')}</a></li>`;
     }).join('');
   }
   if (list.dataset.html !== html) {
@@ -507,115 +434,144 @@ function renderHome() {
   setNavDot('lab', items.some((it) => it.href === '#lab') ? 'warn' : '');
 }
 
+function renderLibrary() {
+  const suites = S.catalog?.suites;
+  if (!suites) return;
+  $('library-note').textContent = plural(suites.length, 'test family');
+  const html = suites.map(suite => {
+    const presets = S.catalog.experiments.filter(experiment => experiment.suite === suite.id);
+    return `<li class="glass library-card"><div><h3>${esc(suite.title || suite.id)}</h3><p>${esc(familyDescription(suite))}</p></div><p class="library-meta">${esc(plural(suite.case_count ?? suite.cases?.length ?? 0, 'task'))} · ${esc(plural(presets.length, 'preset'))}</p><button type="button" class="btn secondary small" data-suite="${esc(suite.id)}" aria-label="Choose ${esc(suite.title || suite.id)}">Choose and configure${svg('chev')}</button></li>`;
+  }).join('');
+  const list = $('test-library');
+  if (list.dataset.html !== html) {
+    list.innerHTML = html;
+    list.dataset.html = html;
+  }
+  const quickPreset = initialExperiment(S.catalog.experiments, null);
+  $('quick-try-btn').disabled = !oneCallSelection(quickPreset);
+}
+
 /* ---------- Run ---------- */
 const currentExp = () => S.catalog?.experiments.find((e) => e.file === S.sel.exp) || null;
-const caseIds = (e) => (e ? e.cases || e.case_ids || [] : []);
-const harnessesOf = (e) => [...new Set((e?.targets || []).map((t) => t.harness))];
 
 function renderRunForm() {
   const exps = S.catalog.experiments;
-  const select = $('exp-select');
-  select.innerHTML = '';
-  for (const e of exps) {
-    const o = new Option(e.id, e.file);
-    o.dataset.detail = firstSentence(e.description) || [e.suite, plural(e.targets?.length || 0, 'setup')].filter(Boolean).join(' · ');
-    select.append(o);
-  }
   let saved = null;
   try {
     saved = localStorage.getItem('lab-exp');
   } catch {
     saved = null;
   }
-  S.sel.exp = exps.some((e) => e.file === saved) ? saved : exps[0]?.file || null;
-  select.value = S.sel.exp || '';
-  refreshSelect(select);
-  $('exp-note').textContent = plural(exps.length, 'experiment');
+  S.sel = initialSelection(rerunId ? null : initialExperiment(exps, saved));
+  S.family = currentExp()?.suite || '';
+  renderFamilies();
+  renderExperimentOptions();
+  $('exp-note').textContent = plural(exps.length, 'preset');
   pickExp();
 }
 
+function selectButton() {
+  const button = document.createElement('button');
+  button.append(document.createElement('selectedcontent'));
+  return button;
+}
+
+function renderFamilies() {
+  const select = $('suite-select');
+  select.replaceChildren(selectButton(), new Option('All test families', ''));
+  for (const suite of S.catalog?.suites || []) select.append(new Option(`${suite.title || suite.id} · ${plural(suite.case_count ?? suite.cases?.length ?? 0, 'task')}`, suite.id));
+  select.value = S.family;
+  const suite = S.catalog?.suites?.find(item => item.id === S.family);
+  $('suite-description').textContent = familyDescription(suite) || 'Choose what you want to test, or search across all families.';
+}
+
+function renderExperimentOptions() {
+  const exps = (S.catalog?.experiments || []).filter(experiment => !S.family || experiment.suite === S.family);
+  const matches = exps.filter((experiment) => experimentMatches(experiment, S.expSearch));
+  const select = $('exp-select');
+  select.replaceChildren(selectButton());
+  const selected = currentExp();
+  if (selected && !matches.includes(selected)) {
+    const group = document.createElement('optgroup');
+    group.label = 'Selected preset outside search';
+    group.append(new Option(experimentTitle(selected), selected.file));
+    select.append(group);
+  }
+  if (!selected) {
+    const placeholder = new Option('Choose a preset', '', true, true);
+    placeholder.disabled = true;
+    select.append(placeholder);
+  }
+  for (const experiment of matches) {
+    const problems = experimentProblems(experiment);
+    select.append(new Option(`${experimentTitle(experiment)}${problems.length ? ' · unavailable' : ''}`, experiment.file));
+  }
+  select.value = S.sel.exp || '';
+  $('exp-search-note').textContent = S.expSearch
+    ? `${matches.length} of ${exps.length} presets match.${selected && !matches.includes(selected) ? ' Selected preset is outside these matches.' : ''}${!matches.length ? ' Clear search to see every preset in this family.' : ''}`
+    : `${plural(exps.length, 'preset')}. Search keeps your current selection.`;
+  $('exp-search-clear').disabled = !S.expSearch;
+}
+
 function caseLabel(e, id) {
+  const known = S.catalog?.suites?.find(suite => suite.id === e?.suite)?.cases?.find(item => item.case_id === id);
+  if (known?.title) return known.title;
   const k = S.state?.cases?.[id];
-  return caseName(id, e.suite || '', k && k.input);
+  return caseName(id, e?.suite || '', k && k.input);
 }
 
 function renderChips() {
   const e = currentExp();
   const hs = harnessesOf(e);
-  $('harness-row').hidden = hs.length < 2;
-  $('harness-chips').innerHTML = ['', ...hs].map((h) => `<button type="button" class="mchip" role="radio" aria-checked="${S.sel.harness === h}" data-harness="${esc(h)}">${h ? esc(h) : 'All'}</button>`).join('');
-  const models = [...new Set((e?.targets || []).filter((t) => !S.sel.harness || t.harness === S.sel.harness).map((t) => t.model))];
-  for (const m of [...S.sel.models]) if (!models.includes(m)) S.sel.models.delete(m);
-  $('model-chips').innerHTML = models.map((m) => `<button type="button" class="mchip" aria-pressed="${S.sel.models.has(m)}" data-model="${esc(m)}">${esc(m)}</button>`).join('');
+  $('harness-row').hidden = !hs.length;
+  $('harness-chips').innerHTML = ['', ...hs].map((h) => `<button type="button" class="mchip" role="radio" aria-checked="${S.sel.harness === h}" tabindex="${S.sel.harness === h ? 0 : -1}" data-harness="${esc(h)}">${h ? esc(h) : 'All harnesses'}</button>`).join('');
+  const models = modelsOf(e, S.sel.harness);
+  $('model-chips').innerHTML = models.map((m) => `<button type="button" class="mchip" aria-pressed="${S.sel.models.has(m)}" data-model="${esc(m)}" title="${esc(m)}">${esc(e.targets.find(target => target.model === m)?.display_name || m)}</button>`).join('');
   const ids = caseIds(e);
   $('case-chips').innerHTML = ids.length ? ids.map((c) => `<button type="button" class="mchip" aria-pressed="${S.sel.cases.has(c)}" data-case="${esc(c)}" title="${esc(c)}">${esc(caseLabel(e, c))}</button>`).join('') : '<span class="chip muted">No cases found</span>';
 }
 
-function pickExp() {
+function pickExp({ reset = true } = {}) {
   const e = currentExp();
-  S.sel.harness = '';
-  S.sel.models = new Set();
-  S.sel.cases = new Set();
-  S.sel.repeats = '';
+  if (reset) S.sel = initialSelection(e);
   const detail = $('exp-detail');
   detail.hidden = false; // empty until the catalog arrives
   if (!e) {
-    detail.innerHTML = '<div class="row-text"><p>No experiments in experiments/.</p></div>';
+    detail.innerHTML = '<div class="row-text"><p>Choose a test and preset to see its models, harnesses and availability.</p></div>';
+    $('edit-notice').hidden = true;
+    $('repeats').value = '';
     renderChips();
     countCalls();
     return;
   }
-  const chips = [
-    e.suite ? `<span class="chip muted">test ${esc(e.suite)}</span>` : '',
-    `<span class="chip muted">${esc(plural(caseIds(e).length, 'case'))}</span>`,
-    `<span class="chip muted">${esc(e.repeats > 1 ? `${e.repeats} tries each` : '1 try')}</span>`,
-    e.access === 'edit' ? '<span class="chip warn">agent task: edits files</span>' : '',
-    // The experiment only asks. Each run records what stayed out: kept out, partly kept out, leaked or unknown.
-    `<span class="chip muted"${e.user_config === 'isolated' ? ' title="The result of each run says whether it stayed out: kept out, partly kept out, leaked or unknown."' : ''}>user setup ${e.user_config === 'isolated' ? 'asked to stay out' : 'loaded'}</span>`,
-  ].join('');
-  const targets = (e.targets || []).map((t) => `<div class="target"><span class="mark-s"></span><b>${esc(t.model)}</b><span>through ${esc(t.harness)}${t.effort ? ` · effort ${esc(t.effort)}` : ''}</span></div>`).join('');
-  const problems = e.problems.length ? `<div class="notice warn">${e.problems.map(esc).join('<br>')}</div>` : '';
-  detail.innerHTML = `${e.description ? '<p class="exp-desc"></p>' : ''}<div class="chip-row">${chips}</div><div class="targets" aria-label="Setups">${targets}</div>${problems}`;
+  const problems = experimentProblems(e);
+  detail.innerHTML = `<h3 class="experiment-title">${esc(experimentTitle(e))}</h3>${e.description ? '<p class="exp-desc"></p>' : ''}<p class="setup-policy">User setup ${e.user_config === 'isolated' ? 'asked to stay out. Each run records what stayed out.' : 'loads through each harness.'}${e.access === 'edit' ? ' Agent task with file edits.' : ''}</p><p class="field-label">Included setups</p><div class="targets" id="included-targets" aria-label="Included setups"></div>${problems.length ? `<div class="notice warn"><strong>Unavailable</strong><ul>${problems.map((problem) => `<li>${esc(problem)}</li>`).join('')}</ul></div>` : ''}<details class="config-details" id="experiment-config"><summary>Technical preset details</summary><dl><dt>Exact id</dt><dd><code>${esc(e.id)}</code></dd><dt>File</dt><dd><code>experiments/${esc(e.file)}</code></dd><dt>Suite</dt><dd>${esc(e.suite)}</dd><dt>Prompt</dt><dd>${esc(e.prompt || 'Not specified')}</dd><dt>Model keys</dt><dd>${modelsOf(e).map(model => `<code>${esc(model)}</code>`).join(', ')}</dd></dl></details>`;
   if (e.description) detail.querySelector('.exp-desc').textContent = e.description;
-  $('repeats').value = '';
+  $('repeats').value = S.sel.repeats;
   $('repeats').placeholder = String(e.repeats);
   $('edit-notice').hidden = e.access !== 'edit';
   renderChips();
   countCalls();
 }
 
-function chosenTargets() {
-  const e = currentExp();
-  if (!e) return [];
-  return (e.targets || []).filter((t) => (!S.sel.harness || t.harness === S.sel.harness) && (!S.sel.models.size || S.sel.models.has(t.model)));
-}
-const repeatsOk = () => S.sel.repeats === '' || (Number.isInteger(Number(S.sel.repeats)) && Number(S.sel.repeats) >= 1 && Number(S.sel.repeats) <= 50);
 
 function countCalls() {
   const e = currentExp();
-  if (!e) {
-    $('plan-n').textContent = '0';
-    syncRunButtons();
-    scheduleSignal();
-    return 0;
-  }
-  const cases = S.sel.cases.size || caseIds(e).length;
-  const repeats = S.sel.repeats === '' ? e.repeats || 1 : Number(S.sel.repeats);
-  const targets = chosenTargets().length;
-  const calls = targets * cases * repeats;
-  const ok = repeatsOk() && targets > 0;
-  $('plan-n').textContent = ok ? String(calls) : '0';
-  $('plan-word').textContent = ok && calls === 1 ? 'call' : 'calls';
-  $('plan-break').innerHTML = [['Setups', targets], ['Cases', cases], ['Tries per case', ok ? repeats : '–']]
+  const view = selectionView(e, S.sel);
+  const { repeats, calls, valid, targets, cases } = view;
+  $('plan-n').textContent = String(calls);
+  $('plan-word').textContent = calls === 1 ? 'call' : 'calls';
+  $('plan-break').innerHTML = [['Setups', targets.length], ['Cases', cases.length], ['Tries per case', Number.isInteger(repeats) ? repeats : '–']]
     .map(([k, v]) => `<dt>${k}</dt><dd class="num">${esc(v)}</dd>`).join('');
-  $('call-count').classList.toggle('bad', !ok);
-  $('call-count').textContent = !repeatsOk()
-    ? 'Tries must be a whole number from 1 to 50.'
-    : targets
-      ? `${plural(targets, 'setup')} × ${plural(cases, 'case')} × ${plural(repeats, 'try')} = ${plural(calls, 'call')}.`
-      : 'No setup matches this harness and these models.';
-  const parts = [S.sel.harness ? `${S.sel.harness} only` : '', S.sel.models.size ? plural(S.sel.models.size, 'model') : '', S.sel.cases.size ? plural(S.sel.cases.size, 'case') : '', S.sel.repeats ? plural(Number(S.sel.repeats) || 0, 'try') : ''].filter(Boolean);
-  $('narrow-sum').textContent = parts.length ? parts.join(' · ') : 'Everything in the experiment';
+  $('call-count').classList.toggle('bad', !valid);
+  $('call-count').textContent = valid ? `${plural(targets.length, 'setup')} × ${plural(cases.length, 'case')} × ${plural(repeats, 'try')}.` : view.problems[0];
+  $('narrow-sum').textContent = `${plural(view.selectedModels.length, 'model')} · ${plural(cases.length, 'case')} included`;
+  $('models-note').textContent = `${view.selectedModels.length} of ${view.models.length} included${S.sel.harness ? ` for ${S.sel.harness}` : ''}.`;
+  $('cases-note').textContent = `${cases.length} of ${caseIds(e).length} included. Select at least one.`;
+  const included = $('included-targets');
+  if (included) included.innerHTML = targets.length ? targets.map((target) => `<div class="target"><b>${esc(target.display_name || target.model)}</b><span class="setup-tag">${esc(target.harness)}</span><span class="setup-tag effort-tag">${esc(target.effort === 'unavailable' ? 'Effort unavailable' : `${effortLabel(target.effort || 'default')} thinking`)}</span></div>`).join('') : '<p class="selection-note">No setup included.</p>';
+  renderEffort();
+  $('one-call-btn').disabled = !oneCallSelection(e);
   $('repeats-hint').textContent = repeats < 3 ? 'Use 3 or more to compare setups. Fewer is fine for a first look.' : 'Enough tries to compare setups.';
   disarm();
   syncRunButtons();
@@ -623,10 +579,95 @@ function countCalls() {
   return calls;
 }
 
+function renderEffort() {
+  const levels = effortLevels(currentExp(), S.sel);
+  const select = $('effort-select');
+  select.replaceChildren(selectButton(), new Option('Keep preset efforts', ''));
+  for (const level of levels) select.append(new Option(`${effortLabel(level)} thinking`, level));
+  const unsupported = Boolean(S.sel.effort && !levels.includes(S.sel.effort));
+  if (unsupported) select.append(new Option(`${effortLabel(S.sel.effort)} · unsupported by this selection`, S.sel.effort));
+  select.value = S.sel.effort;
+  select.setAttribute('aria-invalid', String(unsupported));
+  $('effort-note').textContent = unsupported
+    ? 'This effort is not supported by every selected setup. Choose another effort or narrow the models.'
+    : levels.length ? 'Only efforts supported by every selected setup are offered. Preset values stay visible above.'
+      : selectionView(currentExp(), S.sel).targets.length ? 'These setups share no adjustable effort level. Keep their preset values, or narrow the models.' : 'Select a model to see its supported thinking efforts.';
+}
+
+function renderPreparation() {
+  const host = $('preparation-note');
+  host.hidden = !S.preparation;
+  host.classList.toggle('warn', S.preparation?.tone === 'warn');
+  host.textContent = S.preparation?.message || '';
+}
+
+function clearPreparation() {
+  S.preparation = null;
+  renderPreparation();
+  const url = new URL(location.href);
+  if (url.searchParams.has('rerun')) {
+    url.searchParams.delete('rerun');
+    history.replaceState(null, '', url);
+  }
+}
+
+function chooseFamily(family) {
+  clearPreparation();
+  S.family = family;
+  S.expSearch = '';
+  $('exp-search').value = '';
+  const experiment = family ? preferredPreset(S.catalog, family, S.sel.exp) : currentExp();
+  S.sel = initialSelection(experiment);
+  renderFamilies();
+  renderExperimentOptions();
+  pickExp();
+  if (experiment && !experimentProblems(experiment).length) writePref('lab-exp', experiment.file);
+}
+
+function prepareOneCall(experiment) {
+  const selection = oneCallSelection(experiment);
+  if (!selection) return;
+  clearPreparation();
+  S.sel = selection;
+  S.family = experiment.suite;
+  S.expSearch = '';
+  $('exp-search').value = '';
+  S.preparation = { message: 'A one-call try was prepared. Review or change the model, harness, case and thinking effort below, then Preview. No model has been called.' };
+  renderPreparation();
+  renderFamilies();
+  renderExperimentOptions();
+  pickExp({ reset: false });
+  showView('run');
+  $('model-chips').querySelector('[aria-pressed="true"]')?.focus({ preventScroll: true });
+}
+
+async function loadRerun(id) {
+  S.preparation = { message: `Reading the saved selection from run ${id}. No model will be called.` };
+  renderPreparation();
+  try {
+    const payload = await api('GET', `/api/rerun?run_id=${encodeURIComponent(id)}`);
+    const result = rerunSelection(S.catalog, payload);
+    if (!result.selection) throw new Error(result.problems.join(' '));
+    S.sel = result.selection;
+    S.family = currentExp().suite;
+    S.preparation = { message: `Prepared from run ${payload.source?.run_id || id}. ${payload.note || 'Review the selection and Preview before starting a new run.'} No model has been called.` };
+  } catch (error) {
+    S.sel = initialSelection(null);
+    S.family = '';
+    S.preparation = { tone: 'warn', message: `This run cannot be prepared. ${error.message} Choose a test and preset explicitly to continue.` };
+  }
+  renderPreparation();
+  renderFamilies();
+  renderExperimentOptions();
+  pickExp({ reset: false });
+  showView('run', { instant: true });
+}
+
 /* The signal check (GET /api/signal, node lab signal): an estimate from stored runs, shown before the buttons. */
 const SIGNAL_WORD = { 'worth running': ['ok', 'Worth running'], 'low signal': ['warn', 'Low signal'], unknown: ['info', 'Unknown'] };
 let signalSeq = 0;
 let signalTimer = null;
+let signalController = null;
 function signalBox() {
   let box = $('signal');
   if (!box) {
@@ -657,29 +698,25 @@ function paintSignal(r) {
     ['Setup state', [...new Set(r.setups.map((s) => s.setup_state))].map((state) => `${r.setups.filter((s) => s.setup_state === state).length} ${state}`).join(', ')],
   ];
   const box = signalBox();
+  const disclosures = captureDisclosures(box);
   box.hidden = false;
   box.classList.remove('busy');
   box.innerHTML = `<div class="signal-head"><span class="mark-s ${tone}" aria-hidden="true"></span><b>${esc(word)}</b></div>`
     + `<ul class="signal-why">${r.reasons.slice(0, 2).map((reason) => `<li>${esc(reason)}</li>`).join('')}</ul>`
-    + (r.reasons.length > 2 ? `<details class="signal-more"><summary class="disclose">${esc(`${plural(r.reasons.length - 2, 'more reason')}`)}</summary><ul class="signal-why">${r.reasons.slice(2).map((reason) => `<li>${esc(reason)}</li>`).join('')}</ul></details>` : '')
-    + `<dl class="plan-break">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="num">${esc(v)}</dd>`).join('')}</dl>`
-    + `<p class="plan-foot">${esc(r.note)}</p>`;
+    + `<details class="signal-more" id="signal-details"><summary class="disclose">Signal details${r.reasons.length > 2 ? ` · ${plural(r.reasons.length - 2, 'more reason')}` : ''}</summary>${r.reasons.length > 2 ? `<ul class="signal-why">${r.reasons.slice(2).map((reason) => `<li>${esc(reason)}</li>`).join('')}</ul>` : ''}<dl class="plan-break">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="num">${esc(v)}</dd>`).join('')}</dl><p class="plan-foot">${esc(r.note)}</p></details>`;
+  restoreDisclosures(disclosures, box);
 }
 async function loadSignal() {
-  const e = currentExp();
   const box = signalBox();
-  if (!e || !chosenTargets().length || !repeatsOk()) {
+  const query = signalQuery(currentExp(), S.sel);
+  if (!query) {
     box.hidden = true;
     return;
   }
-  const query = new URLSearchParams({ experiment: e.file });
-  if (S.sel.harness) query.set('harness', S.sel.harness);
-  if (S.sel.models.size) query.set('models', [...S.sel.models].join(','));
-  if (S.sel.cases.size) query.set('cases', [...S.sel.cases].join(','));
-  if (S.sel.repeats) query.set('repeats', S.sel.repeats);
+  signalController = new AbortController();
   const seq = ++signalSeq;
   try {
-    const report = await api('GET', `/api/signal?${query}`);
+    const report = await api('GET', `/api/signal?${query}`, undefined, { signal: signalController.signal });
     if (seq === signalSeq) paintSignal(report);
   } catch (error) {
     if (seq !== signalSeq) return;
@@ -691,28 +728,73 @@ async function loadSignal() {
 function scheduleSignal() {
   signalSeq += 1;
   clearTimeout(signalTimer);
+  signalController?.abort();
+  signalController = null;
   const box = signalBox();
+  if (!selectionView(currentExp(), S.sel).valid) {
+    box.hidden = true;
+    box.innerHTML = '';
+    box.classList.remove('busy');
+    return;
+  }
   box.hidden = false;
   box.classList.add('busy');
   box.innerHTML = '<p class="signal-why">Checking stored runs…</p>';
   signalTimer = setTimeout(loadSignal, 300);
 }
 function syncRunButtons() {
-  const none = !chosenTargets().length || !repeatsOk();
+  const view = selectionView(currentExp(), S.sel);
+  const none = !view.valid;
   $('start-btn').disabled = none || Boolean(S.running);
   $('preview-btn').disabled = none || Boolean(S.running);
-  $('start-btn').title = S.running ? 'Wait for the current job to end.' : '';
+  const reason = S.running ? 'Wait for the current job to end.' : view.problems[0] || '';
+  $('start-btn').title = reason;
+  $('preview-btn').title = reason;
 }
-$('exp-select').addEventListener('change', (e) => {
-  S.sel.exp = e.target.value;
-  try {
-    localStorage.setItem('lab-exp', S.sel.exp);
-  } catch {
-    // Not saved.
-  }
-  pickExp();
+$('exp-search').addEventListener('input', (event) => {
+  S.expSearch = event.target.value;
+  renderExperimentOptions();
 });
+$('exp-search-clear').addEventListener('click', () => {
+  S.expSearch = '';
+  $('exp-search').value = '';
+  renderExperimentOptions();
+  $('exp-search').focus();
+});
+$('exp-select').addEventListener('change', (e) => {
+  clearPreparation();
+  S.sel.exp = e.target.value;
+  if (!experimentProblems(currentExp()).length) writePref('lab-exp', S.sel.exp);
+  pickExp();
+  renderExperimentOptions();
+});
+$('suite-select').addEventListener('change', event => chooseFamily(event.target.value));
+$('effort-select').addEventListener('change', event => {
+  S.sel.effort = event.target.value;
+  countCalls();
+});
+$('quick-try-btn').addEventListener('click', () => prepareOneCall(initialExperiment(S.catalog?.experiments || [], null)));
+$('one-call-btn').addEventListener('click', () => prepareOneCall(currentExp()));
 document.addEventListener('click', (e) => {
+  const family = e.target.closest('[data-suite]');
+  if (family) {
+    chooseFamily(family.dataset.suite);
+    showView('run');
+    $('exp-select').focus({ preventScroll: true });
+    return;
+  }
+  const action = e.target.closest('[data-select]');
+  if (action) {
+    const set = S.sel[action.dataset.select];
+    const keys = action.dataset.select === 'models' ? modelsOf(currentExp(), S.sel.harness) : caseIds(currentExp());
+    for (const key of keys) {
+      if (action.dataset.selection === 'all') set.add(key);
+      else set.delete(key);
+    }
+    renderChips();
+    countCalls();
+    return;
+  }
   const chip = e.target.closest('.mchip');
   if (!chip) return;
   if (chip.dataset.harness !== undefined) {
@@ -729,18 +811,21 @@ document.addEventListener('click', (e) => {
   }
   countCalls();
 });
+$('harness-chips').addEventListener('keydown', (event) => {
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+  const chips = [...$('harness-chips').querySelectorAll('[data-harness]')];
+  const current = chips.indexOf(document.activeElement);
+  if (current < 0) return;
+  event.preventDefault();
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? chips.length - 1 : (current + (['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1) + chips.length) % chips.length;
+  chips[next].click();
+});
 $('repeats').addEventListener('input', (e) => {
   S.sel.repeats = e.target.value.trim();
   countCalls();
 });
 function runBody(dry) {
-  const e = currentExp();
-  const body = { command: 'run', experiment: e.file, dry_run: dry };
-  if (S.sel.harness) body.harness = S.sel.harness;
-  if (S.sel.models.size) body.models = [...S.sel.models];
-  if (S.sel.cases.size) body.cases = [...S.sel.cases];
-  if (S.sel.repeats) body.repeats = Number(S.sel.repeats);
-  return body;
+  return runRequest(currentExp(), S.sel, dry);
 }
 const showOutput = () => $('run-output-sect').scrollIntoView({ behavior: 'smooth', block: 'start' });
 $('preview-btn').addEventListener('click', async () => {
@@ -760,6 +845,7 @@ function disarm() {
 }
 $('start-btn').addEventListener('click', async () => {
   const b = $('start-btn');
+  if (!selectionView(currentExp(), S.sel).valid || S.running) return;
   if (!b.classList.contains('armed')) {
     const e = currentExp();
     const calls = countCalls();
@@ -776,12 +862,115 @@ $('start-btn').addEventListener('click', async () => {
   b.textContent = 'Start run';
   countCalls();
   if (job) {
+    clearPreparation();
     $('run-output-note').textContent = 'Live: the models are called through your sign-ins';
     showOutput();
   }
 });
 
 /* ---------- Lab ---------- */
+const bytesText = value => {
+  const bytes = Number(value) || 0;
+  if (bytes < 1024) return `${bytes.toLocaleString()} B`;
+  const unit = bytes < 1024 ** 2 ? 'KB' : bytes < 1024 ** 3 ? 'MB' : 'GB';
+  const divisor = { KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3 }[unit];
+  return `${(bytes / divisor).toLocaleString(undefined, { maximumFractionDigits: 1 })} ${unit}`;
+};
+
+async function loadStorage() {
+  S.storageBusy = true;
+  renderStorage();
+  try {
+    S.storage = await api('GET', '/api/storage');
+    S.storageError = '';
+  } catch (error) {
+    S.storageError = `Storage could not be read. ${error.message}`;
+  } finally {
+    S.storageBusy = false;
+    renderStorage();
+  }
+}
+
+function renderStorage() {
+  const storage = S.storage;
+  $('storage-note').textContent = S.storageError ? 'Unavailable' : storage ? `${plural(storage.run_count, 'saved run')} · ${bytesText(storage.bytes)}` : 'Reading saved data';
+  $('storage-status').textContent = S.storageError || (storage ? `${plural(storage.run_count, 'saved run')} use ${bytesText(storage.bytes)} in run files. The data locations are below.` : 'Reading saved run history.');
+  const labels = { data: 'Data folder', results: 'Run folders', annotations: 'Ratings', boards: 'Saved views', reports: 'Derived reports', ledger: 'Evidence ledger' };
+  const html = storage ? Object.entries(labels).map(([key, label]) => {
+    const values = Array.isArray(storage.paths[key]) ? storage.paths[key] : [storage.paths[key]];
+    return `<dt>${label}</dt><dd>${values.filter(Boolean).map(value => `<code title="${esc(value.absolute)}">${esc(value.display || value.absolute)}</code>`).join('<br>')}</dd>`;
+  }).join('') : '';
+  const paths = $('storage-paths');
+  if (paths.dataset.html !== html) {
+    paths.innerHTML = html;
+    paths.dataset.html = html;
+  }
+  const unknown = storage?.unknown || [];
+  $('storage-unknown').hidden = !unknown.length;
+  $('storage-unknown').textContent = unknown.length ? `History cannot be cleared while ${plural(unknown.length, 'unknown entry')} remain in the run folders. They are preserved. ${unknown.map(item => item.display_path || item.path).join(', ')}` : '';
+  $('storage-refresh').disabled = S.storageBusy || S.resetting;
+  $('storage-reset').disabled = !storage || Boolean(S.storageError) || S.storageBusy || S.resetting || Boolean(S.running) || Boolean(unknown.length);
+  $('storage-reset').title = S.running ? 'Wait for the current job to finish.' : '';
+  $('reset-submit').disabled = $('reset-confirm').value !== 'DELETE ALL RUNS' || S.resetting || Boolean(S.running);
+}
+
+$('storage-refresh').addEventListener('click', loadStorage);
+$('storage-reset').addEventListener('click', async () => {
+  await loadStorage();
+  if ($('storage-reset').disabled) return;
+  const storage = S.storage;
+  const locations = (storage.paths.results || []).map(item => item.absolute || item.display).join(', ');
+  $('reset-description').textContent = `This will delete ${plural(storage.run_count, 'saved run')}, using ${bytesText(storage.bytes)} in run files, from ${locations}. Ratings, saved views and derived reports will also be cleared.`;
+  $('reset-confirm').value = '';
+  $('reset-error').textContent = '';
+  renderStorage();
+  $('reset-dialog').showModal();
+});
+$('reset-confirm').addEventListener('input', renderStorage);
+$('reset-dialog').addEventListener('close', () => {
+  $('reset-dialog').returnValue = '';
+  $('reset-confirm').value = '';
+  renderStorage();
+});
+$('reset-form').addEventListener('submit', async event => {
+  if (event.submitter?.value !== 'delete') return;
+  event.preventDefault();
+  if ($('reset-submit').disabled) return;
+  S.resetting = true;
+  $('reset-error').textContent = 'Clearing saved run history…';
+  renderStorage();
+  try {
+    const result = await api('POST', '/api/storage/reset', { confirm: 'DELETE ALL RUNS' });
+    invalidateEvidence();
+    S.jobs = [];
+    S.running = null;
+    S.lines.clear();
+    S.panels = { run: null, lab: null };
+    for (const panel of ['run', 'lab']) {
+      $(`${panel}-job`).innerHTML = '';
+      for (const key of ['job', 'status', 'shown']) delete $(`${panel}-job`).dataset[key];
+      $(`${panel}-output-sect`).hidden = true;
+    }
+    for (const command of ['validate', 'score', 'report']) $(`${command}-tag`).hidden = true;
+    await Promise.all([loadState(), loadStorage()]);
+    await poll();
+    paint();
+    $('reset-dialog').close();
+    toast(`Deleted ${plural(result.run_count ?? result.run_ids?.length ?? 0, 'saved run')} and freed ${bytesText(result.bytes_deleted)}. Future runs will stay saved.`, 'ok');
+  } catch (error) {
+    if (error.data?.partial) {
+      invalidateEvidence();
+      await loadState();
+    }
+    const removed = error.data?.partial?.bytes_deleted > 0 ? ` ${bytesText(error.data.partial.bytes_deleted)} were already removed.` : '';
+    $('reset-error').textContent = `History could not be cleared. ${error.message}${removed}`;
+    await loadStorage();
+  } finally {
+    S.resetting = false;
+    renderStorage();
+  }
+});
+
 function renderHarnesses() {
   const doc = lastJob('doctor');
   const rows = doc ? doctorRows(doc.id) : [];
@@ -852,12 +1041,19 @@ function renderLab() {
   renderProblems();
   renderRecordTags();
   renderJobs();
+  renderStorage();
   const id = S.panels.lab;
   const job = id && S.jobs.find((j) => j.id === id);
+  $('lab-cols').classList.toggle('has-output', Boolean(job));
+  $('lab-output-col').hidden = !job;
+  $('lab-output-sect').hidden = !job;
+  $('lab-output-h').textContent = job ? jobTitle(job) : 'Output';
   $('lab-output-note').textContent = job ? ago(job.started_at) : '';
 }
 
 const showLabOutput = () => {
+  renderLab();
+  $('lab-job').focus({ preventScroll: true });
   if (window.matchMedia('(max-width: 1179px)').matches) $('lab-output-sect').scrollIntoView({ behavior: 'smooth', block: 'start' });
 };
 document.addEventListener('click', async (e) => {
@@ -877,7 +1073,10 @@ document.addEventListener('click', async (e) => {
 });
 $('doctor-btn').addEventListener('click', async () => {
   const job = await startJob({ command: 'doctor' }, 'lab');
-  if (job) renderHarnesses();
+  if (job) {
+    renderHarnesses();
+    showLabOutput();
+  }
 });
 
 /* ---------- Appearance ---------- */
@@ -944,11 +1143,11 @@ $('motion-seg').addEventListener('click', (e) => {
 
 /* ---------- Start ---------- */
 async function init() {
-  document.querySelectorAll('select[data-custom]').forEach(enhanceSelect);
   mountShell({ current: 'home' });
   renderAppearance();
   showView(location.hash.slice(1) || 'home', { instant: true });
-  await Promise.all([loadCatalog().catch((error) => toast(`The experiments did not load: ${error.message}`, 'err')), loadState()]);
+  await Promise.all([loadCatalog().catch((error) => toast(`The presets did not load: ${error.message}`, 'err')), loadState(), loadStorage()]);
+  if (rerunId && S.catalog) await loadRerun(rerunId);
   if (S.catalog) renderChips();
   await poll();
   // Open the newest run job on Run, so its progress shows after a reload.

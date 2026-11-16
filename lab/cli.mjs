@@ -22,6 +22,7 @@ Commands
   run <experiment.yaml>   Run every target x case x repeat, write results/<run_id>/, score it
       --harness <name>      Only the targets that use this harness
       --models <a,b>        Only the targets for these model keys
+      --effort <level>      Use this verified thinking effort for the selected setups
       --repeats <n>         Override the experiment's repeats
       --cases <a,b>         Run only these case ids (recorded in the run)
       --dry-run             Show what would run; call nothing, write nothing
@@ -36,6 +37,8 @@ Commands
   adopt <run-id>... | --all   Vouch for runs as they are now in the evidence ledger (lab.ledger.jsonl):
                           runs copied in, committed later, or checked by hand. --all adopts
                           every run the ledger does not trust yet
+  delete <run-id> --confirm <run-id>   Deliberately delete that run from every active store
+  reset --confirm "DELETE ALL RUNS"   Delete all live run history, ratings, saved views and reports
   validate                Check inputs and every stored record against schemas/
   doctor                  Show which harnesses are installed here (built-in and configs/harnesses.yaml)
   runs                    List runs, newest first
@@ -89,6 +92,8 @@ async function main(argv) {
     options: {
       harness: { type: 'string' },
       models: { type: 'string' },
+      effort: { type: 'string' },
+      confirm: { type: 'string' },
       repeats: { type: 'string' },
       cases: { type: 'string' },
       'dry-run': { type: 'boolean' },
@@ -117,11 +122,12 @@ async function main(argv) {
     case 'run': {
       if (!positionals[0] && !values.resume) throw new Error('Name an experiment file: node lab run experiments/<name>.yaml, or resume a run: node lab run --resume <run-id>');
       if (positionals[0] && values.resume) throw new Error('Give an experiment file or --resume <run-id>, not both');
-      if (values.resume && (values.harness || values.models || values.repeats || values.cases)) throw new Error('--resume continues the run as it was planned; --harness, --models, --repeats and --cases do not apply');
+      if (values.resume && (values.harness || values.models || values.repeats || values.cases || values.effort)) throw new Error('--resume continues the run as it was planned; --harness, --models, --repeats, --cases and --effort do not apply');
       const results = await runCommand(root, positionals[0] ? path.resolve(positionals[0]) : null, {
         resume: values.resume,
         force: values.force,
         harness: values.harness,
+        effort: values.effort,
         models: values.models ? values.models.split(',').map((item) => item.trim()).filter(Boolean) : undefined,
         repeats: values.repeats != null ? Number(values.repeats) : undefined,
         cases: values.cases ? values.cases.split(',').map((item) => item.trim()).filter(Boolean) : undefined,
@@ -147,6 +153,15 @@ async function main(argv) {
     case 'adopt':
       adoptCommand(root, positionals, { all: values.all });
       return 0;
+    case 'delete':
+    case 'reset': {
+      const { deleteRun, resetHistory } = await import('./lib/storage.mjs');
+      if (command === 'delete' && positionals.length !== 1) throw new Error('Usage: node lab delete <run-id> --confirm <run-id>');
+      if (command === 'reset' && positionals.length) throw new Error('Usage: node lab reset --confirm "DELETE ALL RUNS"');
+      const result = command === 'delete' ? deleteRun(root, positionals[0], { confirm: values.confirm }) : resetHistory(root, { confirm: values.confirm });
+      console.log(JSON.stringify(result, null, 2));
+      return 0;
+    }
     case 'validate':
       return validateCommand(root);
     case 'doctor':

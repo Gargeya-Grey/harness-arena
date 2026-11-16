@@ -95,7 +95,7 @@ export function planExperiment(root, file, options = {}) {
 }
 
 /** The plan for an experiment object: from a file, or the copy a run recorded (resume). */
-export function planFromExperiment(root, experiment, { harness: onlyHarness, models: onlyModels, repeats: repeatOverride, cases: caseOverride, requireExplicitEffort = false, sha = null, name = experiment?.id || 'experiment' } = {}) {
+export function planFromExperiment(root, experiment, { harness: onlyHarness, models: onlyModels, repeats: repeatOverride, cases: caseOverride, effort: effortOverride, requireExplicitEffort = false, sha = null, name = experiment?.id || 'experiment' } = {}) {
   const file = name;
   const registry = loadRegistry(root);
   const { targets, problems } = resolveExperiment(experiment, registry, { requireExplicitEffort });
@@ -126,7 +126,16 @@ export function planFromExperiment(root, experiment, { harness: onlyHarness, mod
   if (!Number.isInteger(repeats) || repeats < 1) throw new Error(`repeats must be a positive integer, got ${repeats}`);
   // One run per harness and effort: a run's models share one effort setting, so two
   // efforts of one model are two runs, two configurations, one comparison.
-  const chosen = targets.filter((target) => (!onlyHarness || target.harness === onlyHarness) && (!onlyModels || onlyModels.includes(target.model)));
+  const selected = targets.filter((target) => (!onlyHarness || target.harness === onlyHarness) && (!onlyModels || onlyModels.includes(target.model)));
+  const chosen = effortOverride === undefined ? selected : [...new Map(selected.map((target) => [`${target.model}|${target.harness}`, { ...target, effort: effortOverride }])).values()];
+  if (effortOverride !== undefined) {
+    if (typeof effortOverride !== 'string' || !/^[a-z][a-z0-9-]{0,23}$/.test(effortOverride) || effortOverride === 'default') throw new Error('Choose an explicit supported effort level');
+    for (const target of chosen) {
+      const levels = registry[target.model]?.effort_levels;
+      const unavailable = !getAdapter(target.harness, root).supports_effort || (Array.isArray(levels) && levels.length === 0);
+      if (effortOverride === 'unavailable' ? !unavailable : !Array.isArray(levels) || !levels.includes(effortOverride)) throw new Error(`${target.model}: effort ${effortOverride} is not a verified supported level`);
+    }
+  }
   const adapters = Object.fromEntries(chosen.map((target) => [target.harness, getAdapter(target.harness, root)]));
   const targetIssues = targetProblems(chosen, registry, adapters);
   if (targetIssues.length) throw new Error(`${path.basename(file)}:\n  ${targetIssues.join('\n  ')}`);
@@ -140,6 +149,12 @@ export function planFromExperiment(root, experiment, { harness: onlyHarness, mod
   if (!groups.size) throw new Error(onlyHarness || onlyModels ? `No target matches ${[onlyHarness && `harness "${onlyHarness}"`, onlyModels && `models ${onlyModels.join(', ')}`].filter(Boolean).join(' and ')}` : 'No targets to run');
   // A run records the cases it executed. The full suite is recorded as "all" by omitting the list.
   const recorded = { ...experiment };
+  if (effortOverride !== undefined) {
+    recorded.targets = chosen.map(({model, harness, effort, label}) => ({model, harness, effort, ...(label ? {label} : {})}));
+    recorded.effort_policy = 'explicit';
+    delete recorded.models;
+    delete recorded.effort;
+  }
   if (caseOverride) recorded.cases = caseOverride;
   if (repeatOverride != null) recorded.repeats = repeats;
   return {
@@ -253,8 +268,9 @@ function entryKind(file) {
 function guardStamp(scope) {
   const { root, data } = scope;
   const stamp = treeStamp(root, UNGUARDED_DIRS);
+  const localData = data && path.relative(root, data).replace(/\\/g, '/');
   // results/ is stamped below in full; the dashboard folders are not watched.
-  for (const key of [...stamp.keys()]) if ([...DASHBOARD_DIRS, 'results'].some((dir) => key.startsWith(`${dir}/`))) stamp.delete(key);
+  for (const key of [...stamp.keys()]) if ([...DASHBOARD_DIRS, 'results', ...(localData && !localData.startsWith('..') ? [localData] : [])].some((dir) => key === dir || key.startsWith(`${dir}/`))) stamp.delete(key);
   for (const file of scope.configs) {
     const kind = entryKind(file);
     stamp.set(`config: ${file}`, kind === 'file' ? `file ${sha256(fs.readFileSync(file))}` : kind);
@@ -269,7 +285,7 @@ function guardStamp(scope) {
     stamp.set(`${DATA_KEY}.`, entryKind(data));
     if (fs.existsSync(data)) {
       for (const entry of fs.readdirSync(data).sort()) {
-        if (entry === 'annotations') continue;
+        if (DASHBOARD_DIRS.includes(entry)) continue;
         const file = path.join(data, entry);
         const kind = entryKind(file);
         stamp.set(`${DATA_KEY}${entry}`, kind === 'file' ? `file ${sha256(fs.readFileSync(file))}` : kind);

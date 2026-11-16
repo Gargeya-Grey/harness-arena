@@ -137,6 +137,29 @@ function agentExperiment(root, id, harness, repeats = 1) {
   return file;
 }
 
+test('a project-local data store permits dashboard history writes during an agent call while keeping run evidence guarded', async (t) => {
+  const { root } = setup(t, { agentic: true });
+  const localData = path.join(root, '.lab-data');
+  process.env.LAB_DATA = localData;
+  process.env.LAB_TEST_DATA = localData;
+  fake(t, 'fake-local-data', () => {
+    for (const name of ['annotations', 'boards', 'reports']) {
+      fs.mkdirSync(path.join(localData, name), { recursive: true });
+      fs.writeFileSync(path.join(localData, name, 'dashboard.txt'), 'owner dashboard activity');
+    }
+    return 'done';
+  });
+  const [valid] = await runCommand(root, agentExperiment(root, 'local-data', 'fake-local-data'), { log: () => {} });
+  assert.equal(valid.status, 'completed', 'independent dashboard writes do not halt the model');
+  fake(t, 'fake-local-tamper', () => {
+    fs.appendFileSync(path.join(valid.runDir, 'raw.jsonl'), '{"tampered":true}\n');
+    return 'done';
+  });
+  const [tampered] = await runCommand(root, agentExperiment(root, 'local-tamper', 'fake-local-tamper'), { log: () => {} });
+  assert.equal(tampered.status, 'failed');
+  assert(readLedger(ledgerPath(root)).runs.get(tampered.runId).halted, 'changes to saved evidence still halt the run');
+});
+
 /** A live process that is not this one: the runner of another worktree. */
 function otherRunner(t) {
   const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });

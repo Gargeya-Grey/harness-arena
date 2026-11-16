@@ -1,5 +1,5 @@
 // Results page entry. Reads /api/state, shows one test: the answer, the setups, case by case,
-// charts, ratings and runs. Writes only ratings, saved views, and score jobs.
+// graphs, retained output, ratings and run history.
 import { mountShell, watchJobs, progressText } from './shell.js';
 import { jobTitle } from './js/jobwatch.js';
 import { S, setData, ctx, readHash, writeHash, chooseContext, defaultSel, onlyOn, findContextForBoard, selectedCfgs, comparison, obsById } from './js/model.js';
@@ -8,18 +8,19 @@ import { renderHead, renderAnswer } from './js/summary.js';
 import { renderSetups } from './js/setups.js';
 import { renderCases } from './js/cases.js';
 import { renderCharts, watchChartWidth } from './js/charts.js';
-import { renderRuns } from './js/runs.js';
+import { renderRuns, renderDeleteRun, deleteStoredRun } from './js/runs.js';
 import { renderRatings } from './js/ratings.js';
-import { renderInspector, openInspector, closeInspector, inspectorJson, tabKeys } from './js/inspector.js';
+import { renderInspector, openInspector, closeInspector, inspectorJson, tabKeys, renderVisualOutputs } from './js/inspector.js';
 import { openReview, closeReview, setReview, saveReview, wireReview, reviewStartObs, nextReviewObs } from './js/review.js';
 import { openDlg, closeDlg, wireDialogs, renderTestPicker, renderSetupPicker, orderChosen, isDefault, renderSaveView, toggleShare, shareOpen } from './js/dialogs.js';
 import { markdown, saveFile, picture } from './js/exporter.js';
 import { testTitle } from './js/words.js';
-import { setStatus, announce, captureFocus, restoreFocus } from './js/ui.js';
+import { setStatus, announce, captureFocus, restoreFocus, captureDisclosures, restoreDisclosures } from './js/ui.js';
 import { copyText, html, setHtml } from './js/util.js';
 
 const $ = (id) => document.getElementById(id);
-const SECTIONS = ['setups-sect', 'cases-sect', 'runs-sect'];
+const SECTIONS = ['setups-sect', 'visuals-sect', 'cases-sect', 'runs-sect'];
+const DESTINATIONS = { overview: 'answer', setups: 'setups-sect', graphs: 'charts-sect', visuals: 'visuals-sect', cases: 'cases-sect', runs: 'runs-sect' };
 
 let chosen = new Set();
 let armedRun = '';
@@ -27,6 +28,9 @@ let armedBoard = '';
 let armTimer = 0;
 let running = null; // the job that runs now, from the job watch
 let watcher = null;
+let renderedContext = null;
+let deletingRun = '';
+const disclosures = new Map();
 
 /* ---------- Render ---------- */
 function renderEmpty() {
@@ -34,25 +38,55 @@ function renderEmpty() {
   if (S.error && !S.data) {
     setHtml(empty, html`<h2>The results did not load</h2><p>${S.error}. Check that <code>node lab dashboard</code> still runs, then try again.</p><button type="button" class="btn primary" data-act="reload" data-fk="reload">Try again</button>`);
   } else {
-    setHtml(empty, html`<h2>No results yet</h2><p>Run a test, and its result shows here: which setup passed more, which was faster, and every answer.</p><a class="btn primary" href="/#run">Run a test</a>`);
+    const removed = Boolean(S.ctxKey);
+    setHtml(empty, html`<h2>${removed ? 'This test has no stored runs now' : 'No results yet'}</h2><p>${removed ? 'Its results were removed. Choose another stored test or make a new run to see results here.' : 'Choose a test on Run, preview its plan, then start it. Results will show the setups, graphs and every retained answer.'}</p><div class="empty-actions">${S.data?.contexts?.length ? html`<button type="button" class="btn secondary" data-act="change-test" data-fk="empty:choose">Choose tests</button>` : ''}<a class="btn primary" href="/#run" data-fk="empty:run">Choose tests to run</a></div>`);
   }
 }
 
+function moveToSection(section, { focus = true } = {}) {
+  if (!ctx() || !DESTINATIONS[section]) return;
+  S.section = section;
+  if (section === 'runs') $('runs-details').open = true;
+  document.querySelectorAll('#result-nav [data-section]').forEach((button) => {
+    if (button.dataset.section === section) button.setAttribute('aria-current', 'location');
+    else button.removeAttribute('aria-current');
+  });
+  writeHash();
+  const target = $(DESTINATIONS[section]);
+  const heading = target.querySelector('h2') || $('test-title');
+  if (focus) heading.focus({ preventScroll: true });
+  target.scrollIntoView({ block: 'start' });
+}
+
 function renderRunsNow() {
+  const saved = captureFocus();
+  const folds = captureDisclosures($('runs'));
   renderRuns({ armed: armedRun, busy: Boolean(running) });
+  restoreDisclosures(folds, $('runs'));
+  restoreFocus(saved);
 }
 
 function renderAll() {
   const saved = captureFocus();
+  if (renderedContext) disclosures.set(renderedContext, captureDisclosures($('main')));
   const c = ctx();
   renderHead();
   $('test-acts').hidden = !c;
+  $('test-context').hidden = !c;
   $('answer').hidden = !c;
   $('empty').hidden = Boolean(c);
+  $('result-nav').hidden = !c;
+  $('results-guide').hidden = !c;
+  document.querySelectorAll('#result-nav [data-section]').forEach((button) => {
+    if (button.dataset.section === S.section) button.setAttribute('aria-current', 'location');
+    else button.removeAttribute('aria-current');
+  });
   SECTIONS.forEach((id) => { $(id).hidden = !c; });
   if (!c) {
     $('charts-sect').hidden = true;
     $('ratings-sect').hidden = true;
+    closeInspector({ instant: true });
+    for (const id of ['answer', 'setups', 'charts-main', 'charts-more-body', 'cases', 'visuals', 'runs', 'ratings']) $(id).innerHTML = '';
     renderEmpty();
     if (S.data) $('test-meta').textContent = '';
     return;
@@ -61,8 +95,11 @@ function renderAll() {
   renderSetups();
   renderCases();
   renderCharts();
+  renderVisualOutputs();
   renderRatings();
   renderRunsNow();
+  restoreDisclosures(disclosures.get(c.key), $('main'));
+  renderedContext = c.key;
   if (S.insp) renderInspector();
   writeHash();
   restoreFocus(saved, ['change-test']);
@@ -76,13 +113,22 @@ async function load({ initial = false } = {}) {
     S.error = null;
     if (initial) {
       const h = readHash();
+      chooseContext(h.ctx, h.cfg, { fallback: !h.ctx });
       S.only = h.only;
-      chooseContext(h.ctx, h.cfg);
+      S.caseQuery = h.query || '';
+      S.caseOutcomes = h.outcomes || [];
+      S.section = h.section || 'overview';
     } else {
-      chooseContext(S.ctxKey, S.custom ? S.sel : null);
+      chooseContext(S.ctxKey, S.custom ? S.sel : null, { fallback: !S.ctxKey });
     }
     if (S.boardId && !(data.boards || []).some((b) => b.board_id === S.boardId)) S.boardId = '';
     renderAll();
+    if ($('pick-setups').open && ctx()) {
+      const valid = new Set(ctx().config_ids);
+      chosen = new Set([...chosen].filter((id) => valid.has(id)));
+      renderSetupPicker(chosen);
+    }
+    if (initial && S.section !== 'overview') requestAnimationFrame(() => moveToSection(S.section, { focus: false }));
     return true;
   } catch (error) {
     S.error = error.message;
@@ -93,14 +139,18 @@ async function load({ initial = false } = {}) {
 }
 
 /* ---------- Test and setups ---------- */
-function showTest(key, { cfg = null, only = null, board = '' } = {}) {
+function showTest(key, { cfg = null, only = null, board = '', query = '', outcomes = [], section = 'overview' } = {}) {
   closeInspector({ instant: true });
   S.boardId = board;
-  S.only = only;
   S.details = false;
   chooseContext(key, cfg);
+  S.only = only;
+  S.caseQuery = query;
+  S.caseOutcomes = outcomes;
+  S.section = section;
   renderAll();
   window.scrollTo({ top: 0 });
+  if (section !== 'overview') requestAnimationFrame(() => moveToSection(section, { focus: false }));
   const c = ctx();
   if (c) announce(`Showing ${testTitle(c)}.`);
 }
@@ -141,6 +191,9 @@ async function removeBoard(id) {
 
 function openChooser() {
   chosen = new Set(S.sel);
+  S.setupQuery = '';
+  S.setupHarness = '';
+  S.setupEffort = '';
   renderSetupPicker(chosen);
   openDlg('pick-setups', 'input:checked, input');
 }
@@ -191,6 +244,44 @@ async function saveView(event) {
 }
 
 /* ---------- Jobs ---------- */
+async function removeRun(id) {
+  if (deletingRun) return;
+  const status = $('delete-run-status');
+  const dialog = $('delete-run');
+  deletingRun = id;
+  dialog.dataset.busy = 'true';
+  dialog.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+  status.classList.remove('is-error');
+  status.textContent = 'Deleting this run…';
+  try {
+    const result = await deleteStoredRun(id);
+    delete dialog.dataset.busy;
+    closeDlg('delete-run');
+    closeInspector({ instant: true });
+    setData(null);
+    renderAll();
+    const refreshed = await load();
+    const bytes = Number.isFinite(result?.bytes_deleted) ? ` ${result.bytes_deleted.toLocaleString()} bytes removed.` : '';
+    setStatus(`Deleted the run.${bytes}${refreshed ? '' : ' Refresh the page to update the comparisons.'}`);
+    if (!ctx()) document.querySelector('[data-fk="empty:choose"], [data-fk="empty:run"]')?.focus({ preventScroll: true });
+    else $('runs-h').focus({ preventScroll: true });
+  } catch (error) {
+    if (error.partial) {
+      closeInspector({ instant: true });
+      setData(null);
+      renderAll();
+      await load();
+    }
+    status.classList.add('is-error');
+    const removed = Number.isFinite(error.partial?.bytes_deleted) && error.partial.bytes_deleted > 0 ? ` ${error.partial.bytes_deleted.toLocaleString()} bytes were already removed.` : '';
+    status.textContent = `Deletion did not finish. ${error.message}${removed}`;
+  } finally {
+    deletingRun = '';
+    delete dialog.dataset.busy;
+    dialog.querySelectorAll('button').forEach((button) => { button.disabled = false; });
+  }
+}
+
 function disarmLater() {
   clearTimeout(armTimer);
   armTimer = setTimeout(() => {
@@ -289,11 +380,17 @@ async function onClick(event) {
   const act = el.dataset.act;
   const fk = el.dataset.fk || null;
   switch (act) {
+    case 'section':
+      moveToSection(el.dataset.section);
+      break;
     case 'reload':
       await load({ initial: !S.data });
       break;
     case 'inspect':
       openInspector(el.dataset.obs, { openerFk: fk });
+      break;
+    case 'inspect-output':
+      openInspector(el.dataset.obs, { tab: 'output', openerFk: fk });
       break;
     case 'insp-close':
       closeInspector();
@@ -346,6 +443,36 @@ async function onClick(event) {
       writeHash();
       announce(S.only ? 'Showing only the cases where the setups differ.' : 'Showing every case.');
       break;
+    case 'case-reset':
+      S.caseQuery = '';
+      S.caseOutcomes = [];
+      S.only = false;
+      renderCases();
+      writeHash();
+      $('case-search').focus({ preventScroll: true });
+      announce('Case filters reset. Showing every case.');
+      break;
+    case 'test-search-clear':
+      S.testQuery = '';
+      renderTestPicker({ armed: armedBoard });
+      $('test-search').focus({ preventScroll: true });
+      break;
+    case 'setup-search-clear':
+      S.setupQuery = '';
+      renderSetupPicker(chosen);
+      $('setup-search').focus({ preventScroll: true });
+      break;
+    case 'setup-filters-clear':
+      S.setupQuery = '';
+      S.setupHarness = '';
+      S.setupEffort = '';
+      renderSetupPicker(chosen);
+      $('setup-search').focus({ preventScroll: true });
+      break;
+    case 'choose-clear':
+      chosen.clear();
+      renderSetupPicker(chosen);
+      break;
     case 'details':
       S.details = !S.details;
       renderSetups();
@@ -364,6 +491,7 @@ async function onClick(event) {
       break;
     case 'change-test':
       armedBoard = '';
+      S.testQuery = '';
       renderTestPicker();
       openDlg('pick-test');
       break;
@@ -420,6 +548,12 @@ async function onClick(event) {
     case 'resume':
       await resumeRun(el.dataset.run);
       break;
+    case 'delete-run':
+      if (renderDeleteRun(el.dataset.run)) openDlg('delete-run', '[data-fk="delete:cancel"]');
+      break;
+    case 'delete-run-confirm':
+      await removeRun(el.dataset.run);
+      break;
     default:
       break;
   }
@@ -443,17 +577,53 @@ function onKeydown(event) {
 function onHash() {
   const h = readHash();
   if (!S.data) return;
-  const same = h.ctx === S.ctxKey && (!h.cfg || h.cfg.join(',') === S.sel.join(','));
+  const same = h.ctx === S.ctxKey && (!h.cfg || h.cfg.join(',') === S.sel.join(',')) && h.only === S.only && (h.query || '') === S.caseQuery && (h.outcomes || []).join(',') === S.caseOutcomes.join(',');
+  if (same && (h.section || 'overview') !== S.section) {
+    moveToSection(h.section || 'overview');
+    return;
+  }
   if (same) return;
-  showTest(h.ctx, { cfg: h.cfg, only: h.only });
+  showTest(h.ctx, { cfg: h.cfg, only: h.only, query: h.query || '', outcomes: h.outcomes || [], section: h.section || 'overview' });
 }
 
 /* ---------- Start ---------- */
 mountShell({ current: 'results' });
 wireReview();
-wireDialogs(['pick-test', 'pick-setups', 'save-view']);
+wireDialogs(['pick-test', 'pick-setups', 'save-view', 'delete-run']);
 document.addEventListener('click', onClick);
 document.addEventListener('keydown', onKeydown);
+$('case-search').addEventListener('input', (event) => {
+  S.caseQuery = event.target.value;
+  renderCases();
+  writeHash();
+});
+$('case-outcomes').addEventListener('change', () => {
+  S.caseOutcomes = [...$('case-outcomes').querySelectorAll('input:checked')].map((box) => box.value);
+  renderCases();
+  writeHash();
+});
+$('test-search').addEventListener('input', (event) => {
+  S.testQuery = event.target.value;
+  renderTestPicker({ armed: armedBoard });
+});
+$('setup-search').addEventListener('input', (event) => {
+  S.setupQuery = event.target.value;
+  renderSetupPicker(chosen);
+});
+$('setup-filters').addEventListener('change', (event) => {
+  const saved = captureFocus();
+  if (event.target.id === 'setup-harness') S.setupHarness = event.target.value;
+  if (event.target.id === 'setup-effort') S.setupEffort = event.target.value;
+  renderSetupPicker(chosen);
+  restoreFocus(saved);
+});
+$('chart-controls').addEventListener('change', (event) => {
+  if (event.target.id !== 'chart-metric') return;
+  S.chartMetric = event.target.value;
+  const saved = captureFocus();
+  renderCharts();
+  restoreFocus(saved);
+});
 $('pick-setups').addEventListener('change', (event) => {
   const box = event.target.closest('input[type="checkbox"]');
   if (!box) return;

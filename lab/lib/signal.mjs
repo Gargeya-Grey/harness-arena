@@ -372,12 +372,15 @@ export function signalForQuery(root, query) {
     return items;
   };
   const options = {};
+  if (query.effort !== undefined && query.effort !== '') options.effort = query.effort;
   const harnesses = list(query.harness, 'harness name');
   if (harnesses.length > 1) throw bad('Name one harness');
   if (harnesses.length) [options.harness] = harnesses;
   const models = list(query.models, 'model key');
+  if ('models' in query && !models.length) throw bad('Select at least one model');
   if (models.length) options.models = models;
   const cases = list(query.cases, 'case id');
+  if ('cases' in query && !cases.length) throw bad('Select at least one case');
   if (cases.length) options.cases = cases;
   if (query.repeats != null && query.repeats !== '') {
     const n = Number(query.repeats);

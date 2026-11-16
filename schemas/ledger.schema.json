@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://model-testing.local/schemas/ledger.schema.json",
   "title": "Ledger entry",
-  "description": "One entry of the evidence ledger, lab.ledger.jsonl at the main checkout (not committed). One JSON object per line; the file only grows. See lab/lib/ledger.mjs.",
+  "description": "One entry of the evidence ledger, lab.ledger.jsonl at the main checkout (not committed). One JSON object per line; entries append, including permanent delete tombstones. A confirmed full history reset clears it after deleting all live evidence and history. See lab/lib/ledger.mjs and lab/lib/storage.mjs.",
   "type": "object",
   "required": [
     "at",
@@ -23,7 +23,8 @@
         "halt",
         "close",
         "adopt",
-        "scores"
+        "scores",
+        "delete"
       ]
     },
     "run_id": {

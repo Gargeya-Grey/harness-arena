@@ -77,6 +77,22 @@ function paintMode() {
 /* ---------- Rail ---------- */
 export function mountShell({ current = 'home' } = {}) {
   sprite();
+  if (!$('skip-content')) {
+    const skip = document.createElement('a');
+    skip.id = 'skip-content';
+    skip.className = 'skip-link';
+    skip.href = '#main';
+    skip.textContent = 'Skip to content';
+    skip.addEventListener('click', (event) => {
+      event.preventDefault();
+      const main = $('main');
+      const target = [...main.querySelectorAll('h1')].find(el => el.getClientRects().length) || main;
+      target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+      target.scrollIntoView({ block: 'start' });
+    });
+    document.body.prepend(skip);
+  }
   const rail = $('rail');
   rail.innerHTML = `
     <a class="brand" href="/#home" aria-label="Model Lab home">
@@ -94,8 +110,12 @@ export function mountShell({ current = 'home' } = {}) {
     </nav>
     <div class="rail-foot">
       <button type="button" class="mode-btn" id="theme-toggle">${icon('moon')}<span class="mode-word">Dark mode</span></button>
-      <p>Same as <code>node lab</code> in a terminal. Data root: <code id="root-name">…</code></p>
+      <details class="rail-context" id="workspace-details"><summary class="disclose">Workspace</summary><p>Same as <code>node lab</code> in a terminal. Data root: <code id="root-name">…</code></p></details>
     </div>`;
+  const navigation = rail.querySelector('.nav');
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => {
+    root.style.setProperty('--mobile-nav-space', `${Math.ceil(navigation.getBoundingClientRect().height)}px`);
+  }).observe(navigation);
   $('theme-toggle').addEventListener('click', () => setMode(shownMode() === 'dark' ? 'light' : 'dark'));
   if (dark.addEventListener) dark.addEventListener('change', () => {
     if (root.getAttribute('data-theme')) return;

@@ -33,6 +33,22 @@
         <div class="progress" id="live-bar" aria-hidden="true"><i></i></div>
       </section>
 
+      <section class="sect" id="first-sect" hidden>
+        <div class="sect-label"><h2>Your first run</h2><span class="sect-note">You choose when models are called</span></div>
+        <ol class="steps glass">
+          <li class="step"><span class="step-n">1</span><div class="step-text"><h3>Choose a test below</h3><p>Each test family says what it measures and how many tasks it contains.</p></div></li>
+          <li class="step"><span class="step-n">2</span><div class="step-text"><h3>Choose models and thinking effort</h3><p>On Run, pick a preset, harness, models and cases. The plan shows every included setup.</p></div></li>
+          <li class="step"><span class="step-n">3</span><div class="step-text"><h3>Preview, then Start</h3><p>Preview checks the plan without calling a model. Start asks you to confirm the call count.</p></div></li>
+          <li class="step last"><span class="step-n">4</span><div class="step-text"><h3>Read Results</h3><p>Open Graphs to compare scores and time, or Outputs to inspect answers and visual work.</p></div></li>
+        </ol>
+        <div class="quick-try"><button type="button" class="btn secondary" id="quick-try-btn" disabled>Prepare a one-call try</button><p>Prepares one model, one case and one try. Review or change the model before Preview.</p></div>
+      </section>
+
+      <section class="sect" aria-labelledby="library-h">
+        <div class="sect-label"><h2 id="library-h">Available tests</h2><span class="sect-note" id="library-note">Reading test families</span></div>
+        <ul class="test-library" id="test-library"><li class="glass library-card"><p>Reading the available tests</p></li></ul>
+      </section>
+
       <section class="sect" id="latest-sect">
         <div class="sect-label"><h2 id="latest-h">Latest results</h2><a class="sect-link" href="/results.html">All results</a></div>
         <ul class="group glass" id="latest" aria-labelledby="latest-h"><li class="row"><div class="row-text"><p>Reading the results</p></div></li></ul>
@@ -43,52 +59,57 @@
         <ul class="group glass" id="attention" aria-labelledby="attention-h"></ul>
       </section>
 
-      <section class="sect" id="first-sect" hidden>
-        <div class="sect-label"><h2>First test</h2><span class="sect-note">No model is called until step 3</span></div>
-        <ol class="steps glass">
-          <li class="step"><span class="step-n">1</span><div class="step-text"><h3>Check the harnesses</h3><p>See which CLIs are installed and signed in on this machine.</p><a class="btn secondary small" href="#lab">Open Lab</a></div></li>
-          <li class="step"><span class="step-n">2</span><div class="step-text"><h3>Preview a run</h3><p>Choose an experiment and press Preview. It shows the plan and calls nothing.</p><a class="btn secondary small" href="#run">Open Run</a></div></li>
-          <li class="step last"><span class="step-n">3</span><div class="step-text"><h3>Run one case</h3><p>Under Narrow it down, choose one case, then Start. The result shows under Results.</p><a class="btn secondary small" href="#run">Open Run</a></div></li>
-        </ol>
-      </section>
     </section>
 
     <!-- Run -->
     <section class="view" id="view-run" aria-labelledby="h-run">
-      <header class="page-head"><h1 id="h-run">Run</h1><p>Choose an experiment. Preview shows the plan and calls nothing. Start calls the models through your own sign-ins.</p></header>
+      <header class="page-head"><h1 id="h-run">Run</h1><p>Choose a test and preset, then your models and effort. Preview calls nothing. Start calls the models through your own sign-ins.</p></header>
+      <div class="notice preparation" id="preparation-note" aria-live="polite" hidden></div>
       <div class="cols">
         <div class="col">
           <section class="sect">
-            <div class="sect-label"><h2>Experiment</h2><span class="sect-note" id="exp-note"></span></div>
+            <div class="sect-label"><h2>Test and preset</h2><span class="sect-note" id="exp-note"></span></div>
             <ul class="group glass">
               <li class="row block">
-                <div class="row-text"><h3><label for="exp-select">Experiment</label></h3><p>The files in <code>experiments/</code>.</p></div>
-                <select id="exp-select" data-custom></select>
+                <div class="row-text"><h3><label for="suite-select">Test family</label></h3><p id="suite-description">Choose what you want to test.</p></div>
+                <select id="suite-select"><button><selectedcontent></selectedcontent></button><option value="">All test families</option></select>
+              </li>
+              <li class="row block">
+                <div class="row-text"><h3><label for="exp-search">Find a preset</label></h3><p>Presets hold the prompt and comparison setup. Search by name, mode, model or description.</p></div>
+                <div class="search-row"><input type="search" id="exp-search" placeholder="Search presets" aria-describedby="exp-search-note"><button type="button" class="btn secondary small" id="exp-search-clear">Clear search</button></div>
+                <p class="selection-note" id="exp-search-note"></p>
+                <label class="field-label" for="exp-select">Choose a preset</label>
+                <select id="exp-select"><button><selectedcontent></selectedcontent></button></select>
               </li>
               <li class="row block" id="exp-detail" hidden></li>
             </ul>
           </section>
           <section class="sect">
-            <details class="narrow glass" id="narrow">
-              <summary><svg class="i" aria-hidden="true"><use href="#i-chev"/></svg><span class="narrow-h">Narrow it down</span><span class="narrow-sum" id="narrow-sum">Everything in the experiment</span></summary>
+            <details class="narrow glass" id="narrow" open>
+              <summary><svg class="i" aria-hidden="true"><use href="#i-chev"/></svg><span class="narrow-h">Models, effort and cases</span><span class="narrow-sum" id="narrow-sum">Everything in the preset</span></summary>
               <ul class="group">
                 <li class="row block" id="harness-row">
                   <div class="row-text"><h3 id="harness-h">Harness</h3><p>Run only the setups that use this harness.</p></div>
                   <div class="chips" id="harness-chips" role="radiogroup" aria-labelledby="harness-h"></div>
                 </li>
                 <li class="row block">
-                  <div class="row-text"><h3 id="models-h">Models</h3><p>None chosen runs every model.</p></div>
+                  <div class="selection-head"><div class="row-text"><h3 id="models-h">Models</h3><p id="models-note"></p></div><div class="selection-actions"><button type="button" class="btn quiet small" data-select="models" data-selection="all" aria-label="Select all models">All</button><button type="button" class="btn quiet small" data-select="models" data-selection="none" aria-label="Select no models">None</button></div></div>
                   <div class="chips" id="model-chips" role="group" aria-labelledby="models-h"></div>
                 </li>
                 <li class="row block">
-                  <div class="row-text"><h3 id="cases-h">Cases</h3><p>None chosen runs every case. Start with one.</p></div>
+                  <div class="row-text"><h3><label for="effort-select">Thinking effort</label></h3><p id="effort-note">Keep the preset values or choose an effort supported by every selected setup.</p></div>
+                  <select id="effort-select" aria-describedby="effort-note"><button><selectedcontent></selectedcontent></button><option value="">Keep preset efforts</option></select>
+                </li>
+                <li class="row block">
+                  <div class="selection-head"><div class="row-text"><h3 id="cases-h">Cases</h3><p id="cases-note"></p></div><div class="selection-actions"><button type="button" class="btn quiet small" data-select="cases" data-selection="all" aria-label="Select all cases">All</button><button type="button" class="btn quiet small" data-select="cases" data-selection="none" aria-label="Select no cases">None</button></div></div>
                   <div class="chips" id="case-chips" role="group" aria-labelledby="cases-h"></div>
                 </li>
                 <li class="row">
                   <div class="row-text"><h3><label for="repeats">Tries per case</label></h3><p id="repeats-hint">Use 3 or more to compare setups.</p></div>
-                  <div class="row-ctl"><input type="number" id="repeats" class="short" min="1" max="50" step="1" inputmode="numeric"></div>
+                  <div class="row-ctl"><input type="number" id="repeats" class="short" min="1" max="50" step="1" inputmode="numeric" aria-describedby="repeats-hint"></div>
                 </li>
               </ul>
+              <div class="one-call-action"><button type="button" class="btn secondary small" id="one-call-btn" disabled>Prepare one call</button><p>Sets one model, one case and one try from this preset. You can change the model.</p></div>
             </details>
           </section>
         </div>
@@ -118,13 +139,12 @@
     <!-- Lab -->
     <section class="view" id="view-lab" aria-labelledby="h-lab">
       <header class="page-head"><h1 id="h-lab">Lab</h1><p>The harnesses on this machine, checks on the stored records, and how the pages look.</p></header>
-      <div class="cols even">
+      <div class="cols lab-cols" id="lab-cols">
         <div class="col">
           <section class="sect">
             <div class="sect-label"><h2>Harnesses</h2><span class="sect-note" id="harness-note">Not checked yet</span></div>
             <ul class="group glass" id="harness-list"></ul>
             <div class="actions"><button type="button" class="btn primary small" id="doctor-btn">Check harnesses</button></div>
-            <p class="sect-foot">Each harness uses your own sign-in. Isolation says what <code>user_config: isolated</code> keeps out; partial means some of your setup still loads. Add another CLI in <code>configs/harnesses.yaml</code>.</p>
           </section>
           <section class="sect">
             <div class="sect-label"><h2>Records</h2></div>
@@ -139,8 +159,22 @@
             <div class="sect-label"><h2>Recent jobs</h2><span class="sect-note" id="jobs-note"></span></div>
             <ul class="group glass" id="jobs-list"></ul>
           </section>
-          <section class="sect">
-            <div class="sect-label"><h2>Appearance</h2><span class="sect-note">Saved in this browser</span></div>
+          <details class="sect secondary-fold glass" id="storage">
+            <summary><span>Run history and storage</span><span class="fold-note" id="storage-note">Reading saved data</span></summary>
+            <div class="fold-body">
+              <p id="storage-status" aria-live="polite">Reading saved run history.</p>
+              <p>Future runs stay saved until you deliberately delete them. Delete an individual run from Results, or clear all run history here.</p>
+              <dl class="storage-paths" id="storage-paths"></dl>
+              <p class="selection-note" id="storage-unknown" hidden></p>
+              <div class="actions"><button type="button" class="btn secondary small" id="storage-refresh">Refresh storage</button><button type="button" class="btn danger small" id="storage-reset" disabled>Delete all run history</button></div>
+            </div>
+          </details>
+          <details class="sect secondary-fold glass" id="lab-help">
+            <summary><span>Technical help</span><span class="fold-note">Harnesses and stored evidence</span></summary>
+            <div class="fold-body"><p>Each harness uses your own sign-in. Isolation says what <code>user_config: isolated</code> keeps out. Partial means some of your setup still loads.</p><p>Add another CLI in <code>configs/harnesses.yaml</code>. Validate checks stored records. Scoring derives verdicts from stored answers and calls no model.</p></div>
+          </details>
+          <details class="sect secondary-fold glass" id="appearance">
+            <summary><span>Appearance</span><span class="fold-note">Saved in this browser</span></summary>
             <ul class="group glass">
               <li class="row block"><div class="row-text"><h3>Theme colour</h3><p>Changes the accent and the tint of every surface.</p></div>
                 <div class="row-ctl"><div class="swatches" id="swatches" role="radiogroup" aria-label="Theme colour"></div><span class="theme-name" id="theme-name" aria-live="polite"></span></div></li>
@@ -149,12 +183,12 @@
               <li class="row block"><div class="row-text"><h3>Motion</h3><p>Reduced keeps short fades. Off stops every animation.</p></div>
                 <div class="seg" id="motion-seg" role="group" aria-label="Motion" style="--n:3"><span class="seg-knob" aria-hidden="true"></span><button type="button" data-v="full">Full</button><button type="button" data-v="reduced">Reduced</button><button type="button" data-v="off">Off</button></div></li>
             </ul>
-          </section>
+          </details>
         </div>
-        <aside class="col side" aria-labelledby="lab-output-h">
-          <section class="sect" id="lab-output-sect">
+        <aside class="col side" id="lab-output-col" aria-labelledby="lab-output-h" hidden>
+          <section class="sect" id="lab-output-sect" hidden>
             <div class="sect-label"><h2 id="lab-output-h">Output</h2><span class="sect-note" id="lab-output-note"></span></div>
-            <div class="job" id="lab-job"><p class="job-empty">The output of a job shows here. Start one, or select one under Recent jobs.</p></div>
+            <div class="job" id="lab-job" tabindex="-1"></div>
           </section>
         </aside>
       </div>
@@ -163,5 +197,16 @@
 </div>
 
 <div class="toasts" id="toasts" aria-live="polite"></div>
+<dialog id="reset-dialog" aria-labelledby="reset-title" aria-describedby="reset-description">
+  <form method="dialog" id="reset-form">
+    <h2 id="reset-title">Delete all run history?</h2>
+    <p id="reset-description"></p>
+    <p>This permanently removes saved runs, ratings, saved views and derived reports. Test definitions, models and presets stay available.</p>
+    <label for="reset-confirm">Type <strong>DELETE ALL RUNS</strong> to confirm</label>
+    <input type="text" id="reset-confirm" autocomplete="off" spellcheck="false">
+    <p class="selection-note" id="reset-error" aria-live="polite"></p>
+    <div class="dialog-actions"><button class="btn secondary" value="cancel" autofocus>Keep history</button><button class="btn danger" id="reset-submit" value="delete" disabled>Delete all run history</button></div>
+  </form>
+</dialog>
 </body>
 </html>

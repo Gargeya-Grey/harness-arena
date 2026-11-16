@@ -14,6 +14,28 @@ function caseDiffers(caseId, ids) {
   return new Set(ids.map(sig)).size > 1;
 }
 
+function caseRows(c = ctx(), ids = S.sel) {
+  if (!c) return { shown: [], differing: [], only: false };
+  const multi = ids.length > 1;
+  const scored = anyScored(c.cases, ids);
+  const differing = multi ? c.cases.filter((id) => caseDiffers(id, ids)) : c.cases;
+  const only = multi && scored && onlyOn();
+  const query = S.caseQuery.trim().toLocaleLowerCase();
+  const selected = new Set(S.caseOutcomes);
+  const total = repeatsOf(c);
+  const shown = (only ? differing : c.cases).filter((id) => {
+    const k = caseOf(id, c);
+    const text = `${id} ${caseName(id, c.suite.id, k?.input)}`.toLocaleLowerCase();
+    if (query && !text.includes(query)) return false;
+    if (!selected.size) return true;
+    return ids.some((cfg) => {
+      const rows = cellObs(id, cfg, c.key);
+      return rows.some((row) => selected.has(outcome(row).kind)) || (selected.has('none') && new Set(rows.map((row) => row.repeat)).size < total);
+    });
+  });
+  return { shown, differing, only, scored };
+}
+
 // Does any shown setup have a scored try on any case? Without one, "the setups agree" says nothing.
 export function anyScored(caseIds, ids) {
   return caseIds.some((caseId) => ids.some((id) => cellObs(caseId, id).some((o) => outcome(o).kind === 'pass' || outcome(o).kind === 'fail')));
@@ -36,15 +58,19 @@ export function renderCases() {
   const multi = setups.length > 1;
   const scored = anyScored(c.cases, ids);
   // Without a score no case can differ, so the filter and the agreement line have nothing to say.
-  const differing = multi ? c.cases.filter((id) => caseDiffers(id, ids)) : c.cases;
-  const only = multi && scored && onlyOn();
-  const shown = only ? differing : c.cases;
+  const { differing, only, shown } = caseRows(c, ids);
   const total = repeatsOf(c);
   toggle.hidden = !multi || !scored;
   toggle.setAttribute('aria-checked', String(only));
   note.textContent = multi ? (only ? `${differing.length} of ${plural(c.cases.length, 'case')} differ` : plural(c.cases.length, 'case')) : plural(c.cases.length, 'case');
+  const search = document.getElementById('case-search');
+  if (search && search.value !== S.caseQuery) search.value = S.caseQuery;
+  document.querySelectorAll('#case-outcomes input').forEach((box) => { box.checked = S.caseOutcomes.includes(box.value); });
+  const matches = document.getElementById('cases-matches');
+  if (matches) matches.textContent = `${shown.length} of ${plural(c.cases.length, 'case')} match${only ? ' · only where setups differ' : ''}.`;
   if (!shown.length) {
-    setHtml(host, scored ? html`<p class="quiet-line">The setups agree on every case. <button type="button" class="link-btn" data-act="only" data-fk="only-all">Show all cases</button></p>` : html`<p class="quiet-line">This test has no cases.</p>`);
+    const filtered = S.caseQuery.trim() || S.caseOutcomes.length;
+    setHtml(host, filtered ? html`<p class="quiet-line">No case rows match these filters. <button type="button" class="link-btn" data-act="case-reset" data-fk="case-reset-empty">Reset filters</button> to show every case. Summary and charts still use all ${plural(c.cases.length, 'case')}.</p>` : scored ? html`<p class="quiet-line">The setups agree on every case. <button type="button" class="link-btn" data-act="only" data-fk="only-all">Show all cases</button></p>` : html`<p class="quiet-line">This test has no cases.</p>`);
     host.classList.add('is-empty');
     return;
   }
@@ -56,9 +82,10 @@ export function renderCases() {
     const cells = setups.map((s) => {
       const list = cellObs(id, s.id);
       const who = s.name;
+      const missing = Array.from({ length: total }, (_, repeat) => repeat).filter((repeat) => !list.some((o) => o.repeat === repeat));
       return html`<td class="c-try">
         ${multi ? html`<span class="cell-who"><span class="lt" aria-hidden="true">${letterOf(s.id)}</span>${s.name}</span>` : ''}
-        <span class="marks">${list.length ? list.map((o) => markHtml(o, who, name, total)) : html`<span class="tm tm-none" title="Not run" aria-label="${who}: not run"><span aria-hidden="true">–</span></span>`}</span>
+        <span class="marks">${list.map((o) => markHtml(o, who, name, total))}${missing.map((repeat) => html`<span class="tm tm-none" role="img" aria-label="${who}, ${name}, try ${repeat + 1}: no included try; missing or excluded record"><span aria-hidden="true">–</span></span>`)}</span>
       </td>`;
     });
     return html`<tr><th scope="row" class="c-case"><span class="case-name">${name}</span>${hint && hint !== name ? html`<span class="case-hint">${hint}</span>` : ''}</th>${cells}</tr>`;

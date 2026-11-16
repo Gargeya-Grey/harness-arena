@@ -107,7 +107,7 @@ test('catalog lists the active experiments with targets and suite case ids, plus
   fs.writeFileSync(file, ['id: legacy-format', 'suite: smoke', 'prompt: qa-single-turn', 'repeats: 1', 'harness: command-code', 'models:', '  - deepseek-v4.1-flash-max', ''].join('\n'));
   try {
     const legacy = catalog(root).experiments.find((item) => item.file === 'legacy-format.yaml');
-    assert.deepEqual(legacy.targets, [{ model: 'deepseek-v4.1-flash-max', harness: 'command-code', effort: null }]);
+    assert.deepEqual(legacy.targets, [{ model: 'deepseek-v4.1-flash-max', display_name: 'DeepSeek V4.1 Flash', harness: 'command-code', effort: null, effort_levels: [] }]);
     assert.deepEqual(legacy.problems, []);
   } finally {
     fs.rmSync(file);

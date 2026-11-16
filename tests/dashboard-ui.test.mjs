@@ -58,6 +58,11 @@ function open(key) {
   S.details = false;
   S.insp = null;
   S.boardId = '';
+  S.chartMetric = 'time';
+  S.caseQuery = '';
+  S.caseOutcomes = [];
+  S.testQuery = '';
+  S.setupQuery = '';
 }
 
 test.beforeEach(() => {
@@ -186,7 +191,7 @@ test('setups: best first, only the columns with values, best values marked', () 
   renderSetups();
   const html = node('setups').innerHTML;
   const heads = [...html.matchAll(/<th scope="col" class="c-(\w+)">([^<]+)<\/th>/g)].map((m) => m[2]);
-  assert.deepEqual(heads, ['Setup', 'Passed', 'Typical time', 'API price', 'Unfinished']);
+  assert.deepEqual(heads, ['Setup', 'Passed', 'Typical time', 'Total API-equivalent price', 'Unfinished']);
   assert.equal(count(html, /<tr>/g) - 1, 6);
   const names = [...html.matchAll(/class="who-name">([^<]+)</g)].map((m) => m[1]);
   assert.deepEqual(names.slice(0, 3), ['Claude Haiku 4.5', 'Gemini 2.5 Flash', 'GPT-5 mini']);
@@ -203,7 +208,8 @@ test('details add the slow end, the pass range and the price per pass', () => {
   const html = node('setups').innerHTML;
   for (const label of ['Slow end', 'Pass range', 'Price per pass', 'Tokens per try']) assert.match(html, new RegExp(`>${label}</th>`));
   assert.match(html, /<span class="v">\d+–100%<\/span>/);
-  assert.match(node('setups-foot').innerHTML, /Pass range: where the true pass share likely lies \(95%\)\./);
+  assert.match(node('setups-foot').innerHTML, /95% case-aware interval/);
+  assert.match(node('setups-foot').innerHTML, /at least 3 counted cases/);
   assert.equal(node('details-btn').textContent, 'Hide details');
 });
 
@@ -351,6 +357,7 @@ test('the time axis ends near the slowest try at every width', () => {
 });
 
 test('axis labels never touch: price ticks in a half-width card', () => {
+  S.chartMetric = 'price';
   globalThis.requestAnimationFrame = (cb) => cb();
   const aggs = Object.values(S.data.contexts.find((c) => c.key === SIX).aggregates);
   aggs.forEach((a, i) => Object.assign(a, { mean_cost_usd: 0.002 + i * 0.00244 })); // $0.002 to $0.0142: a linear axis, as in the smoke test

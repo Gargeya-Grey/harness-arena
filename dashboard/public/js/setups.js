@@ -1,9 +1,11 @@
 // Setups: one row per shown setup, best first. A column shows only when one of the setups has a value;
 // the best value carries the accent only when the answer could name a winner.
 import { S, ctx, shownSetups, aggOf, letterOf, setupOf } from './model.js';
-import { bestMarks, passedText, wilson } from './verdict.js';
+import { bestMarks, passedText } from './verdict.js';
+import { passRangeText } from './chart-data.js';
 import { durText, plural } from './words.js';
 import { html, setHtml, isNum, usdText, tokText } from './util.js';
+import { setupTags } from './setup-tags.js';
 
 const none = () => html`<span class="nil">–</span>`;
 
@@ -32,15 +34,15 @@ function passedCell(s, best) {
 const COLUMNS = [
   { key: 'passed', label: 'Passed', show: () => true, cell: passedCell },
   { key: 'time', label: 'Typical time', show: (list) => list.some((s) => s.facts.time !== null), cell: (s) => (s.facts.time === null ? none() : html`<span class="v">${durText(s.facts.time)}</span>`) },
-  { key: 'price', label: 'API price', show: (list) => list.some((s) => s.facts.price !== null), cell: (s) => (s.facts.price === null ? none() : html`<span class="v">${usdText(s.facts.price)}</span>`) },
+  { key: 'price', label: 'Total API-equivalent price', show: (list) => list.some((s) => s.facts.price !== null), cell: (s) => (s.facts.price === null ? none() : html`<span class="v">${usdText(s.facts.price)}</span>`) },
   { key: 'incomplete', label: 'Unfinished', show: (list) => list.some((s) => s.facts.incomplete > 0), cell: (s) => (s.facts.incomplete ? html`<span class="v">${s.facts.incomplete} of ${s.facts.tries}</span><span class="sub">unjudged${s.facts.incompleteElapsed == null ? '' : ` · ${durText(s.facts.incompleteElapsed)} elapsed`}</span>` : html`<span class="nil">none</span>`) },
   { key: 'errors', label: 'Errors', show: (list) => list.some((s) => s.facts.errors > s.facts.incomplete), cell: (s) => (s.facts.errors > s.facts.incomplete ? html`<span class="v bad">${s.facts.errors - s.facts.incomplete} of ${s.facts.tries}</span>${s.errorReason ? html`<span class="sub">${s.errorReason}</span>` : ''}${s.facts.lost ? html`<span class="sub">${s.facts.lost} lost to limits or sign-in, not counted</span>` : ''}` : html`<span class="nil">none</span>`) },
   { key: 'rating', label: 'Your rating', show: (list) => list.some((s) => s.facts.ratings > 0), cell: (s) => (s.facts.ratings ? html`<span class="v">${s.facts.rating.toFixed(1)}</span><span class="sub">of 5, ${plural(s.facts.ratings, 'rating')}</span>` : html`<span class="nil">none yet</span>`) },
   // Details: one click away.
   { key: 'slow', label: 'Slow end', details: true, show: (list) => list.some((s) => s.facts.slow !== null && s.facts.timed > 1), cell: (s) => (s.facts.slow === null ? none() : html`<span class="v">${durText(s.facts.slow)}</span>`) },
-  { key: 'range', label: 'Pass range', details: true, show: (list) => list.some((s) => s.facts.decided > 1), cell: (s) => {
-    const r = wilson(s.facts.passed, s.facts.decided);
-    return r ? html`<span class="v">${Math.round(r[0] * 100)}–${Math.round(r[1] * 100)}%</span>` : none();
+  { key: 'range', label: 'Pass range', details: true, show: (list) => list.some((s) => s.facts.decided > 0), cell: (s) => {
+    const a = aggOf(s.id) || {};
+    return html`<span class="v">${passRangeText(a)}</span><span class="sub">${a.counted_n || 0} decided tries · ${plural(a.cases_n || 0, 'case')}</span>`;
   } },
   { key: 'ppp', label: 'Price per pass', details: true, show: (list) => list.some((s) => s.facts.pricePerPass !== null), cell: (s) => (s.facts.pricePerPass === null ? none() : html`<span class="v">${usdText(s.facts.pricePerPass)}</span>`) },
   { key: 'tokens', label: 'Tokens per try', details: true, show: (list) => list.some((s) => isNum((aggOf(s.id) || {}).mean_input_tokens)), cell: (s) => {
@@ -61,7 +63,7 @@ function modelWarning(s) {
   return notes.length ? html`<span class="who-sub warn">${notes.join(' · ')}</span>` : '';
 }
 
-const DETAIL_NOTE ='Slow end: 1 try in 20 was slower. Pass range: where the true pass share likely lies (95%).';
+const DETAIL_NOTE ='Slow end: 1 try in 20 was slower. Pass range: the server’s 95% case-aware interval, accounting for repeated tries of the same case; at least 3 counted cases are needed.';
 
 export function renderSetups() {
   const host = document.getElementById('setups');
@@ -75,7 +77,7 @@ export function renderSetups() {
   const multi = list.length > 1;
   const head = cols.map((col) => html`<th scope="col" class="c-${col.key}">${col.label}</th>`);
   const rows = list.map((s) => html`<tr>
-    <th scope="row" class="c-setup"><span class="who">${multi ? html`<span class="lt" aria-hidden="true">${letterOf(s.id)}</span>` : ''}<span class="who-text"><span class="who-name">${s.cfg.display_name}</span><span class="who-sub">${harnessLine(s.cfg, { withWarning: false })}</span>${setupWarning(s.cfg)}${modelWarning(s)}</span></span></th>
+    <th scope="row" class="c-setup"><span class="who">${multi ? html`<span class="lt" aria-hidden="true">${letterOf(s.id)}</span>` : ''}<span class="who-text"><span class="who-name">${s.cfg.display_name}</span>${setupTags(s.cfg)}${setupText(s.cfg) && !warned(s.cfg) ? html`<span class="who-sub">${setupText(s.cfg)}</span>` : ''}${setupWarning(s.cfg)}${modelWarning(s)}</span></span></th>
     ${cols.map((col) => {
       const on = best(col, s);
       return html`<td class="c-${col.key}${on ? ' is-best' : ''}" data-label="${col.label}">${col.cell(s, on)}${on ? html`<span class="sr"> (best)</span>` : ''}</td>`;
@@ -90,6 +92,7 @@ export function renderSetups() {
     </table>`,
   );
   const notes = [];
+  if (list.some((s) => s.facts.price !== null)) notes.push(html`<p>Total API-equivalent price adds every priced attempt, including failed or unfinished calls. It is a list-price estimate, not a bill. The chart shows price per priced try.</p>`);
   if (!list.some((s) => s.facts.price !== null)) notes.push(html`<p>No API prices: these models are free or not priced.</p>`);
   if (marks.passed.size || marks.time.size || marks.price.size) notes.push(html`<p><span class="best-dot" aria-hidden="true"></span>The best value in its column.</p>`);
   if (S.details) notes.push(html`<p>${DETAIL_NOTE}</p>`);

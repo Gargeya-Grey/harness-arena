@@ -22,9 +22,10 @@ docs/plans/
 # Dashboard local state
 .cache/
 /annotations/
+/.lab-data/
 
 # Note: results/ is intentionally committed - runs are evidence.
-# New runs go to the data folder named in lab.local.yaml (this machine only; see README).
+# New runs go to the ignored data folder named in lab.local.yaml (see README).
 lab.local.yaml
 
 # Command Code keeps its notes about the user here; they are personal, not project files.

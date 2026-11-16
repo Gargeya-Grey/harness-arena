@@ -10,6 +10,14 @@ export const S = {
   sel: [], // the setups shown, in table order
   custom: false, // true when the owner chose the setups; the link then carries them
   only: null, // "Only where setups differ": null follows the default for the test
+  caseQuery: '',
+  caseOutcomes: [],
+  testQuery: '',
+  setupQuery: '',
+  setupHarness: '',
+  setupEffort: '',
+  section: 'overview',
+  chartMetric: 'time',
   details: false,
   insp: null, // { obsId, tab }
   review: null,
@@ -23,7 +31,7 @@ export function setData(data) {
   index = new Map();
   // The one owner of "counts nowhere" in the client: every view reads this index, so an
   // observation of a run that does not count (trusted false) is in no view. Runs lists it.
-  for (const o of (data.observations || []).filter((item) => item.trusted !== false)) {
+  for (const o of (data?.observations || []).filter((item) => item.trusted !== false)) {
     let ctxIndex = index.get(o.context_key);
     if (!ctxIndex) {
       ctxIndex = { cells: new Map(), byId: new Map(), byCfg: new Map(), list: [] };
@@ -173,6 +181,9 @@ export function readHash(hash = location.hash) {
     if (k === 'ctx') out.ctx = v;
     if (k === 'cfg') out.cfg = v ? v.split(',').filter(Boolean) : [];
     if (k === 'only' && (v === '0' || v === '1')) out.only = v === '1';
+    if (k === 'q' && v) out.query = v;
+    if (k === 'outcomes' && v) out.outcomes = v.split(',').filter((kind) => ['pass', 'fail', 'error', 'incomplete', 'unscored', 'none'].includes(kind));
+    if (k === 'section' && ['overview', 'setups', 'graphs', 'visuals', 'cases', 'runs'].includes(v)) out.section = v;
   }
   return out;
 }
@@ -181,6 +192,9 @@ export function hashFor() {
   let h = `#ctx=${encodeURIComponent(S.ctxKey)}`;
   if (S.custom) h += `&cfg=${S.sel.map(encodeURIComponent).join(',')}`;
   if (S.only !== null) h += `&only=${S.only ? 1 : 0}`;
+  if (S.caseQuery) h += `&q=${encodeURIComponent(S.caseQuery)}`;
+  if (S.caseOutcomes.length) h += `&outcomes=${S.caseOutcomes.join(',')}`;
+  if (S.section !== 'overview') h += `&section=${encodeURIComponent(S.section)}`;
   return h;
 }
 export function writeHash() {
@@ -194,15 +208,23 @@ export function writeHash() {
 }
 
 // Open a test. A list of setups from a link or a saved view is kept; otherwise every setup shows.
-export function chooseContext(key, wanted = null) {
-  const c = contexts().find((x) => x.key === key) || newestContext();
-  S.ctxKey = c ? c.key : null;
+export function chooseContext(key, wanted = null, { fallback = true } = {}) {
+  const c = contexts().find((x) => x.key === key) || (fallback ? newestContext() : null);
+  if ((c?.key || null) !== S.ctxKey) {
+    S.caseQuery = '';
+    S.caseOutcomes = [];
+    S.only = null;
+    S.setupQuery = '';
+    S.setupHarness = '';
+    S.setupEffort = '';
+    S.section = 'overview';
+  }
+  S.ctxKey = c ? c.key : fallback ? null : key;
   if (!c) {
     S.sel = [];
     S.custom = false;
     return;
   }
-  const valid = new Set(c.config_ids);
   // A saved view or an old link can name the id a setup had before its user-setup state split it
   // (config.legacy_id). It shows every setup of this test that had that id: the clean setup keeps the
   // old id, so a name that is still valid can mean its leaked sibling too. A view saved after the split
@@ -215,7 +237,7 @@ export function chooseContext(key, wanted = null) {
   const room = Math.max(0, MAX_SHOWN - firstChoice.length);
   const keep = new Set([...firstChoice.slice(0, MAX_SHOWN), ...all.filter((id) => !firstChoice.includes(id)).slice(0, room)]);
   const sel = all.filter((id) => keep.has(id));
-  S.custom = sel.length > 0;
+  S.custom = wanted !== null;
   S.sel = S.custom ? sel : defaultSel(c);
 }
 

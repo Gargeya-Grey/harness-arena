@@ -5,14 +5,16 @@
 ## Sub-features
 
 - `home` - `#live-job` while a job runs (progress, `#live-stop`, `#live-open`); `#latest`: the three newest tests with their meta line and the first sentence of their answer, linked to Results; `#attention-sect` only when something is wrong; `#first-sect` only with no results.
-- `run-preview` - Run: `#exp-select` (custom select), `details#narrow` ("Narrow it down": `#harness-chips` with 2 or more harnesses, `#model-chips`, `#case-chips`, `#repeats`), the plan (`#plan-n`, `#plan-break`); Preview starts `run ... --dry-run`.
+- `run-preview` - Run: native `#exp-select` with `#exp-search`, `details#narrow` ("Narrow it down": `#harness-chips` with 2 or more harnesses, `#model-chips`, `#case-chips`, `#repeats`), the plan (`#plan-n`, `#plan-break`); Preview starts `run ... --dry-run`.
 - `run-signal` - `#signal`, above the Preview and Start buttons: Worth running, Low signal or Unknown with its reasons, from `GET /api/signal`. It reads stored runs only, calls no model and writes nothing. A change of selection clears the old result at once.
+- `explicit-selection` - All/None model and case choices determine the visible count, signal query and run request. Empty choices disable both Preview and Start.
+- `experiment-search` - Search keeps the selected experiment outside matches and exposes exact configuration and actual availability reasons.
 - `run-start` - `#start-btn` asks once (`Start N calls?`, 5 s); the second press starts the run.
 - `run-progress` - `#run-output-sect`: a bar of answers done, the current case, errors so far, the log under "Show the log", and See results when the run ends.
 - `run-stop` - Stop: the first press writes `cancel` on stdin (job `stopping`, the run finishes its current call); a second press ends the process tree.
 - `lab` - Harnesses (`#doctor-btn` runs `doctor`; one row per harness), Records (`#problems-row` lists each record that fails its schema, only when one does; then Validate, Score all, Report with result tags), Recent jobs (`#jobs-list`; a click shows the output in `#lab-job`), Appearance.
 - `appearance` - swatches (`#swatches`, radio group, arrow keys), `#mode-seg` (System, Light, Dark) and `#motion-seg`; saved as `lab-theme`, `theme`, `lab-motion` in `localStorage`, shared with Results.
-- `shell` - the app rail (`shell.js`) on both pages: run card, nav (Home, Run, Results, Lab), and the light/dark switch `#theme-toggle` at its foot. Old links `#runs`, `#harnesses`, `#checks`, `#activity` and `#appearance` open Lab; `#compare` opens Results.
+- `shell` - the app rail (`shell.js`) on both pages: run card, nav (Home, Run, Results, Ladder, Lab), and the light/dark switch `#theme-toggle` at its foot. Old links `#runs`, `#harnesses`, `#checks`, `#activity` and `#appearance` open Lab; `#compare` opens Results.
 - `offline` - two failed polls show `#offline`, and the run card says "Server stopped".
 
 ## How to get to it (user POV)
@@ -30,9 +32,18 @@ Preconditions: the Launch steps in SKILL.md (disposable data root, port 4391). N
 - **Stop.** With `slow-test`, Start twice, then Stop once: the job ends `stopped`, and the newest `run.json` has `status: failed`.
 - **Lab.** Check harnesses lists one row per harness; Validate ends with `All inputs and records are valid.`; Score all starts a `score --all` job that passes. Add a line that is not JSON (`{oops`) to `$ROOT/annotations/human@1.jsonl` and reload: Home shows "1 record does not match the schema", and Lab shows the file and the reason in its first Records row.
 - **Appearance.** Choose Ember, Light and Reduced, reload: all three hold, and the accent is orange. Open Results: it is light and orange too. Select System: the page follows the computer again.
-- **Narrow.** At 600px the rail is 64px with icons only, and the page does not scroll sideways.
+- **Narrow.** At 600px all five destinations use labelled bottom navigation. At 768px the compact desktop rail remains. Neither layout scrolls the document sideways.
 - **Layout check.** Run the owner's layout checker (house style) on `/#home`, `/#run`, `/#lab`, and `/results.html` on the 6-setup `smoke` test and on the `svg-mini` test with a rating (the two ledgers that become phone cards), in light and dark through a same-origin proxy. The "body and heading sizes" check does not apply: this repository follows Odicto's type scale (`docs/dashboard-spec.md` §7.3).
 
 ## Known gaps
 
 - Job output lives in server memory; a server restart empties Recent jobs.
+
+## Premium control acceptance
+
+- Open Run on a disposable root. All effective models/cases are visibly included; All and None are explicit. Clearing the last one makes the count zero, disables Preview/Start and cancels stale signal. A harness change preserves valid explicit choices.
+- Search experiments by mode/id, retain the selected preset outside matches, and inspect actual availability reasons. A harmless one-case Preview must name exactly the selected model/harness/case/repeat and leave the run-folder list unchanged.
+- `#narrow` starts open. Harness, effort and setup policy are readable before starting. Check the existing two-press Start guard without approving a live call.
+- Lab uses one column while `#lab-output-col` is hidden. Selecting a job opens named output; polling preserves the reader's scroll. Appearance and technical help are named disclosures.
+- At 320/390px the shared frame has five labelled bottom destinations, theme access and a visible active/offline job path. Check keyboard focus and the last control against navigation. Desktop keeps the rail; clean idle-job metadata stays out of the phone header.
+- Double navigation text from a fresh document at320/390px and390x380. Every label must stay inside its own target and avoid adjacent labels. The bar grows when needed; its observed height sets content/focus clearance. This CSS text stress is distinct from native browser/OS scaling.

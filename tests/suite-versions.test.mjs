@@ -13,17 +13,17 @@ import { validateRepo } from '../lab/commands/validate.mjs';
 import { readJson } from '../lab/lib/fsutil.mjs';
 import { freezeSuite, frozenVersions, loadCases, loadSuite } from '../lab/lib/repo.mjs';
 import { buildState } from '../lab/lib/state.mjs';
+import { HISTORICAL_RUNS, writeHistoricalRuns } from './fixtures/historical-runs.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-// A committed run of reasoning 1.0.0; the archived suite is now at 1.1.0.
-const RUN = '20261104T161946Z__reasoning__reasoning-sweep__e79a4d';
-const SMOKE_RUN = '20261021T080428Z__smoke__smoke-command-code__900ca7';
+const RUN = HISTORICAL_RUNS.reasoning;
+const SMOKE_RUN = HISTORICAL_RUNS.smoke;
 
 function tempRoot(t, runs) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-versions-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 5 }));
   for (const dir of ['configs', 'datasets', 'prompts', 'experiments']) fs.cpSync(path.join(REPO, dir), path.join(root, dir), { recursive: true });
-  for (const run of runs) fs.cpSync(path.join(REPO, 'results', run), path.join(root, 'results', run), { recursive: true });
+  writeHistoricalRuns(root, runs);
   return root;
 }
 

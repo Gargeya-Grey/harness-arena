@@ -1,12 +1,1 @@
-{"type":"event","event":{"type":"run_start","sessionId":"55d97284-7b6d-44c4-a161-50d87c7daa99"}}
-{"type":"event","event":{"type":"turn_start","turnNumber":1}}
-{"type":"event","event":{"type":"message_start"}}
-{"type":"event","event":{"type":"model_request_start","model":"deepseek/deepseek-v4.1-flash"}}
-{"type":"event","event":{"type":"model_trace","traceId":"ec69450b694151da45d7ef81d6e705f4"}}
-{"type":"event","event":{"type":"text_delta","delta":"4"}}
-{"type":"event","event":{"type":"message_update","content":[{"type":"text","text":"4"}]}}
-{"type":"event","event":{"type":"model_request_end","model":"deepseek/deepseek-v4.1-flash","usage":{"inputTokens":19010,"outputTokens":3,"cacheReadTokens":5504,"cacheWriteTokens":0},"stopReason":"stop","effort":"max"}}
-{"type":"event","event":{"type":"message_end","content":[{"type":"text","text":"4"}]}}
-{"type":"event","event":{"type":"turn_end","turnNumber":1,"hadToolCalls":false,"usage":{"inputTokens":19010,"outputTokens":3,"cacheReadTokens":5504,"cacheWriteTokens":0}}}
-{"type":"event","event":{"type":"run_end","result":{"finalText":"4","stopReason":"end_turn","turnCount":1,"usage":{"inputTokens":19010,"outputTokens":3,"cacheReadTokens":5504,"cacheWriteTokens":0},"systemPromptTokens":null,"nextState":{"sessionId":"55d97284-7b6d-44c4-a161-50d87c7daa99","messages":[{"role":"user","content":[{"type":"text","text":"Answer the question with a single word or number.\nDo not explain. Do not use a sentence. Do not add punctuation.\n\nQuestion: What is 2 + 2?"}],"meta":{"source":"user","createdAt":1792569868934,"messageId":"90bb1bc6-19ee-4828-b5ac-8bb771bc284a"}},{"role":"assistant","content":[{"type":"text","text":"4"}],"meta":{"source":"model","createdAt":1792569874681,"messageId":"636a0c2c-9324-4c84-a016-5637f6582721"}}],"interrupted":false,"modState":{"workspace":{"cwd":"W:\\AI-Projects\\Model-Testing","platform":"win32","branch":"[redacted by lab]","gitStatus":"[redacted by lab]","recentCommits":"[redacted by lab]","additionalDirectories":"[redacted by lab]"},"compaction":{"tokens":19017,"basis":{"role":"assistant","content":[{"type":"text","text":"4"}],"meta":{"source":"model","createdAt":1792569874681,"messageId":"636a0c2c-9324-4c84-a016-5637f6582721"}}}}}}}}
-{"type":"result","subtype":"success","sessionId":"55d97284-7b6d-44c4-a161-50d87c7daa99","stopReason":"end_turn","usage":{"inputTokens":19010,"outputTokens":3,"cacheReadTokens":5504,"cacheWriteTokens":0},"durationMs":8239,"finalText":"4"}
+{"run_id":"20261021T080428Z__smoke__smoke-command-code__900ca7","case_id":"smoke-001","model_key":"deepseek-v4.1-flash-max","repeat":0,"recorded_at":"2026-10-21T08:04:28.000Z","event":{"type":"result","result":"4","synthetic":true}}

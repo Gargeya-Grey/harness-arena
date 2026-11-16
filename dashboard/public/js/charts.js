@@ -1,10 +1,12 @@
 // Charts: hand-rolled inline SVG. No colour per setup: each setup carries its letter and its name,
 // marks are ink, the best value is the accent, no answer is the danger colour.
-// A chart shows only when it carries a result; the others wait under "More charts".
-import { ctx, shownSetups, aggOf, chartNames, letterOf, selectedCfgs } from './model.js';
-import { bestMarks, facts, wilson } from './verdict.js';
-import { durText } from './words.js';
-import { html, esc, setHtml, isNum, tokText, clamp } from './util.js';
+// One available metric is selected; All charts adds the remaining metrics.
+import { S, ctx, shownSetups, aggOf, chartNames, letterOf, selectedCfgs } from './model.js';
+import { bestMarks, facts } from './verdict.js';
+import { metricCoverage, passInterval, passRangeText } from './chart-data.js';
+import { captureDisclosures, restoreDisclosures, captureFocus, restoreFocus } from './ui.js';
+import { durText, plural } from './words.js';
+import { html, esc, setHtml, isNum, tokText, usdText, clamp } from './util.js';
 
 const LH = 17;
 const CHAR = 6.9; // average width of a 13px Instrument Sans character, weight 500
@@ -14,6 +16,7 @@ const PHONE = 440;
 const ZOOM = 1.35; // 12px x 1.35 = 16.2px; exactly 16/12 rounds to 15.99px
 
 let drawToken = 0;
+const disclosures = new Map();
 
 function niceStep(span, target) {
   const rawStep = span / Math.max(1, target);
@@ -75,13 +78,32 @@ function wrap(text, maxChars) {
   return lines;
 }
 
+let labelContext;
 // Model on the first line, harness and effort on the next: two setups of one model never read the same.
 function identityLines(c, name, maxW) {
   const model = c.display_name || name;
   const detail = name.startsWith(`${model} · `) ? name.slice(model.length + 3) : c.harness.name;
-  const maxChars = Math.max(8, Math.floor((maxW - BADGE) / CHAR));
-  const breakLong = (text) => String(text).replace(/(\S{8,})/g, (word) => word.match(new RegExp(`.{1,${maxChars}}`, 'gu')).join(' '));
-  return [model, detail].flatMap((s) => wrap(breakLong(s), maxChars));
+  if (!labelContext && typeof document !== 'undefined' && typeof document.createElement === 'function' && typeof getComputedStyle === 'function') {
+    labelContext = document.createElement('canvas').getContext('2d');
+  }
+  if (labelContext) labelContext.font = `500 13px ${getComputedStyle(document.body).fontFamily}`;
+  const width = (text) => labelContext ? labelContext.measureText(text).width : [...text].length * CHAR;
+  const budget = Math.max(1, maxW - BADGE - 1);
+  return [model, detail].flatMap((text) => {
+    const lines = [];
+    let current = '';
+    for (const word of String(text).split(/\s+/).filter(Boolean)) {
+      const next = current ? `${current} ${word}` : word;
+      if (width(next) <= budget) { current = next; continue; }
+      if (current) { lines.push(current); current = ''; }
+      for (const character of word) {
+        if (current && width(current + character) > budget) { lines.push(current); current = ''; }
+        current += character;
+      }
+    }
+    if (current) lines.push(current);
+    return lines;
+  });
 }
 
 const svgStart = (w, h, label) => `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(label)}">`;
@@ -126,7 +148,7 @@ function drawPrice(w, cfgs, names, marks) {
     const f = facts(a);
     if (f.rate === null) skipped.push(`${names.get(c.id)} (no checked answers)`);
     else if (!isNum(a.mean_cost_usd)) skipped.push(`${names.get(c.id)} (no price)`);
-    else items.push({ c, a, name: names.get(c.id), q: f.rate, ci: wilson(f.passed, f.decided) });
+    else items.push({ c, a, name: names.get(c.id), q: f.rate, ci: passInterval(a) });
   });
   const costs = items.map((i) => i.a.mean_cost_usd);
   const minC = Math.min(...costs);
@@ -168,7 +190,7 @@ function drawPrice(w, cfgs, names, marks) {
     g += line(x, m.t + ph, x, m.t + ph + 4, 'chart-line-dark');
     g += t(x, m.t + ph + 18, 'chart-axis-text', tickText(v), x < m.l + 24 ? 'start' : x > w - 30 ? 'end' : 'middle');
   });
-  g += t(w - m.r, h - 4, 'chart-axis-text', 'API price per try (USD)', 'end');
+  g += t(w - m.r, h - 4, 'chart-axis-text', 'API-equivalent USD / try', 'end');
   // Letters sit beside their points and avoid the points and the full whiskers.
   const markBoxes = items.map((i) => {
     const q = i.ci || [i.q, i.q];
@@ -219,7 +241,8 @@ function drawPrice(w, cfgs, names, marks) {
   });
   items.forEach((i, k) => { g += nameLabel(0, h + 30 + legend.layout[k].y, i.c, i.name, w, best.has(i.c.id)); });
   g += '</svg>';
-  const note = `Up and to the left is better: more passed for less money. Whiskers show the likely range.${logScale ? ' The price axis is a log scale: each step is 10 times the one before.' : ''}${skipped.length ? ` Not drawn: ${skipped.join('; ')}.` : ''}`;
+  const absent = items.filter((i) => !i.ci).map((i) => `${letterOf(i.c.id)}: ${passRangeText(i.a)}`);
+  const note = `Up and to the left means more passed for a lower API-equivalent price per priced try. This is a list-price estimate, not a bill. Whiskers are the server’s 95% case-aware pass intervals.${logScale ? ' The price axis is a log scale: each step is 10 times the one before.' : ''}${skipped.length ? ` Not drawn: ${skipped.join('; ')}.` : ''}${absent.length ? ` No whisker for ${absent.join('; ')}.` : ''}`;
   return { svg: g, note };
 }
 
@@ -348,7 +371,7 @@ function drawConsistency(w, cfgs, names) {
     }
   });
   g += '</svg>';
-  return { svg: g, note: 'How often the tries of one case gave the same result. 100% means every try agreed.' };
+  return { svg: g, note: 'Agreement across cases with at least two included tries. Repeated failed calls and unchecked outcomes can agree too; consistency does not measure correctness. 100% means every included try agreed within its case.' };
 }
 
 // ---- Outcomes -----------------------------------------------------------------------------------
@@ -357,18 +380,20 @@ function drawOutcomes(w, cfgs, names) {
   const rows = cfgs.map((c) => {
     const a = aggOf(c.id) || {};
     const passed = count(a.passed_n);
-    return { c, name: names.get(c.id), total: count(a.n), passed, failed: count(a.scored_n) - passed, err: count(a.errors_n) - count(a.incomplete_n), incomplete: count(a.incomplete_n), uns: count(a.unscored_n) };
+    return { c, name: names.get(c.id), total: count(a.n), passed, failed: count(a.scored_n) - passed, err: count(a.failed_n), lost: count(a.lost_n), incomplete: count(a.incomplete_n), uns: count(a.unscored_n) };
   });
-  const words = (r) => [`${r.passed} passed`, r.failed ? `${r.failed} failed` : null, r.err ? `${r.err} no answer` : null, r.incomplete ? `${r.incomplete} unfinished, unjudged` : null, r.uns ? `${r.uns} not checked` : null].filter(Boolean).join(' · ');
+  const words = (r) => [`${r.passed} passed`, r.failed ? `${r.failed} failed` : null, r.err ? `${r.err} no answer` : null, r.lost ? `${r.lost} lost, unjudged` : null, r.incomplete ? `${r.incomplete} unfinished, unjudged` : null, r.uns ? `${r.uns} not checked` : null].filter(Boolean).join(' · ');
   const valueW = Math.ceil(Math.max(...rows.map((r) => words(r).length * CHAR))) + 8;
   const f = frame(w, valueW);
-  const { layout, height } = rowLayout(rows, f.stacked ? w : f.labelW, f.stacked ? 58 : 18);
+  const wordLines = rows.map((r) => wrap(words(r), Math.max(12, Math.floor(w / CHAR))));
+  const { layout, height } = rowLayout(rows, f.stacked ? w : f.labelW, f.stacked ? Math.max(...wordLines.map((l) => l.length)) * LH + 44 : 18);
   let g = svgStart(w, height, 'Every try per setup: passed, failed, no answer, unfinished and unjudged, not checked');
+  g += `<desc>${esc(rows.map((r) => `${letterOf(r.c.id)}: ${words(r)}`).join('; '))}</desc>`;
   g += '<defs><pattern id="hatch-uns" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="5" height="5" class="chart-hatch-bg"/><line x1="0" y1="0" x2="0" y2="5" class="chart-hatch-line"/></pattern></defs>';
   g += '<defs><pattern id="hatch-inc" width="5" height="5" patternUnits="userSpaceOnUse"><rect width="5" height="5" class="chart-hatch-bg"/><line x1="0" y1="0" x2="5" y2="0" class="chart-hatch-line"/></pattern></defs>';
   rows.forEach((r, k) => {
     const { y, labelH } = layout[k];
-    const by = f.stacked ? y + labelH + 34 : y + labelH / 2;
+    const by = f.stacked ? y + labelH + wordLines[k].length * LH + 16 : y + labelH / 2;
     const bw = f.stacked ? w : f.pw;
     g += nameLabel(0, y + 16, r.c, r.name, f.stacked ? w : f.labelW);
     g += `<rect x="${f.px}" y="${by}" width="${bw.toFixed(1)}" height="10" rx="3" class="chart-track"/>`;
@@ -383,26 +408,28 @@ function drawOutcomes(w, cfgs, names) {
       seg(r.passed, 'chart-mark');
       seg(r.failed, 'chart-bar');
       seg(r.err, 'chart-error');
+      seg(r.lost, 'chart-hatch-rect', ' fill="url(#hatch-uns)"');
       seg(r.incomplete, 'chart-hatch-rect', ' fill="url(#hatch-inc)"');
       seg(r.uns, 'chart-hatch-rect', ' fill="url(#hatch-uns)"');
     }
-    g += t(f.stacked ? 0 : w, f.stacked ? y + labelH + 18 : y + labelH / 2 + 9, r.err ? 'chart-num chart-error-text' : 'chart-num', words(r), f.stacked ? 'start' : 'end');
+    if (f.stacked) wordLines[k].forEach((text, i) => { g += t(0, y + labelH + 18 + i * LH, r.err ? 'chart-num chart-error-text' : 'chart-num', text); });
+    else g += t(w, y + labelH / 2 + 9, r.err ? 'chart-num chart-error-text' : 'chart-num', words(r), 'end');
   });
   g += '</svg>';
   const legend = html`<div class="chart-legend"><span><span class="key-swatch key-swatch-pass"></span>passed</span><span><span class="key-swatch"></span>failed</span><span><span class="key-swatch key-swatch-error"></span>no answer</span><span><span class="key-swatch key-swatch-incomplete"></span>unfinished, unjudged</span><span><span class="key-swatch key-swatch-unscored"></span>not checked</span></div>`;
-  return { svg: g, note: 'Every try of each setup.', after: legend };
+  return { svg: g, note: 'Every included try of each setup. Lost calls and unfinished execution remain unjudged; they are excluded from the pass share. Missing tries are not zero outcomes.', after: legend };
 }
 
 const timed = (s) => s.facts.time !== null;
 const priced = (s) => { const a = aggOf(s.id); return Boolean(a && isNum(a.mean_cost_usd) && s.facts.rate !== null); };
 const steady = (s) => { const a = aggOf(s.id); return Boolean(a && a.reliability_sufficient); };
-const tokened = (s) => { const a = aggOf(s.id); return Boolean(a && isNum(a.mean_input_tokens)); };
+const tokened = (s) => { const a = aggOf(s.id); return Boolean(a && [a.mean_input_tokens, a.mean_output_tokens, a.mean_cache_read_tokens].some(isNum)); };
 
 // main: the chart carries a result on its own. any: it has something to draw at all.
 const CHARTS = [
   { id: 'time', title: 'Time per try', draw: drawTime, main: (l) => l.filter(timed).length >= 2, any: (l) => l.some(timed) },
   { id: 'price', title: 'Passed against price', draw: drawPrice, main: (l) => l.filter(priced).length >= 2, any: (l) => l.some(priced) },
-  { id: 'consistency', title: 'Consistency', draw: drawConsistency, main: (l, c) => c.repeats >= 2 && new Set(l.filter(steady).map((s) => aggOf(s.id).reliability_agreement)).size >= 2, any: (l, c) => c.repeats >= 2 && l.some(steady) },
+  { id: 'consistency', title: 'Consistency', draw: drawConsistency, main: (l) => new Set(l.filter(steady).map((s) => aggOf(s.id).reliability_agreement)).size >= 2, any: (l) => l.some(steady) },
   { id: 'tokens', title: 'Tokens per try', draw: drawTokens, main: () => false, any: (l) => l.some(tokened) },
   { id: 'outcomes', title: 'Outcomes', draw: drawOutcomes, main: () => false, any: (l) => l.some((s) => s.facts.tries > 0) },
 ];
@@ -414,10 +441,61 @@ export function chartPlan(list = shownSetups(), c = ctx()) {
   return { main, more };
 }
 
+const scopeReasons = {
+  time: 'No included try has a numeric completion time.',
+  price: 'No shown setup has both a decided pass share and a numeric API-equivalent price.',
+  consistency: 'No shown setup has a case with at least two included outcomes.',
+  tokens: 'No numeric input, output or cache-read usage is stored for these setups.',
+  outcomes: 'No tries from the shown setups are included in this comparison. Run history explains exclusions.',
+};
+
+function metricTableData(id, list = shownSetups(), c = ctx()) {
+  const headers = {
+    time: ['Typical completion time', 'Slow end', 'Sample and exclusions'],
+    price: ['Passed', '95% case-aware pass range', 'API-equivalent USD per priced try', 'Sample and exclusions'],
+    consistency: ['Agreement', 'Sample and exclusions'],
+    tokens: ['Input tokens per try', 'Cache-read tokens per try', 'Output tokens per try', 'Sample and exclusions'],
+    outcomes: ['Passed', 'Failed check', 'No answer', 'Lost, unjudged', 'Unfinished, unjudged', 'Not checked', 'Stored and included'],
+  }[id];
+  const rows = list.map((s) => {
+    const a = aggOf(s.id, c) || {};
+    const stored = (S.data?.observations || []).filter((row) => row.context_key === c.key && row.config_id === s.id);
+    const sample = metricCoverage(stored);
+    const excludedStore = sample.notCounted ? `; ${sample.notCounted} stored tries not counted` : '';
+    const inclusion = `${sample.included} included of ${sample.stored} stored tries${excludedStore}`;
+    let cells;
+    if (id === 'time') {
+      const exclusions = [sample.incomplete ? `${sample.incomplete} unfinished excluded` : '', sample.timeNoAnswer ? `${sample.timeNoAnswer} no-answer tries excluded` : '', sample.timeMissing ? `${sample.timeMissing} without numeric completion time excluded` : '', sample.notCounted ? `${sample.notCounted} stored tries not counted` : ''].filter(Boolean);
+      const cutoff = a.incomplete_elapsed_ms == null ? '' : `; ${durText(a.incomplete_elapsed_ms)} unfinished elapsed time kept separate`;
+      cells = [isNum(a.p50_latency_ms) ? durText(a.p50_latency_ms) : 'Unavailable', isNum(a.p95_latency_ms) ? durText(a.p95_latency_ms) : 'Unavailable', `${sample.timed} timed tries${exclusions.length ? `; ${exclusions.join('; ')}` : '; none excluded'}${cutoff}`];
+    } else if (id === 'price') {
+      const omitted = !isNum(a.mean_cost_usd) || s.facts.rate === null ? '; setup not plotted' : '';
+      const exclusions = [a.incomplete_n ? `${a.incomplete_n} unfinished excluded from pass share` : '', a.lost_n ? `${a.lost_n} lost calls excluded, unjudged` : '', a.unscored_n ? `${a.unscored_n} not checked, excluded from pass share` : '', sample.included - sample.cost ? `${sample.included - sample.cost} without numeric price excluded from price mean` : ''].filter(Boolean);
+      cells = [`${a.passed_n || 0} of ${a.counted_n || 0}`, passRangeText(a), usdText(a.mean_cost_usd, 'Unavailable'), `${a.counted_n || 0} decided tries across ${a.cases_n || 0} cases; ${sample.cost} of ${sample.included} included tries priced${exclusions.length ? `; ${exclusions.join('; ')}` : ''}${excludedStore}${omitted}`];
+    } else if (id === 'consistency') {
+      cells = [isNum(a.reliability_agreement) ? pct(a.reliability_agreement) : 'Unavailable', `${plural(a.reliability_cases || 0, 'case')} with 2+ included outcomes; ${plural(sample.repeatedTries, 'try', 'tries')}${sample.consistencyExcluded ? `; ${plural(sample.consistencyExcluded, 'try', 'tries')} excluded (unfinished, lost or no repeated outcome)` : '; no included tries excluded'}${excludedStore}`];
+    } else if (id === 'tokens') {
+      const coverage = [['input_tokens', 'input'], ['cache_read_tokens', 'cache read'], ['output_tokens', 'output']].map(([key, label]) => `${label} ${sample.tokens[key]}/${sample.included}${sample.tokens[key] < sample.included ? ` (${sample.included - sample.tokens[key]} missing, excluded)` : ''}`).join('; ');
+      cells = [tokText(a.mean_input_tokens, 'Unavailable'), tokText(a.mean_cache_read_tokens, 'Unavailable'), tokText(a.mean_output_tokens, 'Unavailable'), `${coverage}${excludedStore}. Each mean uses its own numeric fields across all attempts.`];
+    } else {
+      cells = [a.passed_n || 0, (a.scored_n || 0) - (a.passed_n || 0), a.failed_n || 0, a.lost_n || 0, a.incomplete_n || 0, a.unscored_n || 0, inclusion];
+    }
+    return { id: s.id, name: s.name, letter: letterOf(s.id), cells };
+  });
+  return { headers, rows };
+}
+
+const dataTable = (ch) => {
+  const { headers, rows } = metricTableData(ch.id);
+  return html`<div class="metric-table-wrap"><table class="metric-table"><caption>${ch.title}: values, sample and exclusions for all cases</caption><thead><tr><th scope="col">Setup</th>${headers.map((h) => html`<th scope="col">${h}</th>`)}</tr></thead><tbody>${rows.map((r) => html`<tr><th scope="row"><span class="metric-who"><span class="lt">${r.letter}</span><span>${r.name}</span></span></th>${r.cells.map((v, i) => html`<td data-label="${headers[i]}">${v}</td>`)}</tr>`)}</tbody></table></div>`;
+};
+
 const card = (ch) => html`<section class="chart-card" id="chart-${ch.id}" aria-labelledby="chart-${ch.id}-h">
   <h3 class="chart-h" id="chart-${ch.id}-h">${ch.title}</h3>
+  <p class="chart-scope">All ${ctx().cases.length} cases · same shown setups · row filters do not change this metric</p>
   <div class="chart chart-body" data-slot="body"></div>
   <p class="chart-note" data-slot="note"></p>
+  ${dataTable(ch)}
 </section>`;
 
 export function renderCharts() {
@@ -426,21 +504,41 @@ export function renderCharts() {
   const more = document.getElementById('charts-more');
   const moreBody = document.getElementById('charts-more-body');
   if (!sect) return;
+  const savedFocus = captureFocus();
+  const c = ctx();
+  if (!c) { sect.hidden = true; return; }
+  if (!disclosures.has(c.key)) disclosures.set(c.key, new Map());
+  const folds = disclosures.get(c.key);
+  if (sect.dataset.context === c.key) for (const [id, open] of captureDisclosures(sect)) folds.set(id, open);
+  else if (sect.dataset.context) more.open = false;
+  sect.dataset.context = c.key;
   const plan = chartPlan();
-  sect.hidden = !plan.main.length && !plan.more.length;
-  if (sect.hidden) return;
-  main.hidden = !plan.main.length;
-  more.hidden = !plan.more.length;
+  const available = CHARTS.filter((ch) => ch.any(shownSetups(), c));
+  const wanted = CHARTS.find((ch) => ch.id === S.chartMetric) || CHARTS[0];
+  const selected = available.includes(wanted) ? wanted : plan.main[0] || available[0];
+  sect.hidden = false;
+  const fallback = document.getElementById('chart-fallback');
+  if (fallback) {
+    fallback.hidden = selected === wanted;
+    fallback.textContent = selected === wanted ? '' : `${wanted.title} is unavailable. ${scopeReasons[wanted.id]}${selected ? ` Showing ${selected.title.toLocaleLowerCase()}.` : ''}`;
+  }
+  const controls = document.getElementById('chart-controls');
+  setHtml(controls, html`<label class="field-label" for="chart-metric">Metric</label><select id="chart-metric" data-fk="chart-metric"${!selected ? html` disabled` : ''}><button><selectedcontent></selectedcontent></button>${CHARTS.map((ch) => html`<option value="${ch.id}"${ch === selected ? html` selected` : ''}${!available.includes(ch) ? html` disabled` : ''}>${ch.title}${!available.includes(ch) ? ' (unavailable)' : ''}</option>`)}</select><span class="chart-control-note">The setup table keeps the complete comparison.</span>`);
+  main.hidden = !selected;
+  more.hidden = available.length < 2;
   const label = document.getElementById('charts-more-label');
-  if (label) setHtml(label, html`${plan.main.length ? 'More charts' : 'All charts'} <span class="count">${plan.more.length}</span>`);
-  setHtml(main, html`${plan.main.map(card)}`);
-  const open = more.open && plan.more.length > 0;
-  setHtml(moreBody, open ? html`${plan.more.map(card)}` : '');
-  const list = [...plan.main, ...(open ? plan.more : [])];
+  if (label) setHtml(label, html`All charts <span class="count">${available.length}</span><span class="fold-meta">Show the other metrics below</span>`);
+  setHtml(main, selected ? card(selected) : '');
+  restoreDisclosures(folds, sect);
+  const open = more.open && available.length > 1;
+  const others = available.filter((ch) => ch !== selected);
+  setHtml(moreBody, open ? html`${others.map(card)}` : '');
+  const list = [...(selected ? [selected] : []), ...(open ? others : [])];
   const cfgs = selectedCfgs();
   const names = chartNames(cfgs);
   const marks = bestMarks(shownSetups());
   const token = ++drawToken;
+  restoreFocus(savedFocus);
   requestAnimationFrame(() => {
     if (token !== drawToken) return;
     list.forEach((ch) => {

@@ -4,15 +4,15 @@
 // prints. A tier is an estimate of expert time (docs/difficulty.md); it never reads as a result.
 // The render functions are pure (they return HTML text) so node:test can load them; the DOM code
 // sits at the foot, behind boot().
-import { html, esc, setHtml, keepParts } from './js/util.js';
+import { html, setHtml, keepParts } from './js/util.js';
 import { plural, caseName } from './js/words.js';
-import { announce, captureFocus, restoreFocus } from './js/ui.js';
+import { announce, captureFocus, restoreFocus, captureDisclosures, restoreDisclosures } from './js/ui.js';
 
 // Two setups are "told apart" when the exact sign test on the tasks only one of them solved is under this.
 export const ALPHA = 0.05;
 // The order lab/lib/ladder.mjs lists the information classes in: the most useful first.
 export const INFORMATION = ['disagree', 'one-config', 'all-solved', 'all-unsolved', 'no-data'];
-const INFO_TEXT = { disagree: 'Setups disagree', 'one-config': 'One setup only', 'all-solved': 'All solved', 'all-unsolved': 'None solved', 'no-data': 'No data' };
+const INFO_TEXT = { disagree: 'Setups disagree', 'one-config': 'One setup only', 'all-solved': 'All solved', 'all-unsolved': 'None solved', 'no-data': 'No counted result' };
 const INFO_HINT = {
   disagree: 'Some setups solved it and some did not. Only these tasks separate setups.',
   'one-config': 'One setup has a result. There is nothing to compare.',
@@ -131,7 +131,16 @@ export function headline(ladder) {
 function renderAnswer(ladder) {
   const h = headline(ladder);
   if (!h) return '';
-  return String(html`<p class="ld-say">${h.say}</p>${h.pairs ? html`<p class="ld-more ld-pairs-say">${h.pairs}</p>` : ''}${h.more.length ? html`<p class="ld-more">${h.more.join(' ')}</p>` : ''}<div class="ld-foot"><span class="fair"><span class="mark-s info" aria-hidden="true"></span><span>A tier is an estimate of expert time, not a measured difficulty. Only the stored runs speak about models, and only for the tasks they ran. The p values are not corrected for the number of pairs.</span></span></div>`);
+  const solved = ladder.information?.['all-solved'] || 0;
+  const unsolved = ladder.information?.['all-unsolved'] || 0;
+  return String(html`<p class="ld-say">${h.say}</p>
+    ${h.pairs ? html`<p class="ld-more ld-pairs-say">${h.pairs}</p>` : ''}
+    ${solved || unsolved ? html`<div class="ld-outcome-counts">
+      ${solved ? html`<span>${solved} solved by every setup that ran them</span>` : ''}
+      ${unsolved ? html`<span>${unsolved} solved by none. Check those tasks for a defect first.</span>` : ''}
+    </div>` : ''}
+    ${h.more.length ? html`<details class="ld-reading" id="ld-reading"><summary class="disclose">How to read these outcomes</summary><p class="ld-more">${h.more.join(' ')}</p></details>` : ''}
+    <div class="ld-foot"><span class="fair"><span class="mark-s info" aria-hidden="true"></span><span>A tier is an estimate of expert time, not a measured difficulty. Results cover counted tasks only. Pair p-values are not corrected for multiple comparisons.</span></span></div>`);
 }
 
 function renderMeta(ladder) {
@@ -182,6 +191,11 @@ function stateMark(config) {
   return html`<span class="who-sub ld-state" data-setup-state="${config.setup_state ?? 'unknown'}"><span class="mark-s ${shape}" aria-hidden="true"></span>${text}</span>`;
 }
 
+function setupIdentity(config) {
+  const [name, ...detail] = String(config.label || config.config_id || '').split(' · ');
+  return html`<span class="who-name">${name}</span>${detail.length ? html`<span class="who-sub">${detail.join(' · ')}</span>` : ''}`;
+}
+
 function tierCell(entry) {
   if (!entry?.counted) return html`<span class="nil">no data</span>`;
   const fewer = entry.counted < entry.tasks;
@@ -193,10 +207,10 @@ export function renderSetups(ladder) {
   if (!configs.length) return String(html`<p class="ld-quiet">No setup has counted results for the ladder yet.</p>`);
   const letters = letterMap(ladder);
   const tiers = ladder.tiers || [];
-  return String(html`<table class="ld-tbl ld-setups"><thead><tr><th scope="col" class="c-setup">Setup</th><th scope="col">Tasks run</th>${tiers.map((tier) => html`<th scope="col" class="c-tier">${tierValue(tier.level, tier.name, `${plural(tier.tasks, 'task')}, ${rangeText(tier.minutes)} (estimate)`)}</th>`)}<th scope="col">All tasks</th></tr></thead><tbody>${configs.map((config) => {
+  return String(html`<table class="ld-tbl ld-setups"><caption class="sr">Counted setup results by estimated tier. Each cell states its coverage.</caption><thead><tr><th scope="col" class="c-setup">Setup</th><th scope="col">Counted tasks</th>${tiers.map((tier) => html`<th scope="col" class="c-tier">${tierValue(tier.level, tier.name, `${plural(tier.tasks, 'task')}, ${rangeText(tier.minutes)} (estimate)`)}</th>`)}<th scope="col">All tasks</th></tr></thead><tbody>${configs.map((config) => {
     const total = config.total || {};
     const fewer = total.counted < total.tasks;
-    return html`<tr data-config="${config.config_id}"><th scope="row" class="c-setup"><span class="who"><span class="lt" aria-hidden="true">${letters.get(config.config_id)}</span><span class="who-text"><span class="who-name">${config.label}</span>${stateMark(config)}</span></span></th><td data-label="Tasks run"><span class="v">${total.counted} of ${total.tasks}</span>${fewer ? html`<span class="sub warn">Fewer than the ladder holds</span>` : ''}</td>${tiers.map((tier) => html`<td data-label="${cap(tier.name)} (estimate)">${tierCell(config.tiers?.[tier.level])}</td>`)}<td data-label="All tasks">${total.counted ? tierCell(total) : html`<span class="nil">no data</span>`}</td></tr>`;
+    return html`<tr data-config="${config.config_id}"><th scope="row" class="c-setup"><span class="who"><span class="lt" aria-hidden="true">${letters.get(config.config_id)}</span><span class="who-text">${setupIdentity(config)}${stateMark(config)}</span></span></th><td data-label="Counted tasks"><span class="v">${total.counted} of ${total.tasks}</span>${fewer ? html`<span class="sub warn">Fewer than the ladder holds</span>` : ''}</td>${tiers.map((tier) => html`<td data-label="${cap(tier.name)} (estimate)">${tierCell(config.tiers?.[tier.level])}</td>`)}<td data-label="All tasks">${total.counted ? tierCell(total) : html`<span class="nil">no data</span>`}</td></tr>`;
   })}</tbody></table>`);
 }
 
@@ -210,14 +224,14 @@ export function renderPairs(ladder, ui = {}) {
   if (!pairs.length) return String(html`<p class="ld-quiet" data-no-pair>No two setups ran a task in common, so the runs cannot compare any pair.</p>`);
   const chosen = ui.a && ui.b ? pairOf(ladder, ui.a, ui.b) : null;
   const on = (pair) => chosen && ((pair.a === ui.a && pair.b === ui.b) || (pair.a === ui.b && pair.b === ui.a));
-  return String(html`<table class="ld-tbl ld-pairs"><thead><tr><th scope="col" class="c-pair">Pair</th><th scope="col">Tasks both ran</th><th scope="col">Only the first solved</th><th scope="col">Only the second solved</th><th scope="col">Sign test p</th><th scope="col">What the runs show</th><th scope="col" class="c-act"><span class="sr">Show the tasks</span></th></tr></thead><tbody>${pairs.map((pair) => html`<tr data-pair="${pair.a}|${pair.b}"${on(pair) ? html` class="is-on"` : ''}><th scope="row" class="c-pair"><span class="ld-vs"><span class="lt" aria-hidden="true">${letters.get(pair.a)}</span><span class="who-name">${pair.a_label}</span></span><span class="ld-vs"><span class="lt" aria-hidden="true">${letters.get(pair.b)}</span><span class="who-name">${pair.b_label}</span></span></th><td data-label="Tasks both ran" class="num">${pair.shared}</td><td data-label="Only the first solved" class="num">${pair.a_only}</td><td data-label="Only the second solved" class="num">${pair.b_only}</td><td data-label="Sign test p" class="num">${pText(pair.sign_p)}</td><td data-label="What the runs show"><span class="ld-read${pair.sign_p < ALPHA && cleanPair(ladder, pair) ? ' is-apart' : ''}">${readingText(pair, cleanPair(ladder, pair))}</span></td><td class="c-act"><button type="button" class="btn quiet small" data-act="pair-row" data-a="${pair.a}" data-b="${pair.b}" data-fk="pair:${pair.a}|${pair.b}">Show tasks</button></td></tr>`)}</tbody></table>`);
+  return String(html`<table class="ld-tbl ld-pairs"><caption class="sr">Pair comparisons over shared tasks, with sign tests and setup qualifications.</caption><thead><tr><th scope="col" class="c-pair">Pair</th><th scope="col">Tasks both ran</th><th scope="col">Only the first solved</th><th scope="col">Only the second solved</th><th scope="col">Sign test p</th><th scope="col">What the runs show</th><th scope="col" class="c-act"><span class="sr">Show the tasks</span></th></tr></thead><tbody>${pairs.map((pair) => html`<tr data-pair="${pair.a}|${pair.b}"${on(pair) ? html` class="is-on"` : ''}><th scope="row" class="c-pair"><span class="ld-vs"><span class="lt" aria-hidden="true">${letters.get(pair.a)}</span><span class="who-text">${setupIdentity({ label: pair.a_label })}</span></span><span class="ld-vs"><span class="lt" aria-hidden="true">${letters.get(pair.b)}</span><span class="who-text">${setupIdentity({ label: pair.b_label })}</span></span></th><td data-label="Tasks both ran" class="num">${pair.shared}</td><td data-label="Only the first solved" class="num">${pair.a_only}</td><td data-label="Only the second solved" class="num">${pair.b_only}</td><td data-label="Sign test p" class="num">${pText(pair.sign_p)}</td><td data-label="What the runs show"><span class="ld-read${pair.sign_p < ALPHA && cleanPair(ladder, pair) ? ' is-apart' : ''}">${readingText(pair, cleanPair(ladder, pair))}</span></td><td class="c-act"><button type="button" class="btn quiet small" data-act="pair-row" data-a="${pair.a}" data-b="${pair.b}" data-fk="pair:${pair.a}|${pair.b}">Show tasks</button></td></tr>`)}</tbody></table>`);
 }
 
 /** Which letter is which setup, above the task table, where the columns show only the letter. */
 function renderKey(ladder) {
   const letters = letterMap(ladder);
   if (!configsOf(ladder).length) return '';
-  return String(html`<ul class="ld-key" aria-label="Setup letters">${configsOf(ladder).map((config) => html`<li><span class="lt" aria-hidden="true">${letters.get(config.config_id)}</span><span class="col-name">${config.label}</span></li>`)}</ul>`);
+  return String(html`<ul class="ld-key" aria-label="Setup letters">${configsOf(ladder).map((config) => html`<li><span class="lt" aria-hidden="true">${letters.get(config.config_id)}</span><span class="who-text">${setupIdentity(config)}</span></li>`)}</ul>`);
 }
 
 /** The card for the two setups chosen in the selects: what only one of them solved, and the sign test. */
@@ -235,7 +249,7 @@ export function renderPairCard(ladder, ui = {}) {
 
 /* ---------- Tasks ---------- */
 export function defaultUi() {
-  return { kind: '', tier: '', info: '', sort: 'tier', a: '', b: '', split: false };
+  return { kind: '', tier: '', info: '', sort: 'tier', a: '', b: '', split: false, q: '' };
 }
 
 export function parseHash(text) {
@@ -245,6 +259,7 @@ export function parseHash(text) {
   if (params.get('tier')) out.tier = params.get('tier');
   if (params.get('info')) out.info = params.get('info');
   if (params.get('sort')) out.sort = params.get('sort');
+  out.q = (params.get('q') || '').slice(0, 200);
   if (params.get('a')) out.a = params.get('a');
   if (params.get('b')) out.b = params.get('b');
   out.split = params.get('split') === '1';
@@ -254,6 +269,7 @@ export function parseHash(text) {
 export function hashFor(ui) {
   const params = new URLSearchParams();
   for (const key of ['kind', 'tier', 'info']) if (ui[key]) params.set(key, ui[key]);
+  if (ui.q) params.set('q', ui.q);
   if (ui.sort && ui.sort !== 'tier') params.set('sort', ui.sort);
   if (ui.a) params.set('a', ui.a);
   if (ui.b) params.set('b', ui.b);
@@ -267,6 +283,7 @@ export function cleanUi(ui, ladder) {
   const tasks = allTasks(ladder);
   const ids = new Set(configsOf(ladder).map((config) => config.config_id));
   const next = { ...defaultUi(), ...ui };
+  next.q = String(next.q || '').slice(0, 200);
   if (!tasks.some((task) => task.kind === next.kind)) next.kind = '';
   if (!(ladder?.tiers || []).some((tier) => String(tier.level) === next.tier)) next.tier = '';
   if (!INFORMATION.includes(next.info)) next.info = '';
@@ -290,10 +307,16 @@ const COMPARE = {
 };
 
 /** The tasks the toolbar lets through, in the chosen order. */
-export function visibleTasks(ladder, ui) {
+export function visibleTasks(ladder, ui, cases = {}) {
   const split = ui.split && ui.a && ui.b;
+  const terms = String(ui.q || '').toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
   return allTasks(ladder)
     .filter((task) => (!ui.kind || task.kind === ui.kind) && (!ui.tier || String(task.tier) === ui.tier) && (!ui.info || task.information === ui.info) && (!split || separates(task, ui.a, ui.b)))
+    .filter(task => {
+      const name = caseName(task.case_id, task.suite, cases?.[task.case_id]?.input);
+      const text = `${name} ${task.case_id} ${task.case_id.replaceAll('-', ' ')} ${task.kind} ${task.basis || ''}`.toLocaleLowerCase();
+      return terms.every(term => text.includes(term));
+    })
     .sort(COMPARE[ui.sort] || COMPARE.tier);
 }
 
@@ -305,24 +328,49 @@ function scoreCell(entry, letter, picked) {
 function taskRow(task, ladder, cases, ui) {
   const letters = letterMap(ladder);
   const configs = configsOf(ladder);
-  const found = new Map((task.per_config || []).map((entry) => [entry.config_id, entry]));
-  const { basis } = task;
+  const found = new Map((task.per_config || []).map(entry => [entry.config_id, entry]));
   const tier = tierEntry(ladder, task.tier);
-  return html`<tr data-case="${task.case_id}" data-info="${task.information}" data-kind="${task.kind}"><th scope="row" class="c-task"><span class="ld-name">${caseName(task.case_id, task.suite, cases?.[task.case_id]?.input)}</span><span class="ld-id">${KIND_TEXT[task.kind] || task.kind} task · ${task.case_id}</span>${basis ? html`<span class="ld-basis">Basis: ${basis}</span>` : ''}${task.flags?.length ? html`<details class="ld-flags"><summary class="disclose">Check this task${task.flags.length > 1 ? ` (${task.flags.length})` : ''}</summary>${task.flags.map((flag) => html`<p data-flag="${flag.flag}">${cap(flag.flag)}: solved by ${labelOf(ladder, flag.solved_by)}, failed on every try by ${labelOf(ladder, flag.failed_by)}, which scores higher on the ${flag.shared_tasks} other shared ${flag.shared_tasks === 1 ? 'task' : 'tasks'} (${fixed(flag.failed_by_mean)} against ${fixed(flag.solved_by_mean)}). Check the task for a defect first.</p>`)}</details>` : ''}</th><td data-label="Tier" class="c-tier">${tierValue(task.tier, tier?.name ?? task.tier_name, `estimate: ${minutesText(task.human_minutes)}`)}</td><td data-label="What the runs show" class="c-info"><span class="ld-info" data-info="${task.information}" title="${INFO_HINT[task.information] || ''}"><span class="ld-ishape" aria-hidden="true"></span>${INFO_TEXT[task.information] || task.information}</span><span class="sub">${task.configs_n ? `${task.configs_n} of ${plural(configs.length, 'setup')} with a result` : 'No setup has a result'}</span></td>${configs.map((config) => scoreCell(found.get(config.config_id), `${letters.get(config.config_id)} ${config.label}`, config.config_id === ui.a || config.config_id === ui.b))}</tr>`;
+  return html`<tr data-case="${task.case_id}" data-info="${task.information}" data-kind="${task.kind}">
+    <th scope="row" class="c-task">
+      <span class="ld-name">${caseName(task.case_id, task.suite, cases?.[task.case_id]?.input)}</span>
+      <span class="ld-kind">${KIND_TEXT[task.kind] || task.kind} task</span>
+      <details class="ld-task-details" id="task-details-${task.case_id}">
+        <summary class="disclose">Task details</summary>
+        <span class="ld-id">${task.case_id}</span>
+        ${task.basis ? html`<span class="ld-basis">Basis: ${task.basis}</span>` : ''}
+      </details>
+      ${task.flags?.length ? html`<details class="ld-flags" id="task-flags-${task.case_id}"><summary class="disclose">Check this task${task.flags.length > 1 ? ` (${task.flags.length})` : ''}</summary>${task.flags.map(flag => html`<p data-flag="${flag.flag}">${cap(flag.flag)}: solved by ${labelOf(ladder, flag.solved_by)}, failed on every try by ${labelOf(ladder, flag.failed_by)}, which scores higher on the ${flag.shared_tasks} other shared ${flag.shared_tasks === 1 ? 'task' : 'tasks'} (${fixed(flag.failed_by_mean)} against ${fixed(flag.solved_by_mean)}). Check the task for a defect first.</p>`)}</details>` : ''}
+    </th>
+    <td data-label="Tier" class="c-tier">${tierValue(task.tier, tier?.name ?? task.tier_name, `estimate: ${minutesText(task.human_minutes)}`)}</td>
+    <td data-label="What the runs show" class="c-info"><span class="ld-info" data-info="${task.information}" title="${INFO_HINT[task.information] || ''}"><span class="ld-ishape" aria-hidden="true"></span>${INFO_TEXT[task.information] || task.information}</span><span class="sub">${task.configs_n ? `${task.configs_n} of ${plural(configs.length, 'setup')} with a counted result` : 'No setup has a counted result'}</span></td>
+    ${configs.map(config => scoreCell(found.get(config.config_id), `${letters.get(config.config_id)} ${config.label}`, config.config_id === ui.a || config.config_id === ui.b))}
+  </tr>`;
 }
 
-export function renderTasks(ladder, cases, ui) {
-  const tasks = visibleTasks(ladder, ui);
+function taskTable(tasks, ladder, cases, ui, caption) {
   const configs = configsOf(ladder);
   const letters = letterMap(ladder);
-  if (!tasks.length) return String(html`<p class="ld-quiet" data-no-match>No task matches these filters. <button type="button" class="link-btn" data-act="clear" data-fk="clear">Clear the filters</button></p>`);
-  return String(html`<table class="ld-tbl ld-tasks"><thead><tr><th scope="col" class="c-task">Task</th><th scope="col" class="c-tier">Tier and expert time</th><th scope="col" class="c-info">What the runs show</th>${configs.map((config) => html`<th scope="col" class="c-score${config.config_id === ui.a || config.config_id === ui.b ? ' is-pick' : ''}" title="${config.label}"><span class="lt" aria-hidden="true">${letters.get(config.config_id)}</span><span class="sr">${config.label}</span></th>`)}</tr></thead><tbody>${tasks.map((task) => taskRow(task, ladder, cases, ui))}</tbody></table>`);
+  return html`<table class="ld-tbl ld-tasks"><caption class="sr">${caption}</caption><thead><tr><th scope="col" class="c-task">Task</th><th scope="col" class="c-tier">Tier and expert time</th><th scope="col" class="c-info">What the runs show</th>${configs.map(config => html`<th scope="col" class="c-score${config.config_id === ui.a || config.config_id === ui.b ? ' is-pick' : ''}" title="${config.label}"><span class="lt" aria-hidden="true">${letters.get(config.config_id)}</span><span class="sr">${config.label}</span></th>`)}</tr></thead><tbody>${tasks.map(task => taskRow(task, ladder, cases, ui))}</tbody></table>`;
 }
 
-function renderTasksNote(ladder, ui) {
+export function renderTasks(ladder, cases, ui = defaultUi()) {
+  const tasks = visibleTasks(ladder, ui, cases);
+  if (!tasks.length) return String(html`<p class="ld-quiet" data-no-match>No task matches these filters. <button type="button" class="link-btn" data-act="clear" data-fk="clear">Clear the filters</button></p>`);
+  const pending = tasks.filter(task => task.information === 'no-data');
+  const counted = tasks.filter(task => task.information !== 'no-data');
+  const filtered = ui.kind || ui.tier || ui.info || ui.q || ui.split;
+  if (filtered || !pending.length || !counted.length) return String(taskTable(tasks, ladder, cases, ui, 'Ladder tasks matching the current row filters'));
+  return String(html`${taskTable(counted, ladder, cases, ui, 'Tasks with counted results')}
+    <details class="ld-no-counted" id="ld-no-counted"><summary class="disclose">No counted result <span class="count">${pending.length}</span></summary>
+      <p class="ld-quiet">These tasks have no counted result. Attempts may be absent, unfinished or excluded; this does not establish that they were never run.</p>
+      ${taskTable(pending, ladder, cases, ui, 'Tasks without a counted result')}
+    </details>`);
+}
+
+function renderTasksNote(ladder, ui, cases) {
   const total = allTasks(ladder).length;
-  const shown = visibleTasks(ladder, ui).length;
-  const filtered = Boolean(ui.kind || ui.tier || ui.info || (ui.split && ui.a && ui.b));
+  const shown = visibleTasks(ladder, ui, cases).length;
+  const filtered = Boolean(ui.kind || ui.tier || ui.info || ui.q || (ui.split && ui.a && ui.b));
   return `${shown === total ? `All ${plural(total, 'task')}` : `${shown} of ${plural(total, 'task')}`}${filtered ? ' shown' : ''}`;
 }
 
@@ -342,11 +390,8 @@ function renderEvidence(ladder) {
   return parts.map(String).join('');
 }
 
-/* ---------- Selects: the field is a well and the menu floats, so the open list follows the theme ---------- */
-const field = (def) => {
-  const current = def.options.find((option) => option.value === def.value) ?? def.options[0];
-  return html`<div class="ld-field"><span class="ld-flabel" id="${def.id}-l">${def.label}</span><button type="button" class="lsel" id="${def.id}" data-sel="${def.id}" data-fk="sel:${def.id}" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="${def.id}-l ${def.id}"><span class="lsel-text">${current?.text ?? ''}</span><svg class="i" aria-hidden="true"><use href="#i-down"/></svg></button></div>`;
-};
+/* ---------- Native choices share the app's themed picker and platform fallback ---------- */
+const field = (def) => html`<div class="ld-field"><label class="ld-flabel" for="${def.id}">${def.label}</label><select id="${def.id}" name="${def.id.slice(4)}" data-sel="${def.id}" data-fk="sel:${def.id}"><button type="button"><selectedcontent></selectedcontent></button>${def.options.map(option => html`<option value="${option.value}"${option.value === def.value ? html` selected` : ''}>${option.text}</option>`)}</select></div>`;
 
 /** Every select on the page: its options and its current value. */
 export function selectDefs(ladder, ui) {
@@ -359,12 +404,19 @@ export function selectDefs(ladder, ui) {
     { id: 'sel-tier', scope: 'tasks', label: 'Tier (estimate)', value: ui.tier, options: [{ value: '', text: 'All tiers' }, ...(ladder?.tiers || []).map((tier) => ({ value: String(tier.level), text: `${cap(tier.name)} (estimate)` }))] },
     { id: 'sel-info', scope: 'tasks', label: 'What the runs show', value: ui.info, options: [{ value: '', text: 'All tasks' }, ...INFORMATION.map((name) => ({ value: name, text: INFO_TEXT[name] }))] },
     { id: 'sel-sort', scope: 'tasks', label: 'Sort by', value: ui.sort, options: SORTS.map(([value, text]) => ({ value, text })) },
-    { id: 'sel-a', scope: 'pair', label: 'Setup A', value: ui.a, options: setup(ui.b) },
-    { id: 'sel-b', scope: 'pair', label: 'Setup B', value: ui.b, options: setup(ui.a) },
+    { id: 'sel-a', scope: 'pair', label: 'First setup', value: ui.a, options: setup(ui.b) },
+    { id: 'sel-b', scope: 'pair', label: 'Second setup', value: ui.b, options: setup(ui.a) },
   ];
 }
 
-const renderToolbar = (ladder, ui, scope) => String(selectDefs(ladder, ui).filter((def) => def.scope === scope).map(field).join(''));
+const renderToolbar = (ladder, ui, scope) => String(html`${scope === 'tasks' ? html`<div class="ld-field ld-search"><label for="ld-search" class="ld-flabel">Search tasks</label><input type="search" id="ld-search" data-fk="ld-search" maxlength="200" value="${ui.q}" placeholder="Name, task ID or estimation basis"></div>` : ''}${selectDefs(ladder, ui).filter(def => def.scope === scope).map(field)}${scope === 'tasks' && (ui.q || ui.kind || ui.tier || ui.info || ui.sort !== 'tier' || ui.split) ? html`<button type="button" class="btn secondary" data-act="clear" data-fk="clear">Reset filters</button>` : ''}`);
+
+function renderCoverage(ladder) {
+  const tasks = allTasks(ladder);
+  const pending = tasks.filter(task => task.information === 'no-data').length;
+  const used = (ladder?.versions || []).filter(item => item.version != null && !item.refused);
+  return String(html`<div class="ld-coverage-line"><p><strong>${tasks.length - pending} of ${tasks.length} tasks have counted results.</strong> ${pending ? `${pending} have no counted result.` : 'Every task has a counted result.'}</p><button type="button" class="btn secondary small" data-act="all-tasks" data-fk="all-tasks">Show all tasks</button></div><p class="ld-coverage-versions">Suite versions: ${used.map(item => `${item.suite} ${item.version}`).join(' · ') || 'No comparable suite version'}.</p><p class="ld-coverage-versions">Coverage counts completed, scored tasks in these suite versions. Unfinished, lost or excluded attempts may exist outside these counts.</p>`);
+}
 
 /* ---------- The page ---------- */
 /** Every block of the page as HTML text. */
@@ -377,6 +429,7 @@ export function renderPage(data, ui = defaultUi(), error = null) {
     ui: shown,
     meta: renderMeta(ladder),
     answer: hasTasks ? renderAnswer(ladder) : '',
+    coverage: hasTasks ? renderCoverage(ladder) : '',
     notices: `${error && data ? String(html`<div class="ld-note is-warn" data-notice="stale" role="alert"><span class="mark-s warn" aria-hidden="true"></span><div><strong>The page could not refresh (${error}).</strong> The numbers below are from the last load and may be out of date. <button type="button" class="link-btn" data-act="reload" data-fk="reload">Try again</button></div></div>`) : ''}${renderNotices(ladder)}`,
     empty: renderEmpty(data, error),
     setups: hasTasks ? renderSetups(ladder) : '',
@@ -387,17 +440,18 @@ export function renderPage(data, ui = defaultUi(), error = null) {
     tools: hasTasks ? renderToolbar(ladder, shown, 'tasks') : '',
     key: hasTasks ? renderKey(ladder) : '',
     tasks: hasTasks ? renderTasks(ladder, data?.cases, shown) : '',
-    tasksNote: hasTasks ? renderTasksNote(ladder, shown) : '',
+    tasksNote: hasTasks ? renderTasksNote(ladder, shown, data?.cases) : '',
     evidence: hasTasks ? renderEvidence(ladder) : '',
   };
 }
 
 /* ---------- Browser only ---------- */
-const V = { data: null, error: null, ui: defaultUi(), menu: null };
+const V = { data: null, error: null, ui: defaultUi(), disclosures: new Map() };
 const $ = (id) => document.getElementById(id);
 
 function paint() {
   const saved = captureFocus();
+  for (const [id, open] of captureDisclosures($('main'))) V.disclosures.set(id, open);
   const page = renderPage(V.data, V.ui, V.error);
   V.ui = page.ui;
   const has = Boolean(page.answer);
@@ -406,6 +460,8 @@ function paint() {
   $('answer').hidden = !has;
   if (has) setHtml($('answer'), page.answer);
   setHtml($('notices'), page.notices);
+  $('ld-coverage').hidden = !has;
+  setHtml($('ld-coverage'), page.coverage);
   $('empty').hidden = !page.empty;
   setHtml($('empty'), page.empty);
   for (const id of ['setups-sect', 'tasks-sect', 'evidence-sect']) $(id).hidden = !has;
@@ -420,6 +476,7 @@ function paint() {
   setHtml($('tasks'), page.tasks);
   $('tasks-note').textContent = page.tasksNote;
   setHtml($('evidence'), page.evidence);
+  restoreDisclosures(V.disclosures, $('main'));
   const hash = hashFor(V.ui);
   if (hash !== location.hash) history.replaceState(null, '', `${location.pathname}${location.search}${hash}`);
   restoreFocus(saved, ['reload']);
@@ -438,51 +495,6 @@ async function load() {
   paint();
 }
 
-function closeMenu(refocus = true) {
-  const menu = V.menu;
-  if (!menu) return;
-  menu.el.remove();
-  menu.btn.setAttribute('aria-expanded', 'false');
-  menu.btn.removeAttribute('aria-controls');
-  V.menu = null;
-  if (refocus) menu.btn.focus({ preventScroll: true });
-}
-
-function setActive(menu, index) {
-  const items = [...menu.el.children];
-  menu.index = (index + items.length) % items.length;
-  items.forEach((item, at) => item.classList.toggle('active', at === menu.index));
-  menu.el.setAttribute('aria-activedescendant', items[menu.index].id);
-  items[menu.index].scrollIntoView({ block: 'nearest' });
-}
-
-function openMenu(btn) {
-  closeMenu(false);
-  const def = selectDefs(V.data?.ladder, V.ui).find((item) => item.id === btn.dataset.sel);
-  if (!def) return;
-  const el = document.createElement('div');
-  el.className = 'lmenu';
-  el.id = `${btn.id}-menu`;
-  el.tabIndex = -1;
-  el.setAttribute('role', 'listbox');
-  el.setAttribute('aria-labelledby', `${btn.id}-l`);
-  el.innerHTML = def.options.map((option, at) => `<div class="lopt" role="option" id="${btn.id}-o${at}" data-value="${esc(option.value)}" aria-selected="${option.value === def.value}"><span class="lopt-text">${esc(option.text)}</span><svg class="i" aria-hidden="true"><use href="#i-check"/></svg></div>`).join('');
-  document.body.append(el);
-  const box = btn.getBoundingClientRect();
-  el.style.minWidth = `${Math.round(box.width)}px`;
-  el.style.maxWidth = `${Math.max(240, window.innerWidth - 32)}px`;
-  const room = window.innerHeight - box.bottom;
-  const up = room < Math.min(el.offsetHeight, 320) + 12 && box.top > room;
-  el.classList.toggle('up', up);
-  el.style.left = `${Math.max(8, Math.min(box.left, window.innerWidth - el.offsetWidth - 8))}px`;
-  el.style.top = up ? `${Math.max(8, box.top - el.offsetHeight - 6)}px` : `${box.bottom + 6}px`;
-  btn.setAttribute('aria-expanded', 'true');
-  btn.setAttribute('aria-controls', el.id);
-  V.menu = { el, btn, def, index: 0 };
-  setActive(V.menu, Math.max(0, def.options.findIndex((option) => option.value === def.value)));
-  el.focus({ preventScroll: true });
-}
-
 function choose(id, value) {
   const ui = V.ui;
   if (id === 'sel-kind') ui.kind = value;
@@ -496,33 +508,9 @@ function choose(id, value) {
   announce($('tasks-note').textContent);
 }
 
-function pickFromMenu() {
-  const menu = V.menu;
-  if (!menu) return;
-  const id = menu.def.id;
-  const value = menu.def.options[menu.index].value;
-  closeMenu(false);
-  choose(id, value);
-  const again = document.querySelector(`[data-fk="sel:${id}"]`);
-  if (again) again.focus({ preventScroll: true });
-}
-
 function onClick(event) {
-  const menu = V.menu;
-  if (menu && !menu.el.contains(event.target) && !menu.btn.contains(event.target)) closeMenu(false);
-  const option = event.target.closest('.lopt');
-  if (option && menu && menu.el.contains(option)) {
-    setActive(menu, [...menu.el.children].indexOf(option));
-    pickFromMenu();
-    return;
-  }
-  const target = event.target.closest('[data-act], [data-sel]');
+  const target = event.target.closest('[data-act]');
   if (!target) return;
-  if (target.dataset.sel) {
-    if (menu && menu.btn === target) closeMenu();
-    else openMenu(target);
-    return;
-  }
   const act = target.dataset.act;
   if (act === 'pair-row') {
     V.ui.a = target.dataset.a;
@@ -538,32 +526,18 @@ function onClick(event) {
   } else if (act === 'clear') {
     V.ui = { ...defaultUi(), a: V.ui.a, b: V.ui.b };
     paint();
+    announce($('tasks-note').textContent);
+  } else if (act === 'all-tasks') {
+    V.ui = { ...defaultUi(), a: V.ui.a, b: V.ui.b };
+    paint();
+    const pending = $('ld-no-counted');
+    if (pending) pending.open = true;
+    $('tasks-h').tabIndex = -1;
+    $('tasks-h').focus({ preventScroll: true });
+    $('tasks-sect').scrollIntoView({ block: 'start' });
+    announce('Showing all ladder task rows, including tasks without a counted result.');
   } else if (act === 'reload') {
     load();
-  }
-}
-
-function onKey(event) {
-  const menu = V.menu;
-  if (menu) {
-    if (event.key === 'ArrowDown') setActive(menu, menu.index + 1);
-    else if (event.key === 'ArrowUp') setActive(menu, menu.index - 1);
-    else if (event.key === 'Home') setActive(menu, 0);
-    else if (event.key === 'End') setActive(menu, menu.def.options.length - 1);
-    else if (event.key === 'Enter' || event.key === ' ') pickFromMenu();
-    else if (event.key === 'Escape') closeMenu();
-    else if (event.key === 'Tab') {
-      // Focus goes back to the select first, so the browser's own Tab moves on from there.
-      closeMenu();
-      return;
-    } else return;
-    event.preventDefault();
-    return;
-  }
-  const btn = event.target.closest?.('[data-sel]');
-  if (btn && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
-    openMenu(btn);
-    event.preventDefault();
   }
 }
 
@@ -573,9 +547,17 @@ async function boot() {
   shell.watchJobs();
   V.ui = parseHash(location.hash);
   document.addEventListener('click', onClick);
-  document.addEventListener('keydown', onKey);
-  window.addEventListener('resize', () => closeMenu(false));
-  window.addEventListener('scroll', () => closeMenu(false), { passive: true });
+  document.addEventListener('change', (event) => {
+    if (event.target.matches('select[data-sel]')) choose(event.target.id, event.target.value);
+  });
+  let searchAnnouncement;
+  document.addEventListener('input', (event) => {
+    if (event.target.id !== 'ld-search') return;
+    V.ui.q = event.target.value;
+    paint();
+    clearTimeout(searchAnnouncement);
+    searchAnnouncement = setTimeout(() => announce($('tasks-note').textContent), 250);
+  });
   window.addEventListener('hashchange', () => {
     if (location.hash === hashFor(V.ui)) return;
     V.ui = parseHash(location.hash);

@@ -41,7 +41,8 @@ export function captureFocus() {
   if (!a || a === document.body) return null;
   const host = a.closest('[data-fk]');
   if (!host) return null;
-  return { key: host.getAttribute('data-fk'), inside: host !== a ? a.tagName : null };
+  return { key: host.getAttribute('data-fk'), inside: host !== a ? a.tagName : null,
+    selection: typeof a.selectionStart === 'number' ? [a.selectionStart, a.selectionEnd, a.selectionDirection] : null };
 }
 
 export function restoreFocus(saved, fallbacks = []) {
@@ -52,8 +53,21 @@ export function restoreFocus(saved, fallbacks = []) {
     const el = find(key);
     if (el && !el.disabled && el.offsetParent !== null) {
       el.focus({ preventScroll: true });
+      if (saved.selection && typeof el.setSelectionRange === 'function') {
+        try { el.setSelectionRange(...saved.selection); } catch {}
+      }
       return;
     }
+  }
+}
+
+export function captureDisclosures(root = document) {
+  return new Map([...root.querySelectorAll('details[id]')].map(el => [el.id, el.open]));
+}
+
+export function restoreDisclosures(saved, root = document) {
+  for (const el of root.querySelectorAll('details[id]')) {
+    if (saved?.has(el.id)) el.open = saved.get(el.id);
   }
 }
 

@@ -34,8 +34,8 @@ export function mainCheckout(root) {
 }
 
 /**
- * The data folder: where runs and human annotations are written, outside git, so that
- * git clean, a removed worktree or a fresh clone never deletes evidence. Set by LAB_DATA,
+ * The data folder: where runs and human annotations are written. The dedicated
+ * main-checkout .lab-data folder is allowed; other stores stay outside checkouts. Set by LAB_DATA,
  * else by `data_dir` in lab.local.yaml (not committed) at the root or, in a worktree, at
  * the main checkout, so every worktree writes to the same store. Null: the root itself.
  * Tests (node --test) never pick up a local file; they set LAB_DATA when they need one.
@@ -58,12 +58,11 @@ export function checkouts(root) {
 }
 
 export function dataDir(root = labRoot(), env = process.env) {
-  // Inside a checkout of this repository (the main one or any worktree), git clean or
-  // git worktree remove would delete it, and that checkout's guard would see every
-  // other run write there; so the data folder must be outside all of them.
+  const localData = path.join(mainCheckout(root) ?? path.resolve(root), '.lab-data');
   const outside = (dir, source) => {
+    if (path.relative(localData, dir) === '') return dir;
     const inside = checkouts(root).find((checkout) => isInside(dir, checkout));
-    if (inside) throw new Error(`${source}: the data folder ${dir} is inside the repository checkout ${inside}; put it outside, for example ../Model-Lab-Data`);
+    if (inside) throw new Error(`${source}: the data folder ${dir} is inside the repository checkout ${inside}; use ${localData} or an external folder`);
     return dir;
   };
   // Under the test runner a LAB_DATA from the shell is ignored, so tests never write fake
@@ -155,8 +154,8 @@ export function paths(root = labRoot()) {
     experiments: path.join(root, 'experiments'),
     experimentsArchive: path.join(root, 'experiments', ARCHIVE),
     annotations: path.join(data ?? root, 'annotations'),
-    boards: path.join(root, 'boards'),
-    reports: path.join(root, 'reports'),
+    boards: path.join(data ?? root, 'boards'),
+    reports: path.join(data ?? root, 'reports'),
     cache: path.join(root, '.cache'),
     // Schemas are the contract of the code, not of the data root.
     schemas: path.join(REPO_ROOT, 'schemas'),

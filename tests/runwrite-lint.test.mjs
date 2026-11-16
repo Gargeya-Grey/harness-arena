@@ -14,6 +14,7 @@ const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUTSIDE = {
   'lab/lib/runwrite.mjs': 'the one module that writes run folders',
   'lab/lib/ledger.mjs': 'writes lab.ledger.jsonl at the checkout',
+  'lab/lib/storage.mjs': 'deliberately deletes confirmed run/history targets after validation and store locks',
   'lab/lib/lock.mjs': 'writes the lock file at the store root',
   'lab/lib/fsutil.mjs': 'generic helpers; the lint forbids them for run folders below',
   'lab/commands/info.mjs': 'writes no run folder',

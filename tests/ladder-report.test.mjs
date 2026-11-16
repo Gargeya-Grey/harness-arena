@@ -659,8 +659,8 @@ test('an old saved board that names the legacy id still shows that setup, and so
   chooseContext(ctx.key, [LEAKED]);
   assert.deepEqual(S.sel, [LEAKED], 'a current id still works');
   chooseContext(ctx.key, ['no-such__id']);
-  assert.equal(S.custom, false, 'an unknown id falls back to every setup');
-  assert.equal(S.sel.length, 3);
+  assert.equal(S.custom, true, 'an unknown explicit ID keeps the requested selection empty');
+  assert.deepEqual(S.sel, [], 'a missing selection never expands to unrelated setups');
 });
 
 test('a pair rated after the split keeps both of its ids', (t) => {
@@ -859,7 +859,7 @@ test('the setup chip: leaked, partly kept out and unknown are said on their own 
     ['partly kept out', 'user setup partly kept out', 'user setup partly kept out'],
     ['unknown', 'user setup unknown', 'user setup unknown'],
   ]);
-  assert.match(html, /claude-code 1\.0\.0 · user setup kept out</, 'a kept out setup keeps its quiet word in the harness line');
+  assert.match(html, /<span class="who-sub">user setup kept out<\//, 'a kept out setup keeps a quiet label beside its harness and effort tags');
   assert.equal((html.match(/user setup leaked/g) || []).length, 2, 'the chip text and its title; not repeated in the harness line');
 });
 

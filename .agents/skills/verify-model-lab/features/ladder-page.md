@@ -7,7 +7,7 @@
 - `ladder-answer` opens the page. It gives how many tasks show a real disagreement, how many only one setup ran, and which pairs the runs can tell apart.
 - `ladder-setups` has one row per setup and one column per tier: solved of counted, and the mean. A setup with fewer counted tasks than the ladder holds says so.
 - `ladder-pairs` has one row per pair: tasks both ran, the tasks only one solved, the sign test p and what the runs show. Choosing two setups opens a card with the same numbers. A pair whose setups were not kept out equally, or that holds a leaked or unknown setup, reads `Differ, not a clean comparison`, never `Can tell apart`.
-- `ladder-tasks` has one row per task, with filters by kind, tier and information class, and four sorts. Every tier value carries the word estimate. A setup with no counted result reads `no result`, never `0`.
+- `ladder-tasks` has one row per task, with name/id/basis search, filters by kind/tier/information class, and four sorts. Every tier value carries the word estimate. A setup's missing score cell reads `no result`, never `0`; the group is explicitly labelled `No counted result`.
 - `ladder-empty` covers a root with no ladder, a ladder with no counted run, a suite that is refused (no number shown), and a load error.
 
 ## How to get to it (user POV)
@@ -26,3 +26,10 @@ Preconditions: `ROOT=$(node .agents/skills/verify-model-lab/scripts/temp-root.mj
 ## Gotchas
 
 - The checker can measure before the first paint when `/api/state` is slow. Serve a saved copy of `/api/state` if a result looks wrong.
+
+## Premium Ladder acceptance
+
+- Coverage and used suite versions remain visible before the setup table. In the expanded verification root, 10 of68 tasks have counted results and58 do not. The exact numbers depend on the selected frozen versions; compare with the API, never a fixed total.
+- Evidence-bearing tasks appear first. The named No counted result disclosure retains all other rows; this label does not claim they were never attempted. Show all tasks opens them. Explicit search or information filtering reveals matching rows directly.
+- Close Task details and verify name, kind, estimated time, information class, coverage and any Check this task flag remain visible. Reopen details, search/clear, and refresh: disclosure/focus/caret state stays usable.
+- Pair slots read First setup and Second setup, retaining global setup letters. Row filters change neither headline statistics nor setup comparisons. Search and chosen pair remain in the URL.

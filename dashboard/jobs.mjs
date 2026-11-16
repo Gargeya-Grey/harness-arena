@@ -7,9 +7,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { paths, findRunDir, loadYamlFile, loadCases, loadRegistry, resolveExperiment, targetProblems, requiresExplicitEffort } from '../lab/lib/repo.mjs';
+import { paths, findRunDir, loadYamlFile, loadSuite, loadCases, loadRegistry, resolveExperiment, targetProblems, requiresExplicitEffort, ARCHIVE } from '../lab/lib/repo.mjs';
 import { loadAdapters } from '../lab/adapters/index.mjs';
 import { isoNow } from '../lab/lib/fsutil.mjs';
+import { planExperiment } from '../lab/commands/run.mjs';
 
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'lab', 'cli.mjs');
 const MAX_LINES = 5000;
@@ -55,8 +56,10 @@ export function buildArgs(root, body) {
       args.push('--harness', harness);
     }
     const models = idList(body.models, 'model key');
+    if ('models' in body && !models.length) throw bad('Select at least one model');
     if (models.length) args.push('--models', models.join(','));
     const cases = idList(body.cases, 'case id');
+    if ('cases' in body && !cases.length) throw bad('Select at least one case');
     if (cases.length) args.push('--cases', cases.join(','));
     if (body.repeats != null && body.repeats !== '') {
       const n = Number(body.repeats);
@@ -64,6 +67,11 @@ export function buildArgs(root, body) {
       args.push('--repeats', String(n));
     }
     if (body.dry_run) args.push('--dry-run');
+    if (body.effort !== undefined && body.effort !== '') {
+      try { planExperiment(root, abs, { harness: body.harness, models: models.length ? models : undefined, cases: cases.length ? cases : undefined, effort: body.effort }); }
+      catch (error) { throw bad(error.message); }
+      args.push('--effort', body.effort);
+    }
     return args;
   }
   if (command === 'score') {
@@ -108,7 +116,8 @@ export function catalog(root) {
         repeats: doc.repeats ?? 1,
         access: doc.access || 'answer',
         user_config: doc.user_config || 'loaded',
-        targets: resolved.targets.map((t) => ({ model: t.model, harness: t.harness, effort: t.effort ?? null })),
+        targets: resolved.targets.map((t) => ({ model: t.model, display_name: registry[t.model]?.display_name || t.model, harness: t.harness, effort: t.effort ?? null,
+          effort_levels: loadAdapters(root)[t.harness]?.supports_effort ? registry[t.model]?.effort_levels ?? [] : [] })),
         cases: Array.isArray(doc.cases) ? doc.cases : null,
       });
       try {
@@ -135,7 +144,21 @@ export function catalog(root) {
   } catch (error) {
     problems.push(error.message);
   }
-  return { experiments, harnesses, models, problems };
+  const familyTitles = { smoke: 'Quick check', 'ladder-answer': 'Reasoning', 'ladder-code': 'Code', 'ladder-agent': 'Agent tasks', 'visual-web': 'Visual web', 'foldaway-apartment': 'Foldaway apartment' };
+  const suites = [];
+  for (const dir of fs.existsSync(p.datasets) ? fs.readdirSync(p.datasets, { withFileTypes: true }) : []) {
+    if (!dir.isDirectory() || dir.name === ARCHIVE || !fs.existsSync(path.join(p.datasets, dir.name, 'suite.yaml'))) continue;
+    try {
+      const suite = loadSuite(root, dir.name);
+      const cases = suite.cases.map(item => ({ case_id: item.case_id,
+        title: item.metadata?.title || item.input?.name || item.case_id.replace(suite.id + '-', '').replace(/-/g, ' '),
+        task: [item.input?.question, item.input?.task, item.input?.prompt, item.input?.text].filter(value => typeof value === 'string').join('\n\n'),
+        tier: item.metadata?.tier ?? null }));
+      suites.push({ id: suite.id, title: familyTitles[suite.id] || suite.meta.title || suite.id, description: suite.meta.description || '', version: suite.version, case_count: cases.length, cases });
+    } catch (error) { problems.push(`Test library ${dir.name}: ${error.message}`); }
+  }
+  suites.sort((a, b) => Object.keys(familyTitles).indexOf(a.id) - Object.keys(familyTitles).indexOf(b.id));
+  return { experiments, harnesses, models, suites, problems };
 }
 
 function killTree(child) {
@@ -289,5 +312,10 @@ export function createJobs(root, { cliPath = CLI, env = process.env } = {}) {
     return Promise.all(live.map((job) => job.ended));
   }
 
-  return { start, stop, get, list, shutdown, running: () => (current ? summary(current) : null) };
+  function clearFinished() {
+    if (current) throw Object.assign(new Error('Stop the running job before clearing history'), { status: 409 });
+    jobs.clear();
+  }
+
+  return { start, stop, get, list, shutdown, clearFinished, running: () => (current ? summary(current) : null) };
 }

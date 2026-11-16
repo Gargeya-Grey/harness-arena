@@ -71,8 +71,8 @@ test('a task with no counted result reads "no data" and "no result", never 0', (
   const markup = renderTasks(data.ladder, data.cases, defaultUi());
   const row = rowOf(markup, 'ladder-answer-fx-e2');
   assert.ok(row, 'the unrun task is listed');
-  assert.match(text(row), /No data/);
-  assert.match(text(row), /No setup has a result/);
+  assert.match(text(row), /No counted result/);
+  assert.match(text(row), /No setup has a counted result/);
   assert.equal((row.match(/no result/g) || []).length, 4, 'every setup cell says no result');
   assert.doesNotMatch(row, /data-solved/, 'no setup cell carries a score');
   assert.doesNotMatch(row, /ld-mk/, 'no mark of solved or not solved');
@@ -82,7 +82,7 @@ test('a task with no counted result reads "no data" and "no result", never 0', (
 test('a task only one setup ran says so and shows that one result', () => {
   const row = rowOf(renderTasks(data.ladder, data.cases, defaultUi()), 'ladder-answer-fx-e1');
   assert.match(text(row), /One setup only/);
-  assert.match(text(row), /1 of 4 setups with a result/);
+  assert.match(text(row), /1 of 4 setups with a counted result/);
   assert.equal((row.match(/data-solved="/g) || []).length, 1);
   assert.equal((row.match(/no result/g) || []).length, 3);
 });

@@ -40,6 +40,8 @@ export function renderHead() {
   }
   title.textContent = testTitle(c);
   setHtml(meta, raw(keepParts(testMeta(c, c.config_ids.length, caseLabel(c)))));
+  const provenance = document.getElementById('test-provenance');
+  if (provenance) provenance.textContent = `Suite ${c.suite.id}@${c.suite.version} · prompt ${c.prompt.id}@${c.prompt.version} · checks ${(c.evaluators || []).map((e) => `${e.id}@${e.version}`).join(', ') || 'none'} · context ${c.key}`;
   document.title = `${testTitle(c)} · Results · Model Lab`;
 }
 
@@ -47,6 +49,11 @@ export function renderAnswer() {
   const host = document.getElementById('answer');
   const c = ctx();
   if (!c) return;
+  if (!selectedCfgs().length) {
+    host.dataset.kind = 'empty';
+    setHtml(host, html`<p class="say">No selected setups remain in this test.</p><p class="say-more">Choose the setups you want to see. Your selection has not been expanded.</p><button type="button" class="btn primary" data-act="choose" data-fk="choose-empty">Choose setups</button>`);
+    return;
+  }
   const v = verdictFor();
   const fair = v.kind === 'single' ? null : fairLine(comparison(selectedCfgs()));
   const rate = rateWanted(c);

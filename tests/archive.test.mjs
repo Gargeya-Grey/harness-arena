@@ -1,6 +1,6 @@
 // Retired suites live in datasets/archive/<id>/ and retired experiments in experiments/archive/.
 // Runs name a suite by id, so an old committed run must still load, validate, score and show.
-// These tests copy one committed run into a disposable root: results/ is never written.
+// Historical runs are synthetic and exist only inside each test's disposable root.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,18 +14,18 @@ import { validateRepo } from '../lab/commands/validate.mjs';
 import { readJson, readJsonl } from '../lab/lib/fsutil.mjs';
 import { loadCases, loadSuite, suiteDir, suiteFolders } from '../lab/lib/repo.mjs';
 import { buildState } from '../lab/lib/state.mjs';
+import { HISTORICAL_RUNS, writeHistoricalRuns } from './fixtures/historical-runs.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-// Committed runs of retired suites (results/ in git).
-const REASONING_RUN = '20261104T161946Z__reasoning__reasoning-sweep__e79a4d';
-const AGENTIC_RUN = '20261104T165225Z__agentic__agentic-sweep__db0b84';
+const REASONING_RUN = HISTORICAL_RUNS.reasoning;
+const AGENTIC_RUN = HISTORICAL_RUNS.agentic;
 const rel = (...parts) => path.join(REPO, ...parts);
 
 function tempRoot(t, runs) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-archive-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 5 }));
   for (const dir of ['configs', 'datasets', 'prompts', 'experiments']) fs.cpSync(rel(dir), path.join(root, dir), { recursive: true });
-  for (const run of runs) fs.cpSync(rel('results', run), path.join(root, 'results', run), { recursive: true });
+  writeHistoricalRuns(root, runs);
   return root;
 }
 
@@ -53,7 +53,7 @@ test('moving a suite does not change its identity: the hash covers the bytes, no
   for (const id of ['reasoning', 'agentic']) assert.equal(loadSuite(root, id).sha256, loadSuite(moved, id).sha256, id);
 });
 
-test('an old committed run still loads its archived suite, builds state, validates and scores', (t) => {
+test('an old run still loads its archived suite, builds state, validates and scores', (t) => {
   const root = tempRoot(t, [REASONING_RUN]);
   const manifest = readJson(path.join(root, 'results', REASONING_RUN, 'run.json'));
   assert.equal(manifest.suite.id, 'reasoning');

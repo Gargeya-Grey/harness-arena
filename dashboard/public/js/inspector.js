@@ -1,14 +1,16 @@
 // Side panel: one try in full. Answer (the check first, then what the setup returned) and Evidence.
-import { S, obsById, cellObs, cfgOf, caseOf, outcome, setupsOf, ctx, repeatsOf, setupOf } from './model.js';
+import { S, obsById, cellObs, cfgOf, caseOf, outcome, setupsOf, ctx, repeatsOf, setupOf, ctxObservations, letterOf } from './model.js';
 import { caseName, durText, shortDate } from './words.js';
 import { errorWord } from './verdict.js';
 import { html, raw, setHtml, isNum, usdText, tokText, dateTime, download } from './util.js';
-import { artifactHtml, visualArtifacts } from './artifacts.js';
+import { artifactHtml } from './artifacts.js';
+import { setupTags } from './setup-tags.js';
 import { syncOpenMark } from './cases.js';
 import { rateWanted } from './summary.js';
 
 const TABS = [
   ['answer', 'Answer'],
+  ['output', 'Visual output'],
   ['evidence', 'Evidence'],
 ];
 
@@ -18,6 +20,38 @@ let closeTimer = 0;
 const json = (v) => JSON.stringify(v, null, 2);
 const nil = (text = 'none') => html`<span class="muted">${text}</span>`;
 const mono = (v) => (v === null || v === undefined || v === '' ? nil() : html`<span class="mono">${v}</span>`);
+
+const VISUAL_KINDS = new Set(['svg', 'image', 'html', 'video', 'audio']);
+const retainedVisuals = (o) => (o.artifacts || []).filter((a) => VISUAL_KINDS.has(a.kind));
+const safeArtifact = (a) => a.available !== false && typeof a.url === 'string' && a.url.startsWith('/api/artifact?');
+const artifactLabel = (a) => ({ svg: 'SVG', image: a.role === 'thumbnail' ? 'Thumbnail' : a.derived ? 'Saved screenshot' : 'Image', html: 'Stored HTML page', video: 'Video', audio: 'Audio' })[a.kind] || 'File';
+
+function visualFile(a, alt, { preview = false } = {}) {
+  const label = artifactLabel(a);
+  return html`<figure class="visual-file"><figcaption>${label}<span>${a.role || 'artifact'}${a.derived ? ' · derived' : ''}</span></figcaption>${!safeArtifact(a) ? html`<p class="visual-unavailable">Retained file reference is unavailable.</p>` : preview && a.kind === 'html' ? html`<p class="visual-unavailable">Open output to view this stored page in an isolated frame.</p>` : artifactHtml(a, `${alt}, ${label}`, !preview)}</figure>`;
+}
+
+export function renderVisualOutputs() {
+  const host = document.getElementById('visuals');
+  const c = ctx();
+  if (!host || !c) return;
+  const rows = ctxObservations().filter((o) => S.sel.includes(o.config_id) && retainedVisuals(o).length);
+  const count = rows.reduce((n, o) => n + retainedVisuals(o).length, 0);
+  const note = document.getElementById('visuals-note');
+  if (note) note.textContent = `${count} retained file${count === 1 ? '' : 's'} · ${rows.length} tr${rows.length === 1 ? 'y' : 'ies'}`;
+  setHtml(host, rows.length ? html`${rows.map((o) => {
+    const cfg = cfgOf(o.config_id);
+    const k = caseOf(o.case_id);
+    const name = caseName(o.case_id, c.suite.id, k?.input);
+    const alt = `${cfg.display_name}, ${name}, try ${o.repeat + 1}`;
+    return html`<article class="visual-card glass"><div class="visual-head"><h3>${name}</h3><p><span class="lt">${letterOf(cfg.id)}</span>${cfg.display_name} · try ${o.repeat + 1} · ${outcome(o).text}</p>${setupTags(cfg)}</div><div class="visual-files">${retainedVisuals(o).map((a) => visualFile(a, alt, { preview: true }))}</div><button type="button" class="btn secondary small" data-act="inspect-output" data-obs="${o.id}" data-fk="output:${o.id}" aria-label="Open output for ${alt}">Open output</button></article>`;
+  })}` : html`<div class="visual-empty glass"><h3>No retained visual files for these setups</h3><p>These runs have no saved image, SVG, HTML, video or audio artifact to display. An agent's summary alone does not provide a visual preview.</p><button type="button" class="btn secondary small" data-act="section" data-section="cases">Read stored answers</button><a class="btn quiet small" href="/#run">Choose tests to run</a></div>`);
+}
+
+function outputTab(o, cfg) {
+  const arts = retainedVisuals(o);
+  return html`<section class="pane"><h3 class="pane-h">Visual output</h3>${arts.length ? html`<p class="facts">Stored files from this try. HTML opens in an isolated frame; a screenshot remains a saved picture.</p>${arts.map((a) => visualFile(a, `${cfg.display_name}, ${o.case_id}, try ${o.repeat + 1}`))}` : html`<p class="muted">No retained visual file for this try. Read the Answer tab for its stored response.</p>`}</section>`;
+}
 
 function neighbors(o) {
   const same = cellObs(o.case_id, o.config_id);
@@ -76,7 +110,7 @@ function checkHtml(o) {
 function answerTab(o, cfg) {
   const k = caseOf(o.case_id);
   const agent = Boolean(k && k.input && k.input.workspace != null);
-  const arts = o.status === 'error' ? [] : visualArtifacts(o);
+  const arts = retainedVisuals(o);
   const files = agent ? workspaceFiles(o) : null;
   const u = o.usage || {};
   const facts = [
@@ -91,7 +125,7 @@ function answerTab(o, cfg) {
     ${o.status === 'error' ? html`<section class="pane"><h3 class="pane-h">${o.error_class === 'incomplete' ? 'Unfinished execution' : 'No answer'}</h3><div class="errbox"><strong>${o.error_class === 'incomplete' ? 'Unjudged cutoff' : errorWord(err.type) || 'error'}</strong><span>${String(err.message || 'No message.').split('\n')[0]}</span></div></section>` : ''}
     ${checkHtml(o)}
     ${files ? html`<section class="pane"><h3 class="pane-h">Files the agent changed</h3>${files.changed.length || files.deleted.length ? html`<ul class="files">${files.changed.map((p) => html`<li><span class="mono">${p}</span></li>`)}${files.deleted.map((p) => html`<li><span class="mono">${p}</span> <span class="muted">deleted</span></li>`)}</ul>` : nil('No file changed.')}</section>` : ''}
-    ${arts.length ? html`<section class="pane"><h3 class="pane-h">Picture</h3>${arts.map((a) => artifactHtml(a, `${cfg.display_name}, ${o.case_id}, try ${o.repeat + 1}`, true))}</section>` : ''}
+    ${arts.length ? html`<section class="pane"><h3 class="pane-h">Visual output</h3><p class="facts">${arts.length} retained file${arts.length === 1 ? '' : 's'} for this try.</p><button type="button" class="btn secondary small" data-act="insp-tab" data-tab="output">View visual output</button></section>` : ''}
     ${o.status !== 'error' ? html`<section class="pane"><h3 class="pane-h">${agent ? 'The agent’s summary' : 'Answer'}</h3><div class="answer-text" tabindex="0" aria-label="Answer text">${o.response && o.response.text ? o.response.text : 'No answer text.'}</div></section>` : ''}
     ${facts.length ? html`<p class="facts">${facts.join(' · ')}</p>` : ''}
     ${question.length ? html`<details class="more-box"><summary class="disclose">${agent ? 'The task' : 'The question'}</summary>
@@ -109,7 +143,7 @@ function evidenceTab(o, cfg) {
     ['Run', html`${mono(o.run_id)}${run ? html`<span class="sub">${run.experiment_id || ''}${run.created_at ? ` · ${shortDate(run.created_at)}` : ''}</span>` : ''}`],
     ['Model', mono(cfg.model)],
     ['Harness', html`${cfg.harness.name} <span class="mono">${cfg.harness.version}</span>`],
-    ['Effort', cfg.effort ? mono(cfg.effort) : nil('default')],
+    ['Effort', cfg.effort ? mono(cfg.effort) : nil('not recorded')],
     ['User setup', setupOf(cfg) + ((cfg.setup_missing || []).length ? ` (missing ${cfg.setup_missing.join(', ')})` : '')],
     ['Settings applied', params ? mono(params) : nil()],
     ['Prompt', mono(o.request ? `${o.request.prompt_id} v${o.request.prompt_version}` : null)],
@@ -151,11 +185,11 @@ export function renderInspector() {
     el,
     html`<div class="insp-head">
       <div class="insp-title"><h2 id="insp-title">${name}</h2>
-        <p class="insp-sub">${c ? caseName(o.case_id, c.suite.id, k && k.input) : o.case_id} · try ${o.repeat + 1}${total > 1 ? ` of ${total}` : ''} · <span class="mark mark-${out.kind}">${out.glyph} ${out.text}</span></p></div>
+        <p class="insp-sub">${c ? caseName(o.case_id, c.suite.id, k && k.input) : o.case_id} · try ${o.repeat + 1}${total > 1 ? ` of ${total}` : ''} · <span class="mark mark-${out.kind}">${out.glyph} ${out.text}</span></p>${setupTags(cfg)}</div>
       <button type="button" class="icon-btn" data-act="insp-close" data-fk="insp:close" aria-label="Close the side panel"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button>
     </div>
     <div class="tabs" role="tablist" aria-label="Side panel">${TABS.map(([id, label]) => html`<button type="button" class="tab" role="tab" id="tab-${id}" data-act="insp-tab" data-tab="${id}" data-fk="insp:tab:${id}" aria-selected="${String(tab === id)}" aria-controls="insp-panel" tabindex="${tab === id ? 0 : -1}">${label}</button>`)}</div>
-    <div class="insp-body" id="insp-panel" role="tabpanel" aria-labelledby="tab-${tab}" data-obs="${o.id}" data-tab="${tab}">${tab === 'answer' ? answerTab(o, cfg) : evidenceTab(o, cfg)}</div>
+    <div class="insp-body" id="insp-panel" role="tabpanel" aria-labelledby="tab-${tab}" data-obs="${o.id}" data-tab="${tab}">${tab === 'answer' ? answerTab(o, cfg) : tab === 'output' ? outputTab(o, cfg) : evidenceTab(o, cfg)}</div>
     <div class="insp-nav" role="group" aria-label="Another try of this case">
       ${navBtn('‹ Previous try', nb.prevTry, 'insp:prev-try')}${navBtn('Next try ›', nb.nextTry, 'insp:next-try')}
       ${S.sel.length > 1 ? html`${navBtn('‹ Previous setup', nb.prevSetup, 'insp:prev-setup')}${navBtn('Next setup ›', nb.nextSetup, 'insp:next-setup')}` : ''}
@@ -167,10 +201,10 @@ export function renderInspector() {
   syncOpenMark();
 }
 
-export function openInspector(obsId, { instant = false, tab = 'answer', openerFk = null } = {}) {
+export function openInspector(obsId, { instant = false, tab = null, openerFk = null } = {}) {
   const el = document.getElementById('inspector');
   const wasOpen = !!S.insp;
-  S.insp = { obsId, tab: wasOpen ? S.insp.tab : tab };
+  S.insp = { obsId, tab: tab || (wasOpen ? S.insp.tab : 'answer') };
   if (!wasOpen) openerKey = openerFk;
   clearTimeout(closeTimer);
   renderInspector();

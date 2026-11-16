@@ -25,26 +25,28 @@
 
       <section class="ld-answer glass" id="answer" aria-label="The answer" hidden></section>
       <div class="ld-notices" id="notices"></div>
+      <div class="ld-coverage" id="ld-coverage" hidden></div>
       <div class="ld-empty glass" id="empty" hidden></div>
 
       <section class="ld-sect" id="setups-sect" aria-labelledby="setups-h" hidden>
         <div class="sect-label"><h2 id="setups-h">Setups</h2><span class="sect-note">Solved of tasks counted, then the mean score</span></div>
-        <div class="ld-wrap glass" id="setups" tabindex="-1"></div>
+        <div class="ld-wrap glass" id="setups" tabindex="0" role="region" aria-label="Setups by tier"></div>
       </section>
 
       <section class="ld-sect" id="pairs-sect" aria-labelledby="pairs-h" hidden>
         <div class="sect-label"><h2 id="pairs-h">Pairs of setups</h2><span class="sect-note">Tasks only one of the two solved, and the sign test</span></div>
         <div class="ld-pick is-pair" id="pair-pick" hidden></div>
         <div id="pair-card"></div>
-        <div class="ld-wrap glass" id="pairs"></div>
+        <div class="ld-wrap glass" id="pairs" tabindex="0" role="region" aria-label="Pair comparison table"></div>
       </section>
 
       <section class="ld-sect" id="tasks-sect" aria-labelledby="tasks-h" hidden>
         <div class="sect-label"><h2 id="tasks-h">Tasks</h2><span class="sect-note" id="tasks-note" role="status"></span></div>
         <div class="ld-pick" id="tools"></div>
+        <p class="ld-filter-scope">Filters change task rows only. The summary and setup comparisons use the full ladder.</p>
         <div id="tasks-key"></div>
-        <div class="ld-wrap glass" id="tasks"></div>
-        <p class="ld-legend" aria-hidden="true"><span><span class="ld-mk ld-pass">✓</span>solved</span><span><span class="ld-mk ld-fail">✕</span>not solved</span><span><span class="nil">not run</span>no counted result</span></p>
+        <div class="ld-wrap glass" id="tasks" tabindex="0" role="region" aria-label="Task evidence tables"></div>
+        <p class="ld-legend"><span><span class="ld-mk ld-pass" aria-hidden="true">✓</span>solved</span><span><span class="ld-mk ld-fail" aria-hidden="true">✕</span>not solved</span><span><span class="nil">no result</span>no counted result</span></p>
       </section>
 
       <section class="ld-sect" id="evidence-sect" aria-labelledby="evidence-h" hidden>

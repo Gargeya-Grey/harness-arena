@@ -8,7 +8,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { costUsd } from '../../lab/lib/metrics.mjs';
 import { sha256 } from '../../lab/lib/fsutil.mjs';
-import { redactEvent } from '../../lab/lib/redact.mjs';
 import { ensureLedger } from '../../lab/lib/ledger.mjs';
 import { loadSuite, loadPrompt, renderMessages, REPO_ROOT } from '../../lab/lib/repo.mjs';
 
@@ -28,11 +27,6 @@ function write(rel, text) {
 }
 const jsonl = (rows) => rows.map((row) => JSON.stringify(row)).join('\n') + '\n';
 const copy = (rel) => write(rel, fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8'));
-
-// The event stream of the real fixture run is local only (it is not in a fresh checkout's results/).
-// A checkout without it keeps the copy that is committed in the fixture.
-const REAL_EVENTS = 'results/20261021T080428Z__smoke__smoke-command-code__900ca7/harness-events.ndjson';
-const keptEvents = fs.existsSync(path.join(OUT, REAL_EVENTS)) ? fs.readFileSync(path.join(OUT, REAL_EVENTS), 'utf8') : null;
 
 fs.rmSync(OUT, { recursive: true, force: true });
 
@@ -267,16 +261,19 @@ for (const [index, [modelKey, harnessKey]] of [['claude-haiku', 'claude-code'], 
   write(`results/${runId}/scores/svg-structure@1.jsonl`, jsonl(scores));
 }
 
-// One real run: a partial-case context with a harness event stream. The stream is not
-// in git (.gitignore), so it is copied only where it exists, and redacted on the way.
-const realRun = '20261021T080428Z__smoke__smoke-command-code__900ca7';
-fs.cpSync(path.join(REPO_ROOT, 'results', realRun), path.join(OUT, 'results', realRun), { recursive: true });
-const realEvents = path.join(OUT, 'results', realRun, 'harness-events.ndjson');
-if (fs.existsSync(realEvents)) {
-  const lines = fs.readFileSync(realEvents, 'utf8').split('\n').filter(Boolean).map(JSON.parse);
-  write(`results/${realRun}/harness-events.ndjson`, jsonl(lines.map((line) => ({ ...line, event: redactEvent(line.event) }))));
-} else if (keptEvents !== null) {
-  write(REAL_EVENTS, keptEvents);
+// Keep the established fixture ID without requiring a real run or a previous generated store.
+{
+  const runId = '20261021T080428Z__smoke__smoke-command-code__900ca7';
+  const created = '2026-10-21T08:04:28.000Z';
+  const modelKey = 'deepseek-v4.1-flash-max';
+  const applied = { reasoning_effort: 'max' };
+  const experiment = { id: 'smoke-command-code', description: 'Synthetic one-case context with a harness event stream.', suite: 'smoke', prompt: 'qa-single-turn', repeats: 1, cases: ['smoke-001'], targets: [{ model: modelKey, harness: 'command-code', effort: 'max' }], evaluators: [EXACT] };
+  const usage = { input_tokens: 100, output_tokens: 1, cache_read_tokens: 0, cache_write_tokens: 0 };
+  const raw = { run_id: runId, case_id: 'smoke-001', model_key: modelKey, repeat: 0, started_at: created, latency_ms: 8000, tokens_per_second: 0.125, tool_calls: 0, skills_used: [], request: { prompt_id: qaPrompt.id, prompt_version: qaPrompt.version, messages: renderMessages(qaPrompt.messages, smoke.cases.find(item => item.case_id === 'smoke-001').input), system_prompt: null, params: applied }, response: { text: '4', finish_reason: 'end_turn' }, usage, cost_usd: costUsd(usage, REGISTRY[modelKey].pricing), error: null, metadata: { workdir: 'isolated', model_request_duration_ms: 5000 } };
+  write(`results/${runId}/run.json`, JSON.stringify(manifest({ runId, created, finished: '2026-10-21T08:04:36.000Z', suite: smoke, prompt: qaPrompt, experiment, harness: HARNESSES['command-code'], modelKey, applied, evaluators: [EXACT] }), null, 2) + '\n');
+  write(`results/${runId}/raw.jsonl`, jsonl([raw]));
+  write(`results/${runId}/scores/exact-match@1.jsonl`, jsonl([{ run_id: runId, case_id: 'smoke-001', model_key: modelKey, repeat: 0, evaluator_id: 'exact-match', evaluator_version: '1', dimension: 'quality', value: 1, passed: true, details: { expected: '4', actual: '4', normalization: 'trim' } }]));
+  write(`results/${runId}/harness-events.ndjson`, jsonl([{ run_id: runId, case_id: 'smoke-001', model_key: modelKey, repeat: 0, recorded_at: created, event: { type: 'result', result: '4', synthetic: true } }]));
 }
 
 write('annotations/human@1.jsonl', jsonl([

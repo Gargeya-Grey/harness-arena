@@ -27,8 +27,9 @@
 
       <header class="test-head">
         <div class="test-id">
-          <h1 id="test-title">Results</h1>
+          <h1 id="test-title" tabindex="-1">Results</h1>
           <p class="test-meta" id="test-meta">Reading the stored runs…</p>
+          <details class="test-context" id="test-context"><summary class="disclose">Test details</summary><p id="test-provenance"></p></details>
         </div>
         <div class="test-acts" id="test-acts" hidden>
           <button type="button" class="btn secondary small" data-act="change-test" data-fk="change-test">Change test</button>
@@ -50,52 +51,88 @@
         </div>
       </header>
 
+      <div class="results-guide" id="results-guide" hidden><p><strong>How to read this test</strong> Compare the setups below. Graphs show the numbers, Visual output shows retained pictures or pages, and Case by case opens each answer. Rerun and Delete are in Run history.</p></div>
+      <nav class="result-nav" id="result-nav" aria-label="On this result" hidden>
+        <button type="button" class="btn secondary small" data-act="section" data-section="overview" data-fk="section:overview">Overview</button>
+        <button type="button" class="btn secondary small" data-act="section" data-section="setups" data-fk="section:setups">Setups</button>
+        <button type="button" class="btn secondary small" data-act="section" data-section="graphs" data-fk="section:graphs">Graphs</button>
+        <button type="button" class="btn secondary small" data-act="section" data-section="visuals" data-fk="section:visuals">Visual output</button>
+        <button type="button" class="btn secondary small" data-act="section" data-section="cases" data-fk="section:cases">Case by case</button>
+        <button type="button" class="btn secondary small" data-act="section" data-section="runs" data-fk="section:runs">Run history</button>
+      </nav>
+
       <section class="answer glass" id="answer" aria-label="The answer" hidden></section>
 
       <div class="empty-page glass" id="empty" hidden></div>
 
       <section class="sect" id="setups-sect" aria-labelledby="setups-h" hidden>
         <div class="sect-label">
-          <h2 id="setups-h">Setups</h2>
+          <h2 id="setups-h" tabindex="-1">Setups</h2>
           <div class="sect-acts">
             <button type="button" class="btn quiet small" id="choose-btn" data-act="choose" data-fk="choose">Choose setups</button>
             <button type="button" class="btn quiet small" id="details-btn" data-act="details" data-fk="details" aria-pressed="false">Details</button>
           </div>
         </div>
-        <div class="tbl-wrap glass" id="setups" tabindex="-1"></div>
+        <div class="tbl-wrap glass" id="setups" tabindex="0" role="region" aria-label="Setup comparison"></div>
         <div class="sect-foot" id="setups-foot" hidden></div>
+      </section>
+
+      <section class="sect" id="charts-sect" aria-labelledby="charts-h" hidden>
+        <div class="sect-label"><h2 id="charts-h" tabindex="-1">Graphs</h2></div>
+        <div class="chart-controls" id="chart-controls"></div>
+        <p class="chart-fallback" id="chart-fallback" role="status" hidden></p>
+        <div class="charts" id="charts-main"></div>
+        <details class="more-charts" id="charts-more">
+          <summary class="disclose"><span id="charts-more-label">All charts</span></summary>
+          <div class="charts" id="charts-more-body"></div>
+        </details>
+      </section>
+
+      <section class="sect" id="visuals-sect" aria-labelledby="visuals-h" hidden>
+        <div class="sect-label"><h2 id="visuals-h" tabindex="-1">Visual output</h2><span class="sect-note" id="visuals-note"></span></div>
+        <p class="visual-scope">Retained files from the shown setups, across all cases. A saved screenshot is labelled as a screenshot. Open output to inspect a stored page or its answer.</p>
+        <div class="visual-gallery" id="visuals"></div>
       </section>
 
       <section class="sect" id="cases-sect" aria-labelledby="cases-h" hidden>
         <div class="sect-label">
-          <h2 id="cases-h">Case by case</h2>
+          <h2 id="cases-h" tabindex="-1">Case by case</h2>
           <span class="sect-note" id="cases-note"></span>
           <div class="sect-acts">
             <button type="button" class="switch" id="only-btn" role="switch" aria-checked="false" data-act="only" data-fk="only"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>Only where setups differ</button>
           </div>
         </div>
-        <div class="tbl-wrap glass" id="cases"></div>
+        <fieldset class="case-filters" aria-describedby="cases-scope">
+          <legend>Filter case rows</legend>
+          <div class="case-search">
+            <label class="field-label" for="case-search">Case name or id</label>
+            <input type="search" id="case-search" data-fk="case-search" autocomplete="off" placeholder="Search cases">
+          </div>
+          <fieldset class="outcome-filters" id="case-outcomes">
+            <legend>Any selected outcome, in any shown setup</legend>
+            <label><input type="checkbox" value="pass" data-fk="outcome:pass">Passed</label>
+            <label><input type="checkbox" value="fail" data-fk="outcome:fail">Failed check</label>
+            <label><input type="checkbox" value="error" data-fk="outcome:error">No answer</label>
+            <label><input type="checkbox" value="incomplete" data-fk="outcome:incomplete">Unfinished, unjudged</label>
+            <label><input type="checkbox" value="unscored" data-fk="outcome:unscored">Not checked</label>
+            <label><input type="checkbox" value="none" data-fk="outcome:none">No included try</label>
+          </fieldset>
+          <div class="case-filter-foot"><p id="cases-scope">Only case rows are filtered. Summary and charts use all cases. Search and the difference switch narrow matches.</p><button type="button" class="btn quiet small" data-act="case-reset" data-fk="case-reset">Reset filters</button></div>
+          <p class="filter-matches" id="cases-matches" role="status"></p>
+        </fieldset>
+        <div class="tbl-wrap glass" id="cases" tabindex="0" role="region" aria-label="Case results"></div>
         <p class="sect-foot legend" aria-hidden="true"><span><span class="tm tm-pass">✓</span>passed</span><span><span class="tm tm-fail">✕</span>failed</span><span><span class="tm tm-error">!</span>no answer</span><span><span class="tm tm-incomplete">◷</span>unfinished, unjudged</span><span><span class="tm tm-unscored">○</span>not checked</span><span class="legend-hint">Select a mark to read that answer.</span></p>
-      </section>
-
-      <section class="sect" id="charts-sect" aria-labelledby="charts-h" hidden>
-        <div class="sect-label"><h2 id="charts-h">Charts</h2></div>
-        <div class="charts" id="charts-main"></div>
-        <details class="more-charts" id="charts-more">
-          <summary class="disclose"><span id="charts-more-label">More charts</span></summary>
-          <div class="charts" id="charts-more-body"></div>
-        </details>
       </section>
 
       <section class="sect" id="ratings-sect" aria-labelledby="ratings-h" hidden>
         <div class="sect-label"><h2 id="ratings-h">Your ratings</h2><span class="sect-note" id="ratings-note"></span></div>
-        <div class="tbl-wrap glass" id="ratings"></div>
+        <details class="secondary-fold" id="ratings-details"><summary class="disclose">Saved ratings <span class="fold-meta">Separate from automatic checks</span></summary><div class="tbl-wrap glass" id="ratings"></div></details>
       </section>
 
       <section class="sect" id="runs-sect" aria-labelledby="runs-h" hidden>
-        <div class="sect-label"><h2 id="runs-h">Runs</h2><span class="sect-note" id="runs-note"></span></div>
-        <div class="tbl-wrap glass" id="runs"></div>
-        <p class="sect-foot">Score again checks the stored answers once more. It calls no model.</p>
+        <div class="sect-label"><h2 id="runs-h" tabindex="-1">Run history</h2><span class="sect-note" id="runs-note"></span></div>
+        <details class="secondary-fold" id="runs-details"><summary class="disclose">Run history <span class="fold-meta" id="runs-problems"></span></summary><div class="tbl-wrap glass" id="runs"></div></details>
+        <p class="sect-foot">Rerun opens a new plan for review. It starts no calls. Delete removes one run after confirmation. Check stored answers repeats the automatic checks without calling a model.</p>
       </section>
     </div>
   </main>
@@ -105,17 +142,26 @@
 
 <dialog class="dlg" id="pick-test" aria-labelledby="pick-test-h">
   <div class="dlg-head"><h2 id="pick-test-h">Change test</h2><button type="button" class="icon-btn" data-act="dlg-close" data-dlg="pick-test" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+  <div class="picker-search"><label class="field-label" for="test-search">Find a test or saved view</label><div><input type="search" id="test-search" data-fk="test-search" autocomplete="off" placeholder="Name, suite, prompt or version"><button type="button" class="btn quiet small" data-act="test-search-clear">Clear search</button></div><p class="filter-matches" id="test-matches" role="status"></p></div>
   <div class="dlg-body" id="pick-test-body"></div>
 </dialog>
 
 <dialog class="dlg dlg-narrow" id="pick-setups" aria-labelledby="pick-setups-h">
   <div class="dlg-head"><div><h2 id="pick-setups-h">Choose setups</h2><p class="dlg-sub">Up to 8 at once. The table keeps the best first.</p></div><button type="button" class="icon-btn" data-act="dlg-close" data-dlg="pick-setups" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+  <div class="picker-search"><label class="field-label" for="setup-search">Find a setup</label><div><input type="search" id="setup-search" data-fk="setup-search" autocomplete="off" placeholder="Model, harness, effort or id"><button type="button" class="btn quiet small" data-act="setup-search-clear">Clear search</button><button type="button" class="btn quiet small" data-act="choose-clear">Clear selection</button></div></div>
+  <div class="setup-filters" id="setup-filters"></div>
   <div class="dlg-body" id="pick-setups-body"></div>
   <div class="dlg-foot">
     <button type="button" class="btn primary" id="choose-apply" data-act="choose-apply">Show these</button>
     <button type="button" class="btn secondary" data-act="choose-best">Show the best 8</button>
     <p class="dlg-status" id="pick-setups-count" role="status"></p>
   </div>
+</dialog>
+
+<dialog class="dlg dlg-narrow" id="delete-run" aria-labelledby="delete-run-h" aria-describedby="delete-run-warning">
+  <div class="dlg-head"><h2 id="delete-run-h">Delete this run?</h2><button type="button" class="icon-btn" data-act="dlg-close" data-dlg="delete-run" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+  <div class="dlg-body"><div id="delete-run-detail"></div><p class="delete-warning" id="delete-run-warning">This permanently removes this run's answers, scores, retained files and execution evidence from this computer. Its results will disappear from comparisons. Saved views or ratings that name it may become unavailable.</p></div>
+  <div class="dlg-foot"><button type="button" class="btn secondary" data-act="dlg-close" data-dlg="delete-run" data-fk="delete:cancel">Cancel</button><button type="button" class="btn danger" id="delete-run-confirm" data-act="delete-run-confirm" data-fk="delete:confirm">Delete this run</button><p class="dlg-status" id="delete-run-status" role="status"></p></div>
 </dialog>
 
 <dialog class="dlg dlg-narrow" id="save-view" aria-labelledby="save-view-h">

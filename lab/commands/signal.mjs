@@ -39,6 +39,7 @@ export async function signalCommand(root, positionals = [], values = {}) {
   const list = (value) => (value ? value.split(',').map((item) => item.trim()).filter(Boolean) : undefined);
   const report = signalReport(root, path.resolve(positionals[0]), {
     harness: values.harness,
+    effort: values.effort,
     models: list(values.models),
     cases: list(values.cases),
     repeats: values.repeats != null ? Number(values.repeats) : undefined,

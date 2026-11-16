@@ -14,6 +14,7 @@
 //   close   the run closed: the sha256 of every file but scores/, and of every row line
 //   adopt   a run vouched for as it is: when the ledger is created, or by `node lab adopt`
 //   scores  the scores/ files a score command wrote for a run (sha256 each)
+//   delete  an owner-confirmed deletion; any surviving or restored copy is untrusted
 // All or nothing: a run counts in an aggregate only when it is closed, every file matches
 // its last close or adopt entry, and its scores match its last scores entry exactly (a
 // scores/ file of its evaluators that no score command recorded is a mismatch). Any other
@@ -198,7 +199,7 @@ export function restoreLedger(file, before, entry, { realDir = null, asideName }
 }
 
 /**
- * Every run in the ledger: Map run_id -> { files, lines, closed, halted, scores, core }.
+ * Every run in the ledger: Map run_id -> { files, lines, closed, halted, scores, core, deleted }.
  * Null when there is no ledger. Lines that do not parse (a torn write, or an edit) are
  * returned in `torn`: their entries are lost, which can only make a run less trusted.
  * Entries that parse but do not fit are returned as problems.
@@ -230,8 +231,12 @@ export function readLedger(file) {
       problems.push({ line: index + 1, message: 'entry has no run_id' });
       return;
     }
-    if (!runs.has(id)) runs.set(id, { files: {}, lines: [], closed: false, halted: null, scores: null, core: null, events: null });
+    if (!runs.has(id)) runs.set(id, { files: {}, lines: [], closed: false, halted: null, scores: null, core: null, events: null, deleted: false });
     const run = runs.get(id);
+    if (run.deleted) {
+      if (entry.kind !== 'delete') problems.push({ line: index + 1, message: `run ${id} was deleted; use a new run ID` });
+      return;
+    }
     switch (entry.kind) {
       case 'open':
         Object.assign(run, { files: {}, lines: [], closed: false, core: entry.core ?? null, scores: null, events: null });
@@ -258,6 +263,9 @@ export function readLedger(file) {
         break;
       case 'scores':
         run.scores = entry.files || {};
+        break;
+      case 'delete':
+        Object.assign(run, { files: {}, lines: [], closed: false, halted: null, scores: null, core: null, events: null, deleted: true });
         break;
       default:
         problems.push({ line: index + 1, message: `unknown entry kind ${JSON.stringify(entry.kind)}` });
@@ -357,6 +365,7 @@ export function trustRun(ledger, runId, runDir) {
   if (path.basename(runDir) !== runId) return { state: 'untrusted', scores: 'mismatch', reason: `its folder ${path.basename(runDir)} is not named after its run_id` };
   const run = ledger.runs.get(runId);
   if (!run) return { state: 'untrusted', scores: 'mismatch', reason: 'it is not in the ledger: it was not written by the lab runner, or was copied in (node lab adopt vouches for it)' };
+  if (run.deleted) return { state: 'untrusted', scores: 'mismatch', reason: 'it was deliberately deleted; use a new run ID' };
   const manifest = readManifest(runDir);
   const { files, scores: allScores } = runFiles(runDir);
   const names = scoreFileNames(manifest);
@@ -412,11 +421,13 @@ export function scoresEntry(runId, runDir, manifest = readManifest(runDir), writ
 /** Adopt runs as they are now: their files, rows and scores. Returns the run ids adopted. */
 export function adoptRuns(file, dirs, { only = null, extra = {} } = {}) {
   const adopted = [];
+  const deleted = readLedger(file)?.runs;
   for (const { name, dir } of dirs) {
     const manifest = readManifest(dir);
     const runId = manifest?.run_id;
     if (!runId) continue; // No readable run.json: not a run.
     if (runId !== name || (only && !only.has(runId))) continue;
+    if (deleted?.get(runId)?.deleted) throw new Error(`Run ${runId} was deliberately deleted; use a new run ID`);
     appendEntry(file, closeEntry('adopt', runId, dir, extra));
     // Always a scores entry: an adopt vouches for the scores as they are, none included.
     appendEntry(file, scoresEntry(runId, dir, manifest));

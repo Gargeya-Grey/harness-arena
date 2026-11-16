@@ -19,6 +19,8 @@ node lab dashboard                                # http://127.0.0.1:4317
 
 ### Run from the browser
 
+For your first comparison, follow [Make your first comparison](docs/start-here.md). Home also keeps this walkthrough and the available test families visible.
+
 `node lab dashboard` opens Model Lab at `http://127.0.0.1:4317`. From there you run everything without a terminal:
 
 - **Home**: the job that runs now, the latest results with their answer in one sentence, and anything that needs attention.
@@ -65,6 +67,9 @@ To add any other model that OpenCode reaches (`opencode models` lists them), add
 | `node lab doctor` | Shows each harness (built-in and declared), its version, whether it is installed, and what isolation it supports. |
 | `node lab run <experiment.yaml>` | Runs every target x case x repeat. Writes one run per harness and effort under the data folder's `results/` (see [Where runs live](#where-runs-live)), then scores it. |
 | `  --harness <name>` / `--models <a,b>` | Runs only the targets that match. |
+| `  --effort <level>` | Applies a verified named effort to the selected models. The preview, invocation, and resumable snapshot use that value. |
+| `node lab delete <run-id> --confirm <run-id>` | Permanently deletes that exact run from the active stores and records a tombstone. |
+| `node lab reset --confirm "DELETE ALL RUNS"` | Permanently clears live runs, ratings, saved views, reports, and the ledger. Inputs and reusable fixtures stay intact. |
 | `  --repeats <n>` / `--cases <a,b>` | Overrides the experiment. The run records the override. |
 | `  --dry-run` | Shows the plan: model id per harness, effort, whether the user setup loads. Calls nothing. |
 | `node lab run --resume <run-id>` | Continues a run that stopped before its last row: it crashed (`node lab runs` shows `stale`) or you stopped it. Only the missing rows run. It refuses when the suite, prompt, models or harness version changed. With `--dry-run` it lists what it would run and calls nothing. `--force` resumes a run written before the heartbeat existed. |
@@ -127,13 +132,13 @@ node lab run experiments/ladder-agent-repaired-explicit-effort.yaml --harness op
 
 ## Where runs live
 
-Runs are evidence, so they live outside git, where `git clean`, a removed worktree or a fresh clone cannot delete them. Name the data folder once per machine in `lab.local.yaml` at the repository root (the file is not committed):
+Runs remain saved unless you deliberately delete them. Name their data folder in `lab.local.yaml` at the repository root (the file is not committed). This machine keeps its data inside the project:
 
 ```yaml
-data_dir: ../Model-Lab-Data   # relative to this file, or an absolute path
+data_dir: .lab-data   # dedicated project-local folder, ignored by Git
 ```
 
-- New runs go to `<data_dir>/results/`, and human annotations to `<data_dir>/annotations/`.
+- Runs, ratings, saved views, and reports go to `<data_dir>/results/`, `annotations/`, `boards/`, and `reports/`. Include `.lab-data/` in project backups. An explicitly configured external folder is also supported. Only the main checkout's dedicated `.lab-data/` is accepted inside a checkout.
 - Every git worktree of the repository uses the main checkout's `lab.local.yaml`, so all worktrees write to one store.
 - The runner, `validate`, `score`, the report and the dashboard read the data folder and the runs committed in `results/` together. A run id found in both places is read from the data folder.
 - `LAB_DATA=<folder>` overrides the file for one command. `LAB_ROOT` (fixtures, UI work) and the tests ignore `lab.local.yaml`.
@@ -141,7 +146,7 @@ data_dir: ../Model-Lab-Data   # relative to this file, or an absolute path
 - One runner at a time. `node lab run`, `--resume` and `node lab score` take a lock, `.lab-run.lock`, in each folder they write to: the data folder, the checkout's `results/`, and the folder of the evidence ledger (the main checkout). A second command is refused while the first one runs, from any worktree. A lock left by a crashed process is taken over, by one process only. If Windows gave the dead runner's process id to another program, the refusal names the lock file to delete. A dry run takes no lock.
 - During an agent call the workdir guard watches everything the lab reads from a store, with no skip list: every run, row, score, folder (of any name) and link in each `results/`, the read-only bit, the real path of each store folder, the lock file, and both `lab.local.yaml` files. The data folder is fixed when the run starts. An agent that changes, adds or deletes anything there halts the experiment, and that run is not scored. A folder the guard cannot read after the call halts it too; before the call, no call is made and the run can be resumed.
 - The data folder and `results/` must be plain folders: a store that is a junction or a symbolic link is refused before any call, because the guard cannot watch through it.
-- Limits: the guard does not watch `annotations/`, because the dashboard saves ratings at any time. It reports a planted run and never deletes it, so that run stays visible until you remove it. It reads every stored file before and after each agent call, so that cost grows with the store.
+- Limits: the guard does not watch `annotations/`, `boards/`, or derived `reports/`, because the dashboard can write them at any time. It reports a planted run and never deletes it, so that run stays visible until you remove it. It reads every stored file before and after each agent call, so that cost grows with the store.
 
 ### The evidence ledger
 
