@@ -49,6 +49,21 @@ const FIVE = () => ({ a: T([], 5), b: T([], 5), c: T(['a', 'b'], 1), d: T(['a'],
 
 export const probes = [
   {
+    name: 'own special target names survive dependencies result records and cache reuse',
+    run: async ({ load }) => {
+      const { build } = await lib(load);
+      const graph = Object.fromEntries([['__proto__', S('input')], ['constructor', T(['__proto__'])], ['toString', T(['constructor'])]]);
+      const dependencies = [];
+      const result = build(graph, { run: (name, info) => { dependencies.push([name, Object.entries(info.deps)]); return { ok: true, output: name }; } });
+      const again = build(graph, { cache: result.cache, run: () => { throw new Error('unexpected run'); } });
+      const builtGraph = Object.fromEntries([['toString', S('input')], ['__proto__', T(['toString'])], ['constructor', T(['__proto__'])]]);
+      const builtDependencies = [];
+      const built = JSON.parse(JSON.stringify(build(builtGraph, { run: (name, info) => { builtDependencies.push([name, Object.entries(info.deps)]); return { ok: true, output: name }; } })));
+      const reused = build(builtGraph, { cache: built.cache, run: () => { throw new Error('unexpected run'); } });
+      return { targets: Object.keys(result.targets).sort(), dependencies, cache: Object.keys(result.cache).sort(), cached: again.stats.cached, built: { targets: Object.keys(built.targets).sort(), dependencies: builtDependencies, cache: Object.keys(built.cache).sort(), cached: reused.stats.cached } };
+    },
+  },
+  {
     name: 'keeps the exports',
     run: async ({ load }) => Object.keys(await lib(load)).sort(),
   },

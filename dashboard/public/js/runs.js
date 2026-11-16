@@ -34,6 +34,7 @@ function statusCell(r) {
   if (halt) return html`<span class="state is-warn">Stopped</span><span class="sub">${halt}</span>`;
   if (r.status === 'running' && r.liveness === 'stale') return html`<span class="state is-warn">Stopped without finishing</span>`;
   if (r.status === 'running') return html`<span class="state is-live">Running</span>`;
+  if (r.execution_status === 'incomplete') return html`<span class="state is-warn">Incomplete</span><span class="sub">unfinished execution, unjudged</span>`;
   if (r.status === 'failed') return html`<span class="state is-bad">Failed</span>`;
   if (r.rows < r.expected_rows) return html`<span class="state is-warn">Incomplete</span>`;
   return html`<span class="state">Finished</span>`;
@@ -63,12 +64,13 @@ export function renderRuns({ armed = '', busy = false } = {}) {
       ? html`<button type="button" class="btn primary small" data-act="resume" data-run="${r.run_id}" data-fk="resume:${r.run_id}" title="${busy ? 'Wait for the current job to end.' : 'Call only the answers this run is missing.'}"${busy ? html` disabled` : ''}>Resume</button>`
       : '';
     const action = scoreBtn || resumeBtn ? html`${resumeBtn}${scoreBtn}` : html`<span class="nil">–</span>`;
-    const short = r.rows < r.expected_rows;
+    const answers = Math.max(0, r.rows - r.errors);
+    const short = answers < r.expected_rows;
     return html`<tr class="${on ? 'is-armed' : ''}">
       <th scope="row" class="c-when"><span class="v">${shortDate(r.created_at)}</span><span class="sub">${utcTime(r.created_at)}</span></th>
       <td class="c-what" data-label="Experiment"><span class="v">${r.experiment_id || 'no experiment'}</span><span class="sub">${r.harness ? `${r.harness.name} ${r.harness.version}` : 'harness unknown'}</span></td>
-      <td class="c-num" data-label="Answers"><span class="v${short ? ' warn' : ''}">${r.rows} of ${r.expected_rows}</span></td>
-      <td class="c-num" data-label="Errors"><span class="v${r.errors ? ' bad' : ''}">${r.errors || 'none'}</span></td>
+      <td class="c-num" data-label="Answers"><span class="v${short ? ' warn' : ''}">${answers} of ${r.expected_rows}</span></td>
+      <td class="c-num" data-label="Errors"><span class="v${r.errors > (r.incomplete_n || 0) ? ' bad' : ''}">${r.errors - (r.incomplete_n || 0) || 'none'}</span>${r.incomplete_n ? html`<span class="sub">${r.incomplete_n} unfinished, unjudged</span>` : ''}</td>
       <td class="c-state" data-label="Status">${statusCell(r)}${trustNote(r)}</td>
       <td class="c-act">${action}</td>
     </tr>

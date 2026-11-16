@@ -1,0 +1,24 @@
+id: visual-web-terra-recovery
+description: >
+  Rerun the unchanged fifth configurator through Terra with bounded installed-home
+  Codex setup. Personal memory, skill catalogs, MCP/apps/plugins and hooks are
+  suppressed per call. Global AGENTS.md still loads, so setup is partly kept out.
+  The installed Windows sandbox is reused without a fresh sandbox home.
+suite: visual-web
+prompt: visual-web
+prompt_version: "1"
+cases:
+  - visual-web-three-configurator
+repeats: 1
+targets:
+  - model: gpt-6.1-terra
+    harness: codex
+    effort: high
+workdir: isolated
+user_config: isolated
+access: edit
+timeout_s: 600
+evaluators:
+  - id: workspace-tests
+    version: "2"
+    dimension: format

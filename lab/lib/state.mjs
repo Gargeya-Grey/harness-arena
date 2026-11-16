@@ -39,6 +39,13 @@ export const REQUIRED_SETUP_FLAGS = {
   'command-code': { flags: ['--no-skills'], partial: true },
 };
 
+export const CODEX_INSTALLED_SETUP_FLAGS = [
+  '--no-daemon', '--ignore-user-config', '--ignore-rules',
+  'project_doc_max_bytes=0', 'skills.include_instructions=false',
+  'features.memories=false', 'features.plugins=false', 'features.apps=false',
+  'features.hooks=false', 'features.skill_search=false',
+];
+
 /** Flag strings as tokens: `--flag=value` becomes `--flag`, `value`; `KEY=value` stays whole. */
 function flagTokens(flags) {
   return (Array.isArray(flags) ? flags : []).flatMap((flag) =>
@@ -56,7 +63,12 @@ function hasFlag(tokens, wanted) {
     const at = tokens.indexOf(wanted);
     return at >= 0 && !String(tokens[at + 1] ?? '').split(',').includes('user');
   }
-  return wanted.endsWith('=') ? tokens.some((token) => token.startsWith(wanted) && token.length > wanted.length) : tokens.includes(wanted);
+  if (wanted.endsWith('=')) return tokens.some((token) => token.startsWith(wanted) && token.length > wanted.length);
+  if (wanted.includes('=')) {
+    const prefix = wanted.slice(0,wanted.indexOf('=')+1);
+    return tokens.filter((token) => token.startsWith(prefix)).at(-1) === wanted;
+  }
+  return tokens.includes(wanted);
 }
 
 /**
@@ -71,8 +83,9 @@ function hasFlag(tokens, wanted) {
 export function setupEvidenceOf(manifest) {
   const settings = manifest?.harness?.settings || {};
   if (settings.user_config !== 'isolated') return { state: 'loaded', missing: [] };
-  const table = REQUIRED_SETUP_FLAGS[manifest?.harness?.name];
   const tokens = flagTokens(settings.user_config_flags);
+  const installedCodex = manifest?.harness?.name === 'codex' && tokens.includes('--ignore-user-config');
+  const table = installedCodex ? { flags: CODEX_INSTALLED_SETUP_FLAGS, partial: true } : REQUIRED_SETUP_FLAGS[manifest?.harness?.name];
   if (!table || !tokens.length) return { state: 'unknown', missing: [] };
   const missing = table.flags.filter((flag) => !hasFlag(tokens, flag));
   if (missing.length) return { state: 'leaked', missing };
@@ -246,8 +259,8 @@ function observationStatus(raw, quality) {
 
 /**
  * The rows that count for quality: every scored row, plus every error the
- * configuration caused, at 0. A lost row (quota, sign-in, CLI missing) does not
- * count; it shows as lost_n. Without a quality evaluator nothing counts. A run that
+ * configuration caused, at 0. Incomplete execution and lost calls are unjudged;
+ * they show as incomplete_n and lost_n. Without a quality evaluator nothing counts. A run that
  * is still running, or was never scored (halted by the guard), counts nothing: its
  * answers have no score yet, so its errors alone would pull the mean down.
  */
@@ -273,6 +286,9 @@ function aggregate(rows, config, { hasQuality = true } = {}) {
   const ok = rows.filter((row) => !row.error);
   const scored = rows.filter((row) => row.quality != null);
   const counted = countedRows(rows, hasQuality);
+  const incomplete = rows.filter((row) => row.error_class === 'incomplete');
+  const elapsed = rows.map((row) => row.latency_ms).filter((v) => typeof v === 'number');
+  const incompleteElapsed = incomplete.map((row) => row.latency_ms).filter((v) => typeof v === 'number');
   const passed = counted.filter((row) => row.passed);
   const qualities = counted.map((row) => row.value);
   const latencies = ok.map((row) => row.latency_ms).filter((v) => typeof v === 'number');
@@ -285,6 +301,7 @@ function aggregate(rows, config, { hasQuality = true } = {}) {
 
   const byCase = new Map();
   for (const row of rows) {
+    if (row.error && row.error_class !== 'failed') continue;
     if (!byCase.has(row.case_id)) byCase.set(row.case_id, []);
     byCase.get(row.case_id).push(row);
   }
@@ -316,6 +333,10 @@ function aggregate(rows, config, { hasQuality = true } = {}) {
     errors_n: rows.length - ok.length,
     failed_n: rows.filter((row) => row.error_class === 'failed').length,
     lost_n: rows.filter((row) => row.error_class === 'lost').length,
+    incomplete_n: incomplete.length,
+    total_elapsed_ms: elapsed.length ? sum(elapsed) : null,
+    incomplete_elapsed_ms: incompleteElapsed.length ? sum(incompleteElapsed) : null,
+    max_incomplete_elapsed_ms: incompleteElapsed.length ? Math.max(...incompleteElapsed) : null,
     // Quality counts the configuration's own errors as 0; answered_quality leaves them out.
     mean_quality: mean(qualities),
     answered_quality: mean(scored.map((row) => row.quality)),
@@ -600,6 +621,8 @@ export function buildState(root, { validate = true } = {}) {
       created_at: manifest.created_at,
       finished_at: manifest.finished_at ?? null,
       status: manifest.status,
+      execution_status: manifest.status !== 'running' && !manifest.harness?.settings?.halted && rawRows.some((row) => errorClass(row.error) === 'incomplete') && rawRows.every((row) => !row.error || errorClass(row.error) === 'incomplete') ? 'incomplete' : manifest.status,
+      incomplete_n: rawRows.filter((row) => errorClass(row.error) === 'incomplete').length,
       // live, stale (the runner is gone: resume it) or unknown, for a run that says running.
       liveness: runLiveness(manifest),
       resumable: resumable(manifest, trust),

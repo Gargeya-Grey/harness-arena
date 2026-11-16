@@ -1,0 +1,22 @@
+id: foldaway-apartment-codex-installed
+description: >
+  Reversible apartment through Terra and the owner's installed Codex sandbox.
+  Loaded setup is a separate configuration, retained for explicit comparisons.
+suite: foldaway-apartment
+prompt: visual-web
+prompt_version: "1"
+cases:
+  - foldaway-apartment-reversible
+repeats: 1
+targets:
+  - model: gpt-6.1-terra
+    harness: codex
+    effort: high
+workdir: isolated
+user_config: loaded
+access: edit
+timeout_s: 600
+evaluators:
+  - id: workspace-tests
+    version: "2"
+    dimension: format

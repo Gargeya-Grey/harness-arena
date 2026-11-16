@@ -192,16 +192,22 @@ test('records show how isolation is done without a real path or file content', a
     const { isolation } = ADAPTERS[name];
     assert.ok(isolation.args.length > 0, `${name}: run.mjs needs a non-empty isolation.args to turn isolation on`);
     const record = JSON.stringify(isolation);
-    assert.match(record, /<temp home>/);
+    if (name === 'codex' && process.platform === 'win32') assert.match(record, /global AGENTS/i);
+    else assert.match(record, /<temp home>/);
     for (const secret of [os.homedir(), os.homedir().replace(/\\/g, '/'), os.tmpdir(), home, 'SECRET-CONTENT', 'original']) {
       assert.equal(record.includes(secret), false, `${name}: record holds ${secret}`);
     }
   }
-  assert.ok(ADAPTERS.codex.isolation.args.includes('CODEX_HOME=<temp home>/.codex'));
+  if (process.platform === 'win32') {
+    assert.equal(ADAPTERS.codex.isolation.home,null,'the installed Windows sandbox home is retained');
+    assert.ok(ADAPTERS.codex.isolation.args.includes('--ignore-user-config'));
+    assert.ok(ADAPTERS.codex.isolation.args.includes('features.memories=false'));
+  } else assert.ok(ADAPTERS.codex.isolation.args.includes('CODEX_HOME=<temp home>/.codex'));
   assert.ok(ADAPTERS['gemini-cli'].isolation.args.includes('GEMINI_CLI_HOME=<temp home>'));
   assert.ok(ADAPTERS.opencode.isolation.args.some((arg) => arg.startsWith('XDG_DATA_HOME=<temp home>/')));
   // The env record never goes on the command line.
-  assert.deepEqual(ADAPTERS.codex.isolation.flags, []);
+  if (process.platform === 'win32') assert.ok(ADAPTERS.codex.isolation.flags.includes('--ignore-user-config'));
+  else assert.deepEqual(ADAPTERS.codex.isolation.flags, []);
   assert.deepEqual(ADAPTERS['claude-code'].isolation.flags, ['--setting-sources', 'project,local', '--strict-mcp-config', '--disable-slash-commands']);
   assert.deepEqual(ADAPTERS['claude-code'].isolation.args, [...ADAPTERS['claude-code'].isolation.flags, 'CLAUDE_CODE_DISABLE_CLAUDE_MDS=1', 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1']);
 
@@ -218,6 +224,7 @@ test('real adapters list sign-in files only, never config or instructions', () =
   // OpenCode 2.x keeps its sign-in in database rows (the store), not in a file.
   const allowed = new Set(['.codex/auth.json', '.gemini/oauth_creds.json']);
   for (const name of ['codex', 'gemini-cli', 'opencode']) {
+    if (name === 'codex' && process.platform === 'win32') { assert.equal(ADAPTERS[name].isolation.home,null); continue; }
     const { files, store } = ADAPTERS[name].isolation.home;
     assert.ok(files.length > 0 || store, `${name} has a sign-in source`);
     for (const file of files) {
@@ -227,6 +234,7 @@ test('real adapters list sign-in files only, never config or instructions', () =
   }
   // The env record always names HOME and USERPROFILE, so no real home folder is visible.
   for (const name of ['codex', 'gemini-cli', 'opencode']) {
+    if (name === 'codex' && process.platform === 'win32') continue;
     const record = ADAPTERS[name].isolation.args;
     assert.ok(record.includes('HOME=<temp home>') && record.includes('USERPROFILE=<temp home>'), name);
   }

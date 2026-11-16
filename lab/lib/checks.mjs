@@ -5,8 +5,8 @@
 // An error is "lost" when the call never had a fair chance: the subscription hit a
 // limit, the sign-in failed, or the CLI did not start. A lost row says nothing about
 // the configuration, so it leaves the quality score and shows as its own count.
-// Every other error (timeout, no answer, harness crash, left_workdir) is the
-// configuration's own failure and scores 0.
+// A timeout is incomplete execution, not a correctness verdict. Its elapsed time
+// and incomplete count remain visible. Other errors score 0.
 const LOST_TYPES = new Set(['rate_limit', 'auth', 'not_installed', 'spawn_error']);
 // Whole phrases only: these run on stderr tails, where a stack line such as
 // cli.js:429:15 or a path such as /auth/ must not turn a crash into "lost".
@@ -27,10 +27,11 @@ export function normalizeErrorType(error) {
   return type;
 }
 
-/** "lost" (not the configuration's fault), "failed" (scores 0), or null for no error. */
+/** "incomplete" or "lost" (unjudged), "failed" (scores 0), or null for no error. */
 export function errorClass(error) {
   if (!error) return null;
-  return LOST_TYPES.has(normalizeErrorType(error)) ? 'lost' : 'failed';
+  const type = normalizeErrorType(error);
+  return type === 'timeout' ? 'incomplete' : LOST_TYPES.has(type) ? 'lost' : 'failed';
 }
 
 function modelName(value) {

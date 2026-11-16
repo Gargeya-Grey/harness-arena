@@ -54,6 +54,20 @@ const randomExpressions = (seed, count) => {
 
 export const probes = [
   {
+    name: 'step limits reject the same incremented call at zero and two',
+    run: async ({ load }) => {
+      const { run } = await lib(load);
+      return [[0, 1], [2, 2], [2, 3]].map(([maxSteps, calls]) => {
+        try {
+          run(`fn f() {} ${'f();'.repeat(calls)}`, { maxSteps });
+          return 'ok';
+        } catch (error) {
+          return error.message;
+        }
+      });
+    },
+  },
+  {
     name: 'vm01 arithmetic and number display',
     run: programs([k`print(1 + 2 * 3); print((1 + 2) * 3); print(10 - 4 - 3); print(2 * 3 % 4); print(100 / 8 / 5);`, 'print(7 % 3); print(-7 % 3); print(7 % -3); print(-7 % -3); print(6.5 % 2);', 'print(-5); print(- -5); print(0 - 0); print(-0); print(0 * -1);', 'print(0.1 + 0.2); print(1 / 3); print(2.50); print(100000 * 100000); print(1000000 * 1000000 * 1000000 * 1000000);', 'print(5 - -3); print(5 --3);', 'print(1 + 2 == 3); print(2 * 3 == 6.0);', 'print(10 / 4); print(10 / 5); print(1 / 8);', 'print(floor(2.7)); print(floor(-2.2)); print(floor(5));', 'print(123456789 * 1000); print(0.000001 * 0.001);', 'print(1e3);', 'print(1.5.2);', 'print(3 - 1 - 1); print(2 / 2 / 2); print(8 % 5 % 2);', 'print(1/0);', 'print(5 % 0);', 'print(0 / 0);', 'let x = 1000000; for (let i = 0; i < 6; i = i + 1) { x = x * x; print(x); }']),
   },

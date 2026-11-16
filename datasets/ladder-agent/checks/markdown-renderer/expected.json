@@ -36,7 +36,18 @@
     "md34 types and the empty document": ["0| \"\"","1| \"<p>x</p>\\n\"","2| \"TypeError\"","3| \"TypeError\"","4| \"TypeError\"","5| \"TypeError\"","6| \"TypeError\"","7| \"string\""],
     "md35 emphasis stays fast on long runs": {"fast":true,"sizes":[180007,180007,360007,660007,390007,300007,390007]},
     "md36 deep nesting does not overflow": {"quotes":[500,500,1],"lists":[120,1],"emphasis":[3000,3000],"brackets":true,"mixed":[100,100]},
-    "md37 a long document renders in linear time": {"fast":true,"count":6000,"lineLength":500007,"items":30000}
+    "md37 a long document renders in linear time": {"fast":true,"count":6000,"lineLength":500007,"items":30000},
+    "maximal reference destinations take adjacent quotes before optional titles": ["0| \"<p><a href=\\\"/u't'\\\">a</a></p>\\n\"","1| \"<p><a href=\\\"/u\\\" title=\\\"t\\\">a</a></p>\\n\"","2| \"<p><a href=\\\"&lt;/u&gt;'t'\\\">a</a></p>\\n\"","3| \"<p><a href=\\\"/u\\\" title=\\\"t\\\">a</a></p>\\n\""]
   },
-  "files": {"SPEC.md":{"same_as_starter":true},"test/blocks.test.mjs":{"same_as_starter":true},"test/inline.test.mjs":{"same_as_starter":true}}
+  "files": {
+    "SPEC.md": {
+      "same_as_starter": true
+    },
+    "test/blocks.test.mjs": {
+      "same_as_starter": true
+    },
+    "test/inline.test.mjs": {
+      "same_as_starter": true
+    }
+  }
 }

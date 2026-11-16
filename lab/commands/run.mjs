@@ -9,19 +9,19 @@ import { spawnSync } from 'node:child_process';
 import { isoNow, readJson, readJsonl, readText, sha256, safeSegment } from '../lib/fsutil.mjs';
 import { redactEvent, redactPaths } from '../lib/redact.mjs';
 import { parseYaml } from '../lib/yaml.mjs';
-import { loadPrompt, mainCheckout, targetProblems, loadRegistry, loadSuite, paths, renderMessages, resolveExperiment, runDirs } from '../lib/repo.mjs';
+import { effectiveEffort, requiresExplicitEffort, loadPrompt, mainCheckout, targetProblems, loadRegistry, loadSuite, paths, renderMessages, resolveExperiment, runDirs } from '../lib/repo.mjs';
 import { costUsd } from '../lib/metrics.mjs';
 import { copyTree, snapshotWorkspace, stampDiff, treeHash, treeStamp } from '../lib/workspace.mjs';
 import { getAdapter } from '../adapters/index.mjs';
 import { extractSvg } from '../evaluators/index.mjs';
 import { resolveRunDir, scoreRun } from './score.mjs';
-import { modelCheck, normalizeErrorType, runLiveness } from '../lib/checks.mjs';
+import { errorClass, modelCheck, normalizeErrorType, runLiveness } from '../lib/checks.mjs';
 import { LOCK_FILE, storeFolders, takeLocks } from '../lib/lock.mjs';
 import { startProcessWatch } from '../lib/procwatch.mjs';
 import { appendRunFile, own, runPath, writeRunFile } from '../lib/runwrite.mjs';
 import { appendEntry, callFiles, closeEntry, ensureLedger, eventsState, ledgerBytes, ledgerPath, lineSha, loadLedger, manifestCore, restoreLedger, rowLine, rowLines, trustRun } from '../lib/ledger.mjs';
 
-const DEFAULT_TIMEOUT_S = 300;
+const DEFAULT_TIMEOUT_S = 0;
 const USER_CONFIG = new Set(['loaded', 'isolated']);
 const ACCESS = new Set(['answer', 'edit']);
 
@@ -91,14 +91,14 @@ export function runStamp(date = new Date()) {
 /** Load and check everything an experiment references, before any call is made. */
 export function planExperiment(root, file, options = {}) {
   const text = readText(file);
-  return planFromExperiment(root, parseYaml(text, path.basename(file)), { ...options, sha: sha256(text), name: path.basename(file) });
+  return planFromExperiment(root, parseYaml(text, path.basename(file)), { ...options, requireExplicitEffort: requiresExplicitEffort(root), sha: sha256(text), name: path.basename(file) });
 }
 
 /** The plan for an experiment object: from a file, or the copy a run recorded (resume). */
-export function planFromExperiment(root, experiment, { harness: onlyHarness, models: onlyModels, repeats: repeatOverride, cases: caseOverride, sha = null, name = experiment?.id || 'experiment' } = {}) {
+export function planFromExperiment(root, experiment, { harness: onlyHarness, models: onlyModels, repeats: repeatOverride, cases: caseOverride, requireExplicitEffort = false, sha = null, name = experiment?.id || 'experiment' } = {}) {
   const file = name;
   const registry = loadRegistry(root);
-  const { targets, problems } = resolveExperiment(experiment, registry);
+  const { targets, problems } = resolveExperiment(experiment, registry, { requireExplicitEffort });
   const userConfig = experiment.user_config ?? 'loaded';
   if (!USER_CONFIG.has(userConfig)) problems.push(`user_config must be "loaded" or "isolated", got "${userConfig}"`);
   const access = experiment.access ?? 'answer';
@@ -166,7 +166,8 @@ function modelPlan(plan, adapter, modelKey, effortOverride = undefined) {
   const entry = plan.registry[modelKey];
   const params = entry.params || {};
   const requestedEffort = effortOverride === undefined ? (entry.reasoning_effort ?? null) : effortOverride === 'default' ? null : effortOverride;
-  const effort = adapter.supports_effort ? requestedEffort : null;
+  const recordedEffort = effectiveEffort({ effort: effortOverride }, entry, adapter);
+  const effort = recordedEffort === 'unavailable' ? null : recordedEffort;
   const applied = adapter.applied({ params, effort });
   const notApplied = Object.keys(params).filter((key) => !(key in applied));
   return {
@@ -174,6 +175,7 @@ function modelPlan(plan, adapter, modelKey, effortOverride = undefined) {
     entry,
     harnessModel: entry.harness_models?.[adapter.name] ?? entry.model,
     effort,
+    recordedEffort,
     requestedEffort,
     params,
     applied,
@@ -335,7 +337,7 @@ async function openRun(root, plan, harnessName, modelKeys, { log, resume = null,
   const isolated = plan.userConfig === 'isolated';
   const isolationArgs = isolated ? adapter.isolation?.args || [] : [];
   const models = modelKeys.map((key) => modelPlan(plan, adapter, key, effort));
-  const session = { adapter, isolationArgs, models, attempts: 0, failures: 0, done: new Set(), halted: null, fenced: true };
+  const session = { adapter, isolationArgs, models, attempts: 0, failures: 0, incomplete: 0, done: new Set(), halted: null, fenced: true };
 
   if (resume) {
     if (String(detected.version) !== resume.manifest.harness.version) {
@@ -349,6 +351,7 @@ async function openRun(root, plan, harnessName, modelKeys, { log, resume = null,
       session.done.add(rowKey(row.case_id, row.model_key, row.repeat));
       session.attempts += 1;
       if (row.error) session.failures += 1;
+      if (errorClass(row.error) === 'incomplete') session.incomplete += 1;
     }
     const runner = session.manifest.runner || {};
     session.manifest.status = 'running';
@@ -377,7 +380,7 @@ async function openRun(root, plan, harnessName, modelKeys, { log, resume = null,
       model: m.harnessModel,
       params: m.applied,
       context_window: m.entry.context_window ?? null,
-      reasoning_effort: m.effort,
+      reasoning_effort: m.recordedEffort,
       pricing: m.entry.pricing || {},
     })),
     repeats: plan.repeats,
@@ -414,7 +417,8 @@ async function openRun(root, plan, harnessName, modelKeys, { log, resume = null,
   log(`\n${session.runId}\n  harness ${adapter.name} ${detected.version} · ${models.length} model(s) · ${plan.cases.length} case(s) · ${plan.repeats} repeat(s) · workdir ${plan.workdirMode}`);
   if (isolated && !isolationArgs.length) log(`  note: ${adapter.name} cannot skip the user setup; it loads, and the run records user_config loaded`);
   for (const m of models) {
-    if (m.requestedEffort && !m.effort) log(`  note: ${adapter.name} has no effort control; ${m.modelKey} runs at the harness default, not "${m.requestedEffort}"`);
+    if (m.recordedEffort === 'unavailable') log(`  note: effort control is unavailable for ${m.modelKey} through ${adapter.name}; no effort flag is sent`);
+    else if (m.requestedEffort && !m.effort) log(`  note: ${adapter.name} has no effort control; ${m.modelKey} runs at the harness default, not "${m.requestedEffort}"`);
     if (m.notApplied.length) log(`  note: ${adapter.name} does not forward ${m.notApplied.join(', ')} for ${m.modelKey}; harness defaults apply`);
   }
   return session;
@@ -511,7 +515,7 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
       escape = `changed ${changed} in the lab repository while it ran; the experiment stops and this run is not scored. Check that file with git diff. If you edited it yourself during the call, this is a false alarm: keep your work and run again. Otherwise restore it (git checkout -- <file>) before the next run`;
       halt = true;
     } else if (!escape && mentionsFolder(`${JSON.stringify(result.events ?? [])}\n${result.text ?? ''}`, scopeFolders(plan.guard))) {
-      escape = 'worked in the lab repository outside its work folder, where it could read the hidden checks';
+      escape = 'produced a reference to the lab repository outside its work folder in its response or tool trace. This conservative exclusion does not establish that hidden checks were read or repository files were changed';
     }
     if (escape) result = { ...result, error: { type: 'left_workdir', message: `The agent ${escape}.` } };
     if (halt) {
@@ -613,6 +617,7 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
     session.recorded = now;
     session.done.add(rowKey(row.case_id, row.model_key, repeat));
     if (row.error) session.failures += 1;
+    if (errorClass(row.error) === 'incomplete') session.incomplete += 1;
     heartbeat(session);
   } catch (error) {
     // A write that fails after the call stops the experiment, and the run still closes, so
@@ -630,7 +635,7 @@ async function callOne(root, plan, session, testCase, m, repeat, { log, beat = (
     session.halted = 'left_workdir';
     return true;
   }
-  const shown = row.error ? `ERROR ${row.error.type}: ${row.error.message.split('\n')[0].slice(0, 120)}` : JSON.stringify(String(row.response.text).slice(0, 60));
+  const shown = row.error ? `${errorClass(row.error) === 'incomplete' ? 'INCOMPLETE (unjudged)' : 'ERROR'} ${row.error.type}: ${row.error.message.split('\n')[0].slice(0, 120)}` : JSON.stringify(String(row.response.text).slice(0, 60));
   log(`  ${testCase.case_id} r${repeat} ${m.modelKey}: ${shown} · ${latency ?? '?'} ms · ${usage.input_tokens ?? '?'} in / ${usage.output_tokens ?? '?'} out`);
   return false;
 }
@@ -680,8 +685,9 @@ async function closeRun(root, plan, session, { log, aborted, halted: haltedAs })
   // The changed files may include the hidden checks, so a halted run is not scored.
   const written = halted ? [] : scoreRun(root, runDir, { log });
   log(`\n${session.runId}`);
-  for (const item of written) log(`  scored ${path.basename(item.file)}: ${item.passed}/${item.count} passed`);
-  log(`  ${manifest.status}: ${session.attempts} attempt(s), ${session.failures} error(s)`);
+  for (const item of written) log(`  scored ${path.basename(item.file)}: ${item.count ? `${item.passed}/${item.count} passed` : 'no completed answers to judge'}`);
+  const outcome = !stopped && session.incomplete > 0 && session.incomplete === session.attempts ? 'incomplete (unjudged)' : manifest.status;
+  log(`  ${outcome}: ${session.attempts} attempt(s), ${session.failures - session.incomplete} error(s)${session.incomplete ? `, ${session.incomplete} unfinished and unjudged` : ''}`);
   return { runId: session.runId, runDir, status: manifest.status, attempts: session.attempts, failures: session.failures, halted: Boolean(halted) };
 }
 
@@ -749,13 +755,14 @@ export async function runCommand(root, file, options = {}) {
   const plan = planExperiment(root, file, options);
   const totalCalls = [...plan.groups.values()].reduce((sum, group) => sum + group.models.length, 0) * plan.cases.length * plan.repeats;
   log(`Experiment ${plan.experiment.id}: suite ${plan.suite.id} ${plan.suite.version}, prompt ${plan.prompt.id} v${plan.prompt.version}, ${totalCalls} call(s) in ${plan.groups.size} run(s)`);
+  log(`Execution deadline: ${plan.timeoutMs === 0 ? 'none' : `${plan.timeoutMs / 1000} s`}; elapsed time is measured separately.`);
   if (options.dryRun) {
     for (const { harness, effort, models } of plan.groups.values()) {
       const adapter = getAdapter(harness, root);
       const flags = plan.userConfig === 'isolated' ? adapter.isolation?.args || [] : [];
       for (const key of models) {
         const m = modelPlan(plan, adapter, key, effort);
-        log(`  ${harness}: ${key} → model "${m.harnessModel}", effort ${m.effort ?? 'default'}, user setup ${flags.length ? `skipped (${flags.join(' ')})` : 'loaded'}${plan.access === 'edit' ? `, access edit (${(adapter.edit?.args || []).join(' ') || 'no flags'})` : ''}${m.notApplied.length ? `, not forwarded: ${m.notApplied.join(', ')}` : ''}${plan.registry[key]?.pinned === false ? ', alias (not a pinned snapshot)' : ''}`);
+        log(`  ${harness}: ${key} → model "${m.harnessModel}", effort ${m.recordedEffort ?? 'default'}${m.recordedEffort === 'unavailable' ? ' (no adjustable control; no effort flag sent)' : ''}, user setup ${flags.length ? `skipped (${flags.join(' ')})` : 'loaded'}${plan.access === 'edit' ? `, access edit (${(adapter.edit?.args || []).join(' ') || 'no flags'})` : ''}${m.notApplied.length ? `, not forwarded: ${m.notApplied.join(', ')}` : ''}${plan.registry[key]?.pinned === false ? ', alias (not a pinned snapshot)' : ''}`);
       }
     }
     log('Dry run: nothing was called or written.');
@@ -816,23 +823,26 @@ async function resumeRun(root, ref, { log, force, dryRun }) {
   if (manifest.status === 'failed' && !manifest.runner?.interrupted && !/Interrupted before every row/.test(manifest.notes || '') && !force) {
     throw new Error(`${manifest.run_id} finished with every call failing; it was not interrupted. Start a new run, or pass --force.`);
   }
-  const plan = planFromExperiment(root, manifest.experiment, {
+  const recordedTimeout = manifest.harness?.settings?.timeout_s ?? manifest.experiment.timeout_s;
+  if (recordedTimeout == null) throw new Error(`${manifest.run_id} did not record its execution deadline; start a new run instead of changing its conditions on resume.`);
+  const plan = planFromExperiment(root, { ...manifest.experiment, timeout_s: recordedTimeout }, {
     harness: manifest.harness.name,
     models: manifest.models.map((item) => item.model_key),
     sha: /sha256 ([a-f0-9]{64})/.exec(manifest.notes || '')?.[1] ?? null,
   });
+  plan.experiment = manifest.experiment;
   const differs = [];
   if (plan.suite.sha256 !== manifest.suite.sha256) differs.push(`suite ${plan.suite.id} changed (run ${manifest.suite.version}, now ${plan.suite.version})`);
   if (plan.prompt.sha256 !== manifest.prompt.sha256) differs.push(`prompt ${plan.prompt.id} changed`);
   if (plan.repeats !== manifest.repeats) differs.push(`repeats ${plan.repeats} differ from the run's ${manifest.repeats}`);
   const adapter = getAdapter(manifest.harness.name, root);
   // The run is one group of the experiment: the one whose effort gives the efforts it recorded.
-  const sameEffort = (group) => manifest.models.every((item) => group.models.includes(item.model_key) && (modelPlan(plan, adapter, item.model_key, group.effort).effort ?? null) === (item.reasoning_effort ?? null));
+  const sameEffort = (group) => manifest.models.every((item) => group.models.includes(item.model_key) && (modelPlan(plan, adapter, item.model_key, group.effort).recordedEffort ?? null) === (item.reasoning_effort ?? null));
   const group = [...plan.groups.values()].find((item) => item.harness === manifest.harness.name && sameEffort(item))
     ?? [...plan.groups.values()].find((item) => item.harness === manifest.harness.name);
   for (const item of manifest.models) {
     const now = modelPlan(plan, adapter, item.model_key, group?.effort);
-    if (now.harnessModel !== item.model || (now.effort ?? null) !== (item.reasoning_effort ?? null)) differs.push(`${item.model_key} is now "${now.harnessModel}" at effort ${now.effort ?? 'default'}`);
+    if (now.harnessModel !== item.model || (now.recordedEffort ?? null) !== (item.reasoning_effort ?? null)) differs.push(`${item.model_key} is now "${now.harnessModel}" at effort ${now.recordedEffort ?? 'default'}`);
   }
   // The rows of one run must share one access policy: a run made before a harness's tools
   // were turned off for answers (or with other edit flags) cannot continue under the new one.

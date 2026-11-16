@@ -41,6 +41,10 @@ const randomDocs = (seed, count) => {
 
 export const probes = [
   {
+    name: 'maximal reference destinations take adjacent quotes before optional titles',
+    run: docs(["[a]: /u't'\n[a]", "[a]: /u 't'\n[a]", "[a]: </u>'t'\n[a]", "[a]: </u> 't'\n[a]"]),
+  },
+  {
     name: 'md01 paragraphs, escaping and line ends',
     run: docs(['plain', 'a\nb\n\nc', '  lead\n   spaces\n', '1 < 2 & 3 > 2 "q"', '&copy; &amp; &#35;', '<b>bold</b> <!-- x -->', 'a\r\nb\rc', '\n\n\n', '   ', 'tab\tinside', 'line  ', 'a \nb', 'a   \nb', 'text\n\n\n\nmore', 'x\n    y\n  z', 'caf\u00e9 \u{1F600} <\u00e9>', '', '\r\n', 'a\n \nb', 'one\n\n \t\ntwo']),
   },

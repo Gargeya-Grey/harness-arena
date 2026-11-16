@@ -108,13 +108,14 @@ test('an archived suite takes no new case', (t) => {
   assert.throws(() => newCase(root, 'reasoning', 'another', { log: () => {} }), /archived/);
 });
 
-test('an archived experiment is validated and its plan still builds', async (t) => {
+test('an archived experiment is validated and its historical plan still builds', async (t) => {
   const root = tempRoot(t, []);
-  const { planExperiment } = await import('../lab/commands/run.mjs');
+  const { planFromExperiment } = await import('../lab/commands/run.mjs');
+  const { loadYamlFile } = await import('../lab/lib/repo.mjs');
   for (const name of ['reasoning-sweep', 'coding-sweep', 'agentic-sweep', 'reasoning-hard-sweep', 'coding-hard-sweep', 'agentic-hard-sweep', 'opencode-reasoning', 'opencode-coding', 'opencode-agentic', 'smoke-opencode', 'smoke-command-code']) {
     const file = path.join(root, 'experiments', 'archive', `${name}.yaml`);
     assert.ok(fs.existsSync(file), name);
-    assert.ok(planExperiment(root, file).suite.id, name);
+    assert.ok(planFromExperiment(root, loadYamlFile(file)).suite.id, name);
   }
   const { counts } = validateRepo(root);
   assert.ok(counts.experiments >= 15);

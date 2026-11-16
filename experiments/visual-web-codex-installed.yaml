@@ -1,0 +1,21 @@
+id: visual-web-codex-installed
+description: >
+  Visual pilot through GPT-6.1 Terra using the owner's installed Codex sandbox.
+  User setup is loaded so the sandbox runtime is reused across case folders.
+  This is a distinct configuration from the isolated pilot; keep results separate.
+suite: visual-web
+prompt: visual-web
+prompt_version: "1"
+repeats: 1
+targets:
+  - model: gpt-6.1-terra
+    harness: codex
+    effort: high
+workdir: isolated
+user_config: loaded
+access: edit
+timeout_s: 600
+evaluators:
+  - id: workspace-tests
+    version: "2"
+    dimension: format

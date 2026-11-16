@@ -56,10 +56,15 @@
     "an entry of the wrong shape counts as new": {"a":"built:new@0-1/0x1","b":"built:new@1-2/0x1","c":"built:new@2-3/0x1","d":"built:new@3-4/0x1","e":"built:new@4-5/0x1"},
     "an empty graph builds to an empty result": {"ok":true,"makespan":0,"startOrder":[],"targets":{},"cache":{},"stats":{"source":0,"cached":0,"built":0,"failed":0,"skipped":0}},
     "a target without cost costs one and without deps has none": {"view":{"a":"built:new@0-1/0x1","b":"built:new@1-2/0x1"},"makespan":2},
-    "a long chain and a wide graph finish fast": {"chain":[2500,2500,true],"wide":[752,1501,["w1000","w1007","w1014","w1021","w1028","w1035","w104","w1042","w1049"],{"source":0,"cached":0,"built":1501,"failed":0,"skipped":0}],"again":[0,{"source":0,"cached":1501,"built":0,"failed":0,"skipped":0}],"fast":true}
+    "a long chain and a wide graph finish fast": {"chain":[2500,2500,true],"wide":[752,1501,["w1000","w1007","w1014","w1021","w1028","w1035","w104","w1042","w1049"],{"source":0,"cached":0,"built":1501,"failed":0,"skipped":0}],"again":[0,{"source":0,"cached":1501,"built":0,"failed":0,"skipped":0}],"fast":true},
+    "own special target names survive dependencies result records and cache reuse": {"targets":["__proto__","constructor","toString"],"dependencies":[["constructor",[["__proto__","input"]]],["toString",[["constructor","constructor"]]]],"cache":["constructor","toString"],"cached":2,"built":{"targets":["__proto__","constructor","toString"],"dependencies":[["__proto__",[["toString","input"]]],["constructor",[["__proto__","__proto__"]]]],"cache":["__proto__","constructor"],"cached":2}}
   },
   "files": {
-    "test/helpers.mjs": {"same_as_starter":true},
-    "test/schedule.test.mjs": {"same_as_starter":true}
+    "test/helpers.mjs": {
+      "same_as_starter": true
+    },
+    "test/schedule.test.mjs": {
+      "same_as_starter": true
+    }
   }
 }

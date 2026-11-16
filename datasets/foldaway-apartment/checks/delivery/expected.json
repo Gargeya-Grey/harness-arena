@@ -1,0 +1,4 @@
+{
+  "probes": { "index.html is nonempty": true },
+  "files": { "index.html": { "exists": true } }
+}

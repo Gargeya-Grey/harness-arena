@@ -5,6 +5,8 @@
 ## Sub-features
 
 - `run-dry` prints the plan (model id per harness, effort, forwarded and not-forwarded params) and writes nothing.
+- `run-effort` requires a named setting in comparisons declaring `effort_policy: explicit`; verified unavailable control has a distinct designation and sends no effort flag.
+
 - `run-filter` limits a run with `--harness`, `--models`, `--repeats` and `--cases`.
 - `run-live` calls each harness, writes `results/<run_id>/`, and scores the run.
 - `run-errors` records a failed call as a row with `error` set; a run where every call failed is `failed`. A usage limit or sign-in failure is stored as `rate_limit` or `auth` and counts as lost, not as 0.
@@ -17,10 +19,14 @@
 
 ## How to get to it (user POV)
 
+The real project additionally requires explicit effort through `configs/effort-policy.yaml`. New-run CLI planning and the dashboard catalog enforce it for every preset. Historical loading and resume retain recorded defaults. Fixture roots without this project file keep legacy behavior for historical compatibility checks.
+
 - `node lab run experiments/<name>.yaml [--dry-run] [--harness h] [--models a,b] [--repeats n] [--cases a,b]`
 - `npm run lab -- run experiments/<name>.yaml`
 
 ## Driving it with the shell
+
+- **Explicit effort.** Run `node lab run experiments/visual-web-repaired-explicit-effort.yaml --dry-run` and the three `foldaway-apartment-*-repaired-explicit-effort.yaml` dry runs. Each lists Beam, Haiku and Terra at high. No model call occurs. `node --test tests/explicit-effort.test.mjs tests/explicit-effort-presets.test.mjs` checks omitted/default rejection, supported levels, exact CLI arguments, recorded settings and legacy resume. Existing default-effort runs keep their original labels; no live rerun is required to verify the declaration path.
 
 Preconditions:
 
@@ -34,7 +40,10 @@ Preconditions:
 - **User setup.** Run `LAB_ROOT=$ROOT node lab run $ROOT/experiments/archive/smoke-opencode.yaml --dry-run`. Each line says `user setup loaded` or `user setup skipped (<flags>)`. No live call: `npm test -- --test-name-pattern "user_config"` proves the flags reach the call, `run.json` records them, and the configuration id ends in `__isolated` only when the recorded flags prove the user setup was kept out. Missing flags give `__isolated-leaked`, a harness that can only partly keep it out gives `__isolated-partial`, and a run with no recorded flags gives `__isolated-unknown`. The run's `setup_state` in `/api/state` says which.
 - **Declared harness.** No live call: `node --test tests/harnesses.test.mjs` declares a fake CLI in a temp `configs/harnesses.yaml` and runs it as a real process. For a real CLI, add its entry, then `LAB_ROOT=$ROOT node lab doctor` lists it with source `declared`, and `LAB_ROOT=$ROOT node lab validate` reports any problem in the entry.
 - **Agent task.** No live call: `node --test tests/agentic.test.mjs` runs fake agents that fix the bug (score 1), do nothing (score below 1), try to forge the sandbox result line, read a file outside the sandbox or patch globals (refused), and edit the lab or name the repository (`left_workdir`, the experiment stops). Dry run: `LAB_ROOT=$ROOT node lab run $ROOT/experiments/ladder-agent.yaml --dry-run` shows `access edit (<flags>)` on each line. Live, one free call: `LAB_ROOT=$ROOT node lab run $ROOT/experiments/ladder-agent.yaml --harness opencode --repeats 1 --cases ladder-agent-slugify-bug`. Then `$ROOT/results/<run_id>/artifacts/ladder-agent-slugify-bug/beam-free__opencode/r0/workspace/workspace.json` lists the changed files, and `git status datasets` in the data root shows no change.
-- **Resume and interleaving, no live call.** `node --test tests/validity.test.mjs` crashes a fake run after two rows (stale heartbeat), resumes it, and checks that only two calls ran, the rows are in order and `validate` passes; it also checks that two fake harnesses alternate per case, that each call folder is new and deleted, and that a usage-limit row is lost while a timeout scores 0. By hand on a temp root: run any experiment, then edit its `run.json` to `"status": "running"` with an old `runner.heartbeat_at`; `LAB_ROOT=$ROOT node lab runs` shows `stale` and the resume command, and `LAB_ROOT=$ROOT node lab validate` prints a `warning:` line and still exits `0`.
+- **Resume and interleaving, no live call.** `node --test tests/validity.test.mjs` crashes a fake run after two rows (stale heartbeat), resumes it, and checks that only two calls ran, the rows are in order and `validate` passes; it also checks that two fake harnesses alternate per case, that each call folder is new and deleted, and that a usage-limit row is lost while a timeout is incomplete and unjudged. By hand on a temp root: run any experiment, then edit its `run.json` to `"status": "running"` with an old `runner.heartbeat_at`; `LAB_ROOT=$ROOT node lab runs` shows `stale` and the resume command, and `LAB_ROOT=$ROOT node lab validate` prints a `warning:` line and still exits `0`.
+- **Execution cutoff.** Omit `timeout_s` or set `timeout_s: 0` for no hard deadline. A positive value is an explicit operational cutoff. `node --test tests/execution-cutoff.test.mjs` proves both paths without model calls. A reached cutoff must retain elapsed execution and saved workspace but leave correctness unjudged. `node --test tests/validity.test.mjs tests/ladder-report.test.mjs tests/verdict.test.mjs tests/dashboard-ui.test.mjs` checks this through stored rows, report/state, ladder and Results rendering. Real live verification needs a native completed result, never merely a process started without a deadline.
+- **Repaired graders.** Current presets use final-answer@2, js-function@3 and workspace-tests@3. Run `node --test tests/evaluators-v3.test.mjs` for exact scalars, CPU versus wall outcomes, trusted timeout classification and executable test requirements. Run `node --test tests/ladder-repaired-evaluators.test.mjs` to check all 56 current code and agent references through the new graders. A fixture-only CLI proof must retain all raw observations, omit a quality score for an operational wall stop, and reproduce the judged scores after `node lab score <run-id>`. Use a disposable data root and data folder for that proof.
+- **Recorded deadlines and progress.** `node --test tests/resume-deadline.test.mjs tests/jobwatch.test.mjs` proves that resume retains the recorded cutoff and progress separates unfinished calls from completed answers. Repeated incomplete or lost calls must not establish answer agreement; `tests/validity.test.mjs` covers repeated cutoffs.
 - **Archived experiment.** Run `LAB_ROOT=$ROOT node lab run $ROOT/experiments/archive/coding-sweep.yaml --dry-run`. Exit code `0`, and it ends with `Dry run: nothing was called or written.` The suite `coding` loads from `datasets/archive/coding`.
 - **Proof.** Keep stdout, `$ROOT/results/<run_id>/run.json` and `raw.jsonl`. Check `run.json` `harness.settings.workdir_git_fence` is `true`.
 

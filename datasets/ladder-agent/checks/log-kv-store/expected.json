@@ -1,5 +1,6 @@
 {
   "probes": {
+    "omitted and undefined segment limits use the exact published default": [[[1,112,1],[1,1048576,2],[2,1048588,2]],[[1,112,1],[1,1048576,2],[2,1048588,2]]],
     "keeps the exports and the checksum": {"exports":["CorruptionError","MemDisk","crc32","openStore"],"crc":3421780262,"empty":0},
     "keys come out sorted by code unit with an optional prefix": {"all":["10","9","B","_","a","a b","ab","a😀","a￿","b","z","é"],"a":["a","a b","ab","a😀","a￿"],"none":[],"empty":["10","9","B","_","a","a b","ab","a😀","a￿","b","z","é"],"entries":5,"first":["10","v-10"]},
     "get has and delete follow the data": {"first":["one",true,null,false],"second":["two","",true],"del":[true,false,false,null,false],"again":"three","keys":["e","k"]},
@@ -9,17 +10,17 @@
     "a delete of an existing key appends one delete record and a delete of a missing key writes nothing": {"results":[true,false,false],"ops":["append seg-000001.log 12"],"same":true},
     "a delete checks its key like a put even when the key is missing": [{"name":"RangeError"},{"name":"TypeError"},{"name":"RangeError"},{"name":"RangeError"},"no error"],
     "a batch is one record with every operation and applies in order": {"ops":["append seg-000001.log 68"],"same":true,"entries":[["x","2"],["y","ünï"]],"reopened":[["x","2"],["y","ünï"]]},
-    "a bad batch is refused before anything is written": {"results":[{"name":"TypeError"},{"name":"RangeError"},{"name":"RangeError"},{"name":"TypeError"},{"name":"TypeError"},{"name":"TypeError"},{"name":"TypeError"},{"name":"TypeError"},{"name":"RangeError"},{"name":"RangeError"},{"name":"RangeError"},{"name":"RangeError"}],"ops":1,"keys":65535,"max":"no error","after":1},
+    "a bad batch is refused before anything is written": {"results":[{"name":"RangeError"},{"name":"RangeError"},{"name":"RangeError"},{"name":"TypeError"},{"name":"TypeError"},{"name":"TypeError"},{"name":"TypeError"},{"name":"TypeError"},{"name":"RangeError"},{"name":"RangeError"},{"name":"RangeError"},{"name":"RangeError"}],"ops":1,"keys":65535,"max":"no error","after":1},
     "put checks types then surrogates then sizes and a refused put changes nothing": {"results":[{"name":"TypeError"},{"name":"TypeError"},{"name":"TypeError"},{"name":"TypeError"},{"name":"TypeError"},{"name":"RangeError"},{"name":"RangeError"},{"name":"RangeError"},{"name":"RangeError"},{"name":"RangeError"},"no error","no error",{"name":"RangeError"},"no error","no error"],"keys":[255,128,2,126],"ops":4},
     "a record may not be longer than 16 MiB": {"tooBig":{"name":"RangeError"},"justTooBig":{"name":"RangeError"},"opsAfterRefusal":0,"kept":16777212,"small":"1"},
     "values and keys round trip through UTF-8 including the byte order mark": {"same":true,"bomKey":"bom key","batch":"﻿batch","count":10},
     "a full segment moves on to the next number before the next record and never splits a record": {"files":{"seg-000001.log":94,"seg-000002.log":89,"seg-000003.log":117,"seg-000004.log":69},"active":[1,1,1,2,2,3,3,4,5],"stats":{"keys":9,"segments":4,"bytes":369,"active":5}},
     "a segment of exactly the limit is full and one byte less is not": [2,["seg-000001.log","seg-000002.log"],1,["seg-000001.log"]],
     "a store opened on a full last segment writes the next record to the next segment": {"before":{"keys":1,"segments":1,"bytes":72,"active":5},"after":{"keys":2,"segments":2,"bytes":85,"active":5},"names":["seg-000004.log","seg-000005.log"],"ops":["append seg-000005.log 13"]},
-    "maxSegmentBytes must be an integer of at least 64": [{"name":"RangeError"},"no error",{"name":"RangeError"},{"name":"RangeError"},{"name":"RangeError"},{"name":"RangeError"},{"name":"RangeError"},"no error"],
+    "maxSegmentBytes must be an integer of at least 64": [{"name":"RangeError"},"no error",{"name":"RangeError"},{"name":"RangeError"},{"name":"RangeError"},{"name":"RangeError"},{"name":"RangeError"},{"name":"RangeError"}],
     "a store reopened on its files has the same data after rolls deletes and overwrites": {"same":true,"stats":[{"keys":19,"segments":27,"bytes":2475,"active":27},{"keys":19,"segments":27,"bytes":2475,"active":27}],"segments":27},
     "files with other names are not part of the store and are never read or changed": {"entries":[["a","1"],["b","2"]],"reads":["seg-000002.log"],"left":true,"files":["seg-000003.log"]},
-    "every segment is read at most once when a store opens": {"max":1,"names":["seg-000002.log","seg-000003.log"]},
+    "every segment is read at most once when a store opens": {"max":1,"onlySegments":true,"entries":[["b","2"]]},
     "a torn tail at every length keeps the records that are whole and cuts the file there": [[0,0,0],[0,0,1],[0,0,1],[0,0,1],[0,0,1],[0,0,1],[0,0,1],[0,0,1],[0,0,1],[0,0,1],[0,0,1],[0,0,1],[0,0,1],[1,13,0],[1,13,1],[1,13,1],[1,13,1],[1,13,1],[1,13,1],[1,13,1],[1,13,1],[1,13,1],[1,13,1],[1,13,1],[1,13,1],[1,13,1],[1,13,1],[1,13,1],[2,28,0],[2,28,1],[2,28,1],[2,28,1],[2,28,1],[2,28,1],[2,28,1],[2,28,1],[2,28,1],[2,28,1],[2,28,1],[2,28,1],[1,40,0],[1,40,1],[1,40,1],[1,40,1],[1,40,1],[1,40,1],[1,40,1],[1,40,1],[1,40,1],[1,40,1],[1,40,1],[1,40,1],[1,40,1],[1,40,1],[1,40,1],[1,40,1],[1,40,1],[1,40,1],[1,40,1],[1,40,1],[2,60,0]],
     "a changed byte in the last record drops that record": [[2,28],[2,28],[2,28],[2,28],[2,28],[2,28],[2,28],[2,28],[2,28],[2,28],[2,28],[2,28],[2,28],[2,28],[2,28],[2,28],[2,28]],
     "everything from the first bad record of the last segment on is dropped even when later records are whole": {"entries":[["a","1"]],"size":13,"ops":["write seg-000001.log 13"]},
@@ -44,9 +45,12 @@
     "a crash during a batch keeps either all of it or none of it": [[0,1],[3,1],[6,1],[9,1],[12,1],[15,1],[18,1],[21,1],[24,1],[27,1],[30,1],[33,2]],
     "a disk that throws leaves the data readable after a new open": {"err":{"name":"Error"},"err2":{"name":"Error"},"entries":[["a","1"]]},
     "a large store opens compacts and reopens fast without reading the disk for gets": {"hits":13333,"readsDuringGets":0,"keys":[2000,2000,2000],"same":true,"shrunk":true,"fast":true},
-    "thousands of tiny segments open and compact fast": {"segments":1000,"keys":[700,700],"removed":true,"files":1,"fast":true}
+    "thousands of tiny segments open and compact fast": {"segments":1000,"keys":[700,700],"removed":true,"files":1,"fast":true},
+    "an omitted or undefined segment option uses the default": [[[],0],[[],0],[[],0],[[],0]]
   },
   "files": {
-    "test/store.test.mjs": {"same_as_starter":true}
+    "test/store.test.mjs": {
+      "same_as_starter": true
+    }
   }
 }

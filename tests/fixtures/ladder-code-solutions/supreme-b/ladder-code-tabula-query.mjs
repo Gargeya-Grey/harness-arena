@@ -376,7 +376,7 @@ function runTabula(blocks, query) {
       if (!t) fail('syntax');
       if (t.type === 'num') {
         pos += 1;
-        return { op: 'lit', value: t.dec ? parseDec(t.text) : int(Number(t.text)) };
+        return { op: 'number', text: t.text, dec: t.dec };
       }
       if (t.type === 'str') {
         pos += 1;
@@ -414,7 +414,7 @@ function runTabula(blocks, query) {
             }
           }
           takeSym(')');
-          if (name in SCALARS) {
+          if (Object.hasOwn(SCALARS, name)) {
             if (distinct) fail('syntax');
             if (SCALARS[name] === 0 ? args.length === 0 : args.length !== SCALARS[name]) fail('syntax');
           }
@@ -520,11 +520,13 @@ function runTabula(blocks, query) {
           items: parseNames(() => {
             const ref = parseRef();
             let name = ref.name;
+            let renamed = false;
             if (atKw('as')) {
               pos += 1;
               name = takeId();
+              renamed = true;
             }
-            return { ref, name };
+            return { ref, name, renamed };
           }),
         };
       }
@@ -561,7 +563,7 @@ function runTabula(blocks, query) {
       resolve(columns, expr);
       return;
     }
-    if (expr.op === 'call' && !(expr.name in SCALARS)) fail('unknown-function');
+    if (expr.op === 'call' && !Object.hasOwn(SCALARS, expr.name)) fail('unknown-function');
     for (const key of ['a', 'b', 'low', 'high', 'pattern']) if (expr[key]) checkRefs(columns, expr[key]);
     for (const key of ['items', 'args']) if (expr[key]) expr[key].forEach((one) => checkRefs(columns, one));
   }
@@ -611,6 +613,8 @@ function runTabula(blocks, query) {
 
   function evaluate(expr, frame) {
     switch (expr.op) {
+      case 'number':
+        return expr.dec ? parseDec(expr.text) : int(Number(expr.text));
       case 'lit':
         return expr.value;
       case 'ref':
@@ -845,14 +849,14 @@ function runTabula(blocks, query) {
         state = { columns: state.columns, rows: state.rows.slice(stage.n) };
       } else if (stage.kind === 'pick') {
         const indexes = stage.items.map((item) => resolve(state.columns, item.ref));
-        const columns = stage.items.map((item, k) => ({ name: item.name, alias: item.name === stage.items[k].ref.name ? state.columns[indexes[k]].alias : null }));
+        const columns = stage.items.map((item, k) => ({ name: item.name, alias: item.renamed ? null : state.columns[indexes[k]].alias }));
         if (seenNames(columns)) fail('dup-column');
         state = { columns, rows: state.rows.map((row) => indexes.map((index) => row[index])) };
       } else if (stage.kind === 'distinct') {
         const seen = new Set();
         const rows = [];
         for (const row of state.rows) {
-          const key = row.map(keyOf).join('\u0001');
+          const key = JSON.stringify(row.map(keyOf));
           if (seen.has(key)) continue;
           seen.add(key);
           rows.push(row);
@@ -873,7 +877,7 @@ function runTabula(blocks, query) {
     if (seenNames(columns)) fail('dup-column');
     const groups = new Map();
     for (const row of state.rows) {
-      const key = keyIndexes.map((index) => keyOf(row[index])).join('\u0001');
+      const key = JSON.stringify(keyIndexes.map((index) => keyOf(row[index])));
       if (!groups.has(key)) groups.set(key, { keys: keyIndexes.map((index) => row[index]), rows: [] });
       groups.get(key).rows.push(row);
     }

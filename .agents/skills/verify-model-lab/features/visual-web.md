@@ -1,0 +1,12 @@
+# Visual web pilot
+
+Use this feature when changing the visual-web suite, prompt or browser inspector. Read `docs/visual-testing.md` for the limits of delivery checks and rendered evidence.
+
+1. Run `node --test tests/visual-web.test.mjs tests/visual-browser.test.mjs`. Require all selected tests to pass when Chromium is present; an absent browser is reported as skipped and needs separate runtime proof.
+2. Run `node lab validate`, then dry-run `experiments/visual-web-repaired-explicit-effort.yaml`. Verify exactly five tasks, three explicit high-effort configurations, one repeat, and the native `format` dimension. Dry-run creates no run.
+3. For live proof, use only owner-authorized calls. The complete matrix is fifteen calls. Native Windows Codex now reuses its installed sandbox with per-call context controls and records partly kept out; global AGENTS.md still loads. The historical `visual-web-codex-installed.yaml` records loaded setup. `visual-web-terra-recovery.yaml` selects the unchanged fifth case only. Do not edit the checkout while the runner's workdir guard is active.
+4. Pass the exact closed run IDs to `node tools/visual-web/inspect.mjs --runs <ids> --out .cache/verify/<new-directory>`. Require ledger/suite matches, browser checks and both viewport captures per successful output. Inspect `report.json` separately from native scores.
+5. Open desktop, phone and interaction screenshots. Review each case's stated visual criteria. Record failures and unverified requirements with evidence. A delivery pass or nonblank WebGL frame alone is not a visual verdict.
+6. Record source revision, checker hash, run IDs, checks, visual judgements, limitations and actual shutdown/cleanup. Register retained screenshots/reports and handoff with the shared artifact observer. Never delete immutable runs.
+
+Browser observation version 2 is checked by `schemas/browser-observation.schema.json`. A judged check has boolean `passed`; `passed: null` requires `status: blocked` with its non-passing dependencies or `status: incomplete` with a reason. Summaries count judged failures separately from blocked/incomplete checks. Exercise transition settling, visible/framed furniture, every configurator choice, signed X/Z clamps, reflected values, reset, persistence and reduced motion. The retained Terra artifact may still fail its exact Night mode name; a blocked restoration step is not a second independently observed bug.

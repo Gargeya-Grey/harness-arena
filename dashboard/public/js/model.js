@@ -85,6 +85,7 @@ export function repeatsOf(c = ctx()) {
 // Outcome of one try: a word and a shape, never colour alone.
 export function outcome(o) {
   if (!o) return { kind: 'none', text: 'not run', glyph: '–' };
+  if (o.error_class === 'incomplete') return { kind: 'incomplete', text: 'unfinished, unjudged', glyph: '◷' };
   if (o.status === 'error') return { kind: 'error', text: 'no answer', glyph: '!' };
   if (o.status === 'unscored' || o.passed === null || o.passed === undefined) return { kind: 'unscored', text: 'not checked', glyph: '○' };
   if (o.passed) return { kind: 'pass', text: 'passed', glyph: '✓' };
@@ -146,7 +147,7 @@ export function setupsOf(ids, c = ctx()) {
   const names = chartNames(cfgs);
   const byCfg = (index.get(c && c.key) || { byCfg: new Map() }).byCfg;
   // Answers stored with no score count for nothing; `unscoredAnswers` lets the page say how many there are.
-  return cfgs.map((cfg) => ({ id: cfg.id, cfg, name: names.get(cfg.id), facts: { ...facts(aggOf(cfg.id, c)), unscoredAnswers: (c && c.unscored_answers && c.unscored_answers[cfg.id]) || 0 }, errorReason: errorReason(byCfg.get(cfg.id) || []) }));
+  return cfgs.map((cfg) => ({ id: cfg.id, cfg, name: names.get(cfg.id), facts: { ...facts(aggOf(cfg.id, c)), unscoredAnswers: (c && c.unscored_answers && c.unscored_answers[cfg.id]) || 0 }, errorReason: errorReason((byCfg.get(cfg.id) || []).filter((row) => row.error_class !== 'incomplete')) }));
 }
 export const shownSetups = () => setupsOf(S.sel);
 

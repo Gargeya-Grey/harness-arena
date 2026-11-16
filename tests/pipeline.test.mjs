@@ -8,10 +8,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getEvaluator, normalizeAnswer } from '../lab/evaluators/index.mjs';
-import { planExperiment } from '../lab/commands/run.mjs';
+import { planExperiment, planFromExperiment } from '../lab/commands/run.mjs';
 import { validateRepo } from '../lab/commands/validate.mjs';
 import { answerToolsOf, buildState, comparisonMode, configId } from '../lab/lib/state.mjs';
-import { REPO_ROOT } from '../lab/lib/repo.mjs';
+import { REPO_ROOT, loadYamlFile } from '../lab/lib/repo.mjs';
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'repo');
 const score = (key, text, testCase) => getEvaluator(...key.split('@')).score({ raw: { response: { text } }, testCase });
@@ -66,23 +66,23 @@ function tempExperiment(body) {
   return file;
 }
 
-test('plan: groups targets by harness and applies filters', () => {
+test('historical planning groups targets by harness and applies filters without relabelling effort', () => {
   const file = path.join(REPO_ROOT, 'experiments', 'smoke-harness-sweep.yaml');
-  const plan = planExperiment(REPO_ROOT, file, { repeats: 1, cases: ['smoke-001'] });
+  const plan = planFromExperiment(REPO_ROOT, loadYamlFile(file), { repeats: 1, cases: ['smoke-001'] });
   assert.deepEqual([...plan.groups.keys()].sort(), ['claude-code', 'codex', 'command-code']);
   assert.equal(plan.cases.length, 1);
   assert.equal(plan.workdirMode, 'isolated');
-  const one = planExperiment(REPO_ROOT, file, { models: ['gpt-6-luna-low'] });
+  const one = planFromExperiment(REPO_ROOT, loadYamlFile(file), { models: ['gpt-6-luna-low'] });
   assert.deepEqual([...one.groups.entries()], [['codex', { harness: 'codex', effort: undefined, models: ['gpt-6-luna-low'] }]]);
-  assert.throws(() => planExperiment(REPO_ROOT, file, { harness: 'nope' }), /No target matches/);
+  assert.throws(() => planFromExperiment(REPO_ROOT, loadYamlFile(file), { harness: 'nope' }), /No target matches/);
 });
 
 test('plan: refuses unknown cases, models, harnesses and bad repeats before any call', () => {
-  const base = 'id: t\nsuite: smoke\nprompt: qa-single-turn\n';
+  const base = 'id: t\nsuite: smoke\nprompt: qa-single-turn\neffort_policy: explicit\neffort: high\n';
   assert.throws(() => planExperiment(REPO_ROOT, tempExperiment(`${base}harness: codex\nmodels: [no-such-model]\n`)), /not in configs\/models\.yaml/);
-  assert.throws(() => planExperiment(REPO_ROOT, tempExperiment(`${base}harness: no-such-harness\nmodels: [gpt-6-luna-low]\n`)), /harness/i);
-  assert.throws(() => planExperiment(REPO_ROOT, tempExperiment(`${base}harness: codex\nmodels: [gpt-6-luna-low]\ncases: [smoke-999]\n`)), /smoke-999/);
-  assert.throws(() => planExperiment(REPO_ROOT, tempExperiment(`${base}harness: codex\nmodels: [gpt-6-luna-low]\nrepeats: 0\n`)), /repeats/);
+  assert.throws(() => planExperiment(REPO_ROOT, tempExperiment(`${base}harness: no-such-harness\nmodels: [gpt-6.1-terra]\n`)), /harness/i);
+  assert.throws(() => planExperiment(REPO_ROOT, tempExperiment(`${base}harness: codex\nmodels: [gpt-6.1-terra]\ncases: [smoke-999]\n`)), /smoke-999/);
+  assert.throws(() => planExperiment(REPO_ROOT, tempExperiment(`${base}harness: codex\nmodels: [gpt-6.1-terra]\nrepeats: 0\n`)), /repeats/);
 });
 
 test('validate: this repository and the fixture repo have no problems', () => {

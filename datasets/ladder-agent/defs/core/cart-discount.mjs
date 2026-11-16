@@ -7,5 +7,5 @@ export default {
     origin: "agentic-cart-discount",
   },
   tags: ["feature"],
-  task: "Add a method applyDiscount(code) to the Cart class in src/cart.mjs. 'SAVE10' takes 10% off the subtotal. 'FLAT5' takes 5 off the subtotal, but the total never goes below 0. Any other code throws an Error. Applying a code replaces any earlier code. total() keeps rounding to cents. Keep the existing tests passing, and add tests for applyDiscount to test/cart.test.mjs.",
+  task: "Add a method applyDiscount(code) to the Cart class in src/cart.mjs. 'SAVE10' takes 10% off the subtotal. 'FLAT5' takes 5 off the subtotal, but the total never goes below 0. Any other code throws an Error. Applying a code replaces any earlier code. total() keeps rounding to cents. Keep the existing tests passing and test/cart.test.mjs unchanged, and add tests for applyDiscount in test/discount.test.mjs using node:test. The new tests must execute applyDiscount and pass when run with the existing tests, with no skipped or todo tests.",
 };

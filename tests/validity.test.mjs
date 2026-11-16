@@ -10,7 +10,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ADAPTERS } from '../lab/adapters/index.mjs';
 import { resumeCommand, runCommand } from '../lab/commands/run.mjs';
-import { scoreRun } from '../lab/commands/score.mjs';
+import { scoreCommand, scoreRun } from '../lab/commands/score.mjs';
+import { reportMarkdown } from '../lab/commands/info.mjs';
 import { validateRepo } from '../lab/commands/validate.mjs';
 import { errorClass, modelCheck, normalizeErrorType, runLiveness } from '../lab/lib/checks.mjs';
 import { readJson, readJsonl, writeJson } from '../lab/lib/fsutil.mjs';
@@ -66,7 +67,7 @@ function experiment(root, id, lines) {
 const rowsOf = (runDir) => readJsonl(path.join(runDir, 'raw.jsonl')).rows;
 const problemsOf = (root) => validateRepo(root).problems;
 
-test('error classes: a usage limit or sign-in failure is lost, every other error is the configuration failing', () => {
+test('error classes: timeouts are incomplete, limits and sign-in failures are lost, and other errors fail', () => {
   assert.equal(normalizeErrorType({ type: 'provider.chatgpt-limit', message: 'ChatGPT usage limit reached. Check ChatGPT Settings.' }), 'rate_limit');
   assert.equal(normalizeErrorType({ type: 'harness_error', message: 'API Error: 429 Too Many Requests' }), 'rate_limit');
   assert.equal(normalizeErrorType({ type: 'harness_error', message: 'Not logged in. Please log in.' }), 'auth');
@@ -77,7 +78,7 @@ test('error classes: a usage limit or sign-in failure is lost, every other error
   assert.equal(normalizeErrorType({ type: 'harness_error', message: 'status 401 from the API' }), 'auth');
   assert.equal(errorClass({ type: 'rate_limit', message: '' }), 'lost');
   assert.equal(errorClass({ type: 'not_installed', message: '' }), 'lost');
-  assert.equal(errorClass({ type: 'timeout', message: '' }), 'failed');
+  assert.equal(errorClass({ type: 'timeout', message: '' }), 'incomplete');
   assert.equal(errorClass({ type: 'left_workdir', message: 'quota' }), 'failed');
   assert.equal(errorClass({ type: 'no_result', message: 'exited with code 1' }), 'failed');
   assert.equal(errorClass(null), null);
@@ -109,29 +110,56 @@ test('clustered interval: three cases with three repeats are three tasks, not ni
   assert.ok(shown[0] > 0.4 && shown[0] < 0.5, `three passing cases give [${shown}]`);
 });
 
-test('a failed call scores 0 and a lost call leaves the score; the model check reaches the dashboard', async (t) => {
+test('repeated unfinished attempts do not establish answer agreement', async (t) => {
+  const root = tempRoot(t);
+  fake(t, 'fake-unfinished-repeat', () => ({ wall_ms: 120000, error: { type: 'timeout', message: 'execution cutoff' } }));
+  const file = experiment(root, 'unfinished-repeat', ['repeats: 2', 'cases: [smoke-001]', 'harness: fake-unfinished-repeat', 'models: [claude-haiku]']);
+  const [result] = await runCommand(root, file, { log: () => {} });
+  const state = buildState(root);
+  const ctx = state.contexts.find((item) => item.runs.includes(result.runId));
+  const agg = Object.values(ctx.aggregates)[0];
+  assert.equal(agg.incomplete_n, 2);
+  assert.equal(agg.mean_quality, null);
+  assert.equal(agg.reliability_agreement, null);
+});
+
+test('a timeout is unjudged with elapsed time retained; a lost call also leaves correctness undecided', async (t) => {
   const root = tempRoot(t);
   fake(t, 'fake-mixed', (question) => {
-    if (question.includes('France')) return { error: { type: 'timeout', message: 'did not exit within 300 s' } };
+    if (question.includes('France')) return { wall_ms: 300000, error: { type: 'timeout', message: 'did not exit within 300 s' } };
     if (question.includes('leap')) return { error: { type: 'harness_error', message: 'Claude AI usage limit reached' } };
     return { text: answer(question), model_reported: 'someone-else-1' };
   });
   const file = experiment(root, 'mixed', ['repeats: 1', 'cases: [smoke-001, smoke-002, smoke-003]', 'harness: fake-mixed', 'models: [claude-haiku]']);
-  const [result] = await runCommand(root, file, { log: () => {} });
+  const logs = [];
+  const [result] = await runCommand(root, file, { log: (line) => logs.push(line) });
   const rows = rowsOf(result.runDir);
   assert.deepEqual(rows.map((row) => row.error?.type ?? null), [null, 'timeout', 'rate_limit']);
   assert.deepEqual(rows.map((row) => row.metadata.model_check), ['mismatch', 'unknown', 'unknown']);
   const state = buildState(root);
   const ctx = state.contexts.find((item) => item.runs.includes(result.runId));
   const agg = Object.values(ctx.aggregates)[0];
-  // smoke-001 right (1), smoke-002 timed out (0), smoke-003 lost to the usage limit (left out).
-  assert.equal(agg.mean_quality, 0.5);
+  // Only smoke-001 has a correctness verdict. Neither cutoff nor quota decides the other cases.
+  assert.equal(agg.mean_quality, 1);
   assert.equal(agg.answered_quality, 1);
-  assert.equal(agg.counted_n, 2);
-  assert.equal(agg.cases_n, 2);
-  assert.equal(agg.failed_n, 1);
+  assert.equal(agg.counted_n, 1);
+  assert.equal(agg.cases_n, 1);
+  assert.equal(agg.failed_n, 0);
+  assert.equal(agg.incomplete_n, 1);
+  assert.equal(agg.incomplete_elapsed_ms, 300000);
+  assert.equal(agg.max_incomplete_elapsed_ms, 300000);
+  assert.equal(agg.total_elapsed_ms, 300010);
+  assert.equal(agg.p50_latency_ms, 5, 'completion latency excludes unfinished execution');
   assert.equal(agg.lost_n, 1);
-  assert.equal(agg.pass_rate, 0.5);
+  assert.equal(agg.pass_rate, 1);
+  assert.equal(state.observations.find((row) => row.run_id === result.runId && row.error?.type === 'timeout').error_class, 'incomplete');
+  const report = reportMarkdown(state, ctx);
+  assert.match(report, /Incomplete/);
+  assert.match(report, /300\.0 s/);
+  assert.match(report, /unjudged/);
+  assert.match(logs.join('\n'), /INCOMPLETE.*unjudged/);
+  scoreCommand(root, [result.runId], { log: (line) => logs.push(line) });
+  assert.match(logs.join('\n'), /1 unfinished attempt, unjudged/);
   assert.equal(agg.model_mismatch_n, 1);
   assert.deepEqual(problemsOf(root), []);
 });
@@ -369,7 +397,8 @@ test('errors of a halted or unscored run do not count as 0', async (t) => {
   // Scored, the run counts, and its error shows with no 0.00 of its own.
   scoreRun(root, plain.runDir, { log: () => {} });
   const scored = Object.values(buildState(root).contexts.find((item) => item.runs.includes(plain.runId)).aggregates)[0];
-  assert.equal(scored.failed_n, 1, 'the error shows once the run is scored');
+  assert.equal(scored.failed_n, 0);
+  assert.equal(scored.incomplete_n, 1, 'the timeout shows as incomplete once the run counts');
 });
 
 test('resume --dry-run calls nothing; a torn last line is dropped and recorded', async (t) => {

@@ -450,5 +450,22 @@ test('an agent whose tools name the lab repository gets a left_workdir error', a
   const [result] = await runCommand(root, experiment(root, 'fake-peeker'), { log: () => {} });
   const rows = readJsonl(path.join(result.runDir, 'raw.jsonl')).rows;
   assert.equal(rows[0].error.type, 'left_workdir');
-  assert.match(rows[0].error.message, /hidden checks/);
+  assert.match(rows[0].error.message, /reference.*lab repository/);
+  assert.match(rows[0].error.message, /does not establish.*hidden checks/);
+});
+
+test('an incidental lab path remains excluded without claiming a hidden-check read', async (t) => {
+  ADAPTERS['fake-mention'] = {
+    ...fakeAgent('fake-mention', () => {}),
+    async call() {
+      return { text: 'done', finish_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 }, wall_ms: 1, events: [{ type: 'tool', command: 'Read outside context', output: `Earlier project: ${rootOf.current}` }] };
+    },
+  };
+  t.after(() => delete ADAPTERS['fake-mention']);
+  const root = tempRoot();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const [result] = await runCommand(root, experiment(root, 'fake-mention'), { log: () => {} });
+  const rows = readJsonl(path.join(result.runDir, 'raw.jsonl')).rows;
+  assert.equal(rows[0].error.type, 'left_workdir');
+  assert.match(rows[0].error.message, /does not establish.*hidden checks/);
 });

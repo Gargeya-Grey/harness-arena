@@ -16,6 +16,19 @@ test('facts: a failed call counts against the setup; a call lost to limits or si
 const setup = (id, name, a, errorReason = '') => ({ id, name, facts: facts(agg(a)), errorReason });
 const nine = (passed, p50, extra = {}) => ({ n: 9, scored_n: 9, passed_n: passed, latency_n: 9, p50_latency_ms: p50, ...extra });
 
+test('timeouts show unfinished execution and elapsed time without lowering correctness', () => {
+  const partial = setup('h', 'Haiku', { n: 2, scored_n: 1, passed_n: 1, errors_n: 1, failed_n: 0, incomplete_n: 1, incomplete_elapsed_ms: 300000 });
+  assert.equal(partial.facts.decided, 1);
+  assert.equal(partial.facts.rate, 1);
+  assert.equal(partial.facts.incomplete, 1);
+  const out = answer({ setups: [partial], cases: 2 });
+  assert.deepEqual(out.sentences, ['Haiku passed 1 of 1 case.']);
+  assert.deepEqual(out.more, ['Haiku had 1 unfinished try, unjudged after 5.0 min of elapsed execution.']);
+  const only = answer({ setups: [setup('h', 'Haiku', { n: 1, errors_n: 1, failed_n: 0, incomplete_n: 1, incomplete_elapsed_ms: 300000 })], cases: 1 });
+  assert.deepEqual(only.sentences, ['No completed answer yet.']);
+  assert.deepEqual(only.more, ['Haiku had 1 unfinished try, unjudged after 5.0 min of elapsed execution.']);
+});
+
 test('equal passes name the faster setup when the times differ by 10% or more', () => {
   const out = answer({ setups: [setup('a', 'Beam', nine(9, 32349)), setup('b', 'Pulse', nine(9, 46000))], cases: 3, repeats: 3 });
   assert.deepEqual(out.sentences, ['Both passed 9 of 9.', 'Beam was faster: 32 s typical, against 46 s.']);

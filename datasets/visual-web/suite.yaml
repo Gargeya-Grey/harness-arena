@@ -1,0 +1,9 @@
+id: visual-web
+version: "1.1.0"
+description: >
+  Five visual browser tasks with estimated expert-time levels, from semantic HTML
+  to a stateful Three.js room. This exploratory pilot is separate from the
+  canonical 80-task ladder. The native score checks delivery only; browser
+  behavior and screenshot-based design review are separate evidence.
+defaults:
+  repeats: 1

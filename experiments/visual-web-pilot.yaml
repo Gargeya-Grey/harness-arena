@@ -1,0 +1,25 @@
+id: visual-web-pilot
+description: >
+  One-repeat exploratory visual pilot. Model and harness both vary, so this is
+  a comparison of configurations. Native format scores measure delivery only;
+  rendered browser behavior and design review are separate evidence.
+suite: visual-web
+prompt: visual-web
+prompt_version: "1"
+repeats: 1
+targets:
+  - model: beam-free
+    harness: opencode
+  - model: claude-haiku-5.5
+    harness: claude-code
+  - model: gpt-6.1-terra
+    harness: codex
+    effort: high
+workdir: isolated
+user_config: isolated
+access: edit
+timeout_s: 600
+evaluators:
+  - id: workspace-tests
+    version: "2"
+    dimension: format

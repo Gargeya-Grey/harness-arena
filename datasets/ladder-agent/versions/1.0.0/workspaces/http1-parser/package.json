@@ -1,0 +1,6 @@
+{
+  "name": "http1-parser",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}

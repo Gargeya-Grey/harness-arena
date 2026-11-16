@@ -1,0 +1,29 @@
+id: ladder-code-repaired-explicit-effort
+description: >
+  The requested Beam, Haiku and Terra configurations, each at explicit high effort.
+  Model and harness both vary; level names do not establish equal compute.
+suite: ladder-code
+prompt: js-function
+prompt_version: "2"
+effort_policy: explicit
+repeats: 3
+
+targets:
+  - model: beam-free
+    harness: opencode
+    effort: high
+  - model: claude-haiku-5.5
+    harness: claude-code
+    effort: high
+  - model: gpt-6.1-terra
+    harness: codex
+    effort: high
+
+workdir: isolated
+user_config: isolated
+timeout_s: 0
+
+evaluators:
+  - id: js-function
+    version: "3"
+    dimension: quality

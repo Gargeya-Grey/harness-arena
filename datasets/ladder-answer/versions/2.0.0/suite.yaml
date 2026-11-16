@@ -1,0 +1,10 @@
+id: ladder-answer
+version: "2.0.0"
+description: >
+  The answer tasks of the difficulty ladder (docs/difficulty.md): problems with one
+  exact answer, a number, one word or a date, from easy (under 2 minutes for an
+  expert) to supreme (2 to 16 hours). Every answer is computed in code. The tier of
+  each case is its first tag and metadata.tier. cases.jsonl is written by
+  generate.mjs from defs/. Compared with the final-answer evaluator.
+defaults:
+  repeats: 3

@@ -167,13 +167,14 @@ test('the visible tests fail on every starter, because nothing is built', () => 
   }
 });
 
-test('no starter file contains a probe name or an expected value', () => {
+test('no starter file leaks a hidden probe name or an undisclosed expected value', () => {
   for (const slug of SLUGS) {
     const { probes } = loadCheck(path.join(SUITE, 'checks'), slug);
     const task = CASES.find((item) => item.input.workspace === slug).input.task;
+    const publicContract = task + '\n' + fs.readFileSync(path.join(fixtureOf(slug), 'SPEC.md'), 'utf8');
     const needles = new Set(Object.keys(probes));
     const walk = (value) => {
-      if (typeof value === 'string' && value.length >= 12 && !task.includes(value)) needles.add(value);
+      if (typeof value === 'string' && value.length >= 12 && !publicContract.includes(value)) needles.add(value);
       else if (Array.isArray(value)) value.forEach(walk);
       else if (value && typeof value === 'object') Object.values(value).forEach(walk);
     };

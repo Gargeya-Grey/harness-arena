@@ -31,9 +31,12 @@
     "applyPatch checks its arguments and does not change the patch": {"results":["!TypeError","!TypeError","!TypeError","!RangeError","!RangeError","!RangeError","!RangeError","!bad-header","!count-mismatch","a\nB\nc\n","a\nB\nc\n"],"viaObject":{"text":"a\nB\nc\n","hunks":[{"start":1,"offset":0,"fuzz":0}]},"reversed":{"text":"a\nb\nc\n","hunks":[{"start":1,"offset":0,"fuzz":0}]},"unchanged":true},
     "a patch without hunks and a text without lines": [{"text":"keep\nme","hunks":[]},{"text":"keep\nme","hunks":[]},{"text":"keep\nme","hunks":[]},{"text":"","hunks":[]},{"text":"first\n","hunks":[{"start":1,"offset":0,"fuzz":0}]},{"ok":false,"hunk":0},{"text":"","hunks":[{"start":1,"offset":0,"fuzz":0}]},{"ok":false,"hunk":0}],
     "a patch from one version applies to a changed version": {"patch":"--- a/cart.js\n+++ b/cart.js\n@@ -2,5 +2,5 @@\n   let sum = 0;\n   for (const item of items) {\n-    sum += item.price;\n+    sum += item.price * item.qty;\n   }\n   return sum;\n@@ -8,5 +8,5 @@\n \n function names(items) {\n-  return items.map((item) => item.name);\n+  return items.map((item) => item.name).sort();\n }\n \n","rows":[{"ok":false,"hunk":1},{"ok":false,"hunk":1},{"hunks":[{"start":4,"offset":2,"fuzz":0},{"start":11,"offset":3,"fuzz":2}],"text":"'use strict';\n// local header\nfunction total(items) {\n  let sum = 0;\n  for (const item of items) {\n    sum += item.price * item.qty;\n  }\n  return sum;\n}\n\nfunction names(items) {\n  // local note\n  return items.map((item) => item.name).sort();\n}\n\nmodule.exports = { total, names };\n"}]},
-    "many hunks in a large file are fast": {"value":{"hunks":200,"ok":true,"offsets":[2],"length":416129,"backSame":true,"miss":{"ok":false,"hunk":0}},"fast":true}
+    "many hunks in a large file are fast": {"value":{"hunks":200,"ok":true,"offsets":[2],"length":416129,"backSame":true,"miss":{"ok":false,"hunk":0}},"fast":true},
+    "a missing final wire LF is distinct from an explicit logical no-newline marker": ["x\n","x\n","x"]
   },
   "files": {
-    "test/diff.test.mjs": {"same_as_starter":true}
+    "test/diff.test.mjs": {
+      "same_as_starter": true
+    }
   }
 }

@@ -7,9 +7,9 @@ import { html, setHtml } from './util.js';
 // Setups differ on a case when their counts of passed, failed, no answer and not checked differ.
 function caseDiffers(caseId, ids) {
   const sig = (id) => {
-    const n = { pass: 0, fail: 0, error: 0, unscored: 0 };
+    const n = { pass: 0, fail: 0, error: 0, incomplete: 0, unscored: 0 };
     for (const o of cellObs(caseId, id)) n[outcome(o).kind] += 1;
-    return `${n.pass}/${n.fail}/${n.error}/${n.unscored}`;
+    return `${n.pass}/${n.fail}/${n.error}/${n.incomplete}/${n.unscored}`;
   };
   return new Set(ids.map(sig)).size > 1;
 }

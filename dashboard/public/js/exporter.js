@@ -27,10 +27,11 @@ function head() {
   };
 }
 
-const passedWords = (f) => (f.decided ? passedText(f) : f.unchecked ? 'not checked' : '–');
+const passedWords = (f) => (f.decided ? passedText(f) : f.incomplete ? 'unfinished, unjudged' : f.unchecked ? 'not checked' : '–');
 const timeWords = (f) => (f.time === null ? '–' : durText(f.time));
 const priceWords = (f) => (f.price === null ? '–' : usdText(f.price));
-const errorWords = (f) => (f.errors ? `${f.errors} of ${f.tries}` : 'none');
+const errorWords = (f) => (f.errors > f.incomplete ? `${f.errors - f.incomplete} of ${f.tries}` : 'none');
+const incompleteWords = (f) => (f.incomplete ? `${f.incomplete} unjudged${f.incompleteElapsed == null ? '' : ` · ${durText(f.incompleteElapsed)} elapsed`}` : 'none');
 
 export function markdown() {
   const h = head();
@@ -38,7 +39,7 @@ export function markdown() {
   const marks = bestMarks(list);
   const cell = (v) => String(v).replace(/\|/g, '\\|');
   const best = (on, text) => (on ? `**${text}**` : text);
-  const cols = ['Setup', 'Harness', 'Passed', 'Typical time', 'Slow end', 'API price', 'Errors'];
+  const cols = ['Setup', 'Harness', 'Passed', 'Typical time', 'Slow end', 'API price', 'Errors', 'Unfinished'];
   const rated = list.some((s) => s.facts.ratings > 0);
   if (rated) cols.push('Your rating');
   const lines = [`| ${cols.join(' | ')} |`, `| ${cols.map((_, i) => (i < 2 ? '---' : '---:')).join(' | ')} |`];
@@ -52,6 +53,7 @@ export function markdown() {
       f.slow === null || f.timed < 2 ? '–' : durText(f.slow),
       best(marks.price.has(s.id), priceWords(f)),
       errorWords(f),
+      incompleteWords(f),
     ];
     if (rated) row.push(f.ratings ? `${f.rating.toFixed(1)} of 5` : '–');
     lines.push(`| ${row.map(cell).join(' | ')} |`);
@@ -65,6 +67,7 @@ const CSV_HEAD = [
   'tries', 'passed', 'checked', 'not_checked', 'errors', 'pass_share', 'pass_range_low', 'pass_range_high',
   'typical_time_ms', 'slow_end_ms', 'api_price_usd', 'api_price_usd_per_try', 'api_price_usd_per_pass',
   'tokens_in_per_try', 'tokens_from_cache_per_try', 'tokens_out_per_try', 'your_rating', 'ratings',
+  'unfinished', 'unfinished_elapsed_ms',
 ];
 
 function csvRows() {
@@ -76,9 +79,10 @@ function csvRows() {
     const n = (v, d = 4) => (isNum(v) ? Number(v.toFixed(d)) : '');
     return [
       s.name, s.cfg.model_key || s.cfg.display_name, s.cfg.harness.name, s.cfg.harness.version, s.cfg.effort || '', setupOf(s.cfg),
-      f.tries, f.passed, f.decided - f.errors, f.unchecked, f.errors, n(share), range ? n(range[0]) : '', range ? n(range[1]) : '',
+      f.tries, f.passed, f.checked, f.unchecked, f.errors - f.incomplete, n(share), range ? n(range[0]) : '', range ? n(range[1]) : '',
       n(f.time, 0), n(f.slow, 0), n(f.price, 6), n(a.mean_cost_usd, 6), n(f.pricePerPass, 6),
       n(a.mean_input_tokens, 1), n(a.mean_cache_read_tokens, 1), n(a.mean_output_tokens, 1), f.ratings ? n(f.rating, 2) : '', f.ratings,
+      f.incomplete, n(f.incompleteElapsed, 0),
     ];
   });
 }
@@ -255,7 +259,8 @@ export async function picture(kind) {
 
   g.fillStyle = P.muted;
   g.font = `400 22px ${sans}`;
-  const foot = [h.fair, marks.passed.size || marks.time.size || marks.price.size ? 'Underlined: the best value in its column.' : ''].filter(Boolean).join(' ');
+  const unfinished = list.filter((s) => s.facts.incomplete).map((s) => `${s.name}: ${incompleteWords(s.facts)}`).join('; ');
+  const foot = [unfinished, h.fair, marks.passed.size || marks.time.size || marks.price.size ? 'Underlined: the best value in its column.' : ''].filter(Boolean).join(' ');
   if (foot) g.fillText(fit(g, foot, inner), pad, H - pad - 34);
   g.fillText(fit(g, `${PRICE_NOTE} Made ${stamp().slice(0, 10)}.`, inner), pad, H - pad);
 

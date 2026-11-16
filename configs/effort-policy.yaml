@@ -1,0 +1,2 @@
+# Applies to new run/dry-run planning; historical manifests resume as recorded.
+require: explicit

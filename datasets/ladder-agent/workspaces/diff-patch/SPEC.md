@@ -83,6 +83,9 @@ Every line of the output, the last one included, ends with `"\n"`.
 `text` must be a string, else `TypeError`. A patch has one file. Returns
 `{ oldName, newName, hunks }`; each hunk is `{ oldStart, oldCount, newStart, newCount, lines }`, with `lines` an array of
 `{ type, line }` in the same shape as `diffLines` (`line` keeps its `"\n"`, and has none when a `\ No newline at end of file` line follows it).
+An unmarked body line always has a logical `"\n"`, including when its final wire line has no terminating
+`"\n"`. The no-newline marker is the only way to remove that logical newline. For example, the final wire
+body `" x"` parses as the equal line `"x\n"`; `" x\n\\ No newline at end of file"` parses as `"x"`.
 Rules, in the order they are checked while reading line by line (a line ends at `"\n"`; a last line without `"\n"` is also a line):
 
 1. Empty text, or text with no `---` line at all, gives `{ oldName: null, newName: null, hunks: [] }`.

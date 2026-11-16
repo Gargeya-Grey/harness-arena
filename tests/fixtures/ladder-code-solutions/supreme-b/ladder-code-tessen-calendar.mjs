@@ -303,10 +303,8 @@ function tessenSchedule(spec) {
     if (blockers().length > 0) {
       if (one.policy === 'drop') continue;
       if (one.policy === 'slide') {
-        let guard = 0;
-        while (blockers().length > 0 && guard < 1000) {
+        while (blockers().length > 0) {
           one.start = Math.max(...blockers().map((other) => other.start + other.length));
-          guard += 1;
         }
         one.flag = ' moved';
       } else {

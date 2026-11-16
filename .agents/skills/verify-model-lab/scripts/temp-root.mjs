@@ -12,7 +12,12 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-model-lab-'));
 fs.cpSync(path.join(repo, 'tests', 'fixtures', 'repo'), root, { recursive: true });
 fs.cpSync(path.join(repo, 'experiments'), path.join(root, 'experiments'), { recursive: true });
 // Suites and prompts the fixtures do not have; existing fixture files are kept.
-for (const dir of ['datasets', 'prompts']) fs.cpSync(path.join(repo, dir), path.join(root, dir), { recursive: true, force: false });
+for (const dir of ['datasets', 'prompts']) {
+  for (const entry of fs.readdirSync(path.join(repo, dir), { withFileTypes: true })) {
+    const target = path.join(root, dir, entry.name);
+    if (!fs.existsSync(target)) fs.cpSync(path.join(repo, dir, entry.name), target, { recursive: true });
+  }
+}
 // The difficulty ladder's tier table, which node lab ladder needs.
 fs.copyFileSync(path.join(repo, 'configs', 'ladder.yaml'), path.join(root, 'configs', 'ladder.yaml'));
 // The fixture registry lacks the real models; append the real entries it does not have.

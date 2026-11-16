@@ -103,11 +103,20 @@ export function targetProblems(targets, registry, adapters) {
       problems.push(`unknown harness "${target.harness}"; known: ${Object.keys(adapters).join(', ')}`);
       continue;
     }
-    if (target.effort !== undefined && target.effort !== 'default' && !adapter.supports_effort) {
+    const effort = effectiveEffort(target, registry[target.model], adapter) ?? 'default';
+    const levels = registry[target.model]?.effort_levels;
+    if (effort === 'unavailable' && adapter.supports_effort && !(Array.isArray(levels) && levels.length === 0)) {
+      problems.push(`${target.model} needs verified unavailable effort control (effort_levels: []) before effort "unavailable" can be used`);
+      continue;
+    }
+    if (target.effort !== undefined && target.effort !== 'default' && target.effort !== 'unavailable' && !adapter.supports_effort) {
       problems.push(`${target.harness} has no effort control, so effort "${target.effort}" for ${target.model} cannot apply; remove it or use another harness`);
       continue;
     }
-    const effort = effectiveEffort(target, registry[target.model], adapter) ?? 'default';
+    if (Array.isArray(levels) && effort !== 'default' && effort !== 'unavailable' && !levels.includes(effort)) {
+      problems.push(`${target.model} has supported effort levels [${levels.join(', ')}], so effort "${effort}" cannot apply`);
+      continue;
+    }
     const key = `${target.model}|${target.harness}|${effort}`;
     if (seen.has(key)) problems.push(`${target.model} on ${target.harness} is listed twice at effort ${effort}: one configuration`);
     seen.add(key);
@@ -117,10 +126,12 @@ export function targetProblems(targets, registry, adapters) {
 
 /**
  * The effort a target really runs at: its own, else the registry's, through a harness
- * that can set effort; null (the harness default) otherwise. Two targets with the same
- * model, harness and effective effort are one configuration.
+ * that can set effort; null (the harness default) otherwise. "unavailable" records
+ * explicitly unavailable control without sending an effort flag. Two targets with
+ * the same model, harness and effective effort are one configuration.
  */
 export function effectiveEffort(target, entry, adapter) {
+  if (target.effort === 'unavailable') return 'unavailable';
   if (!adapter?.supports_effort) return null;
   if (target.effort === undefined) return entry?.reasoning_effort ?? null;
   return target.effort === 'default' ? null : target.effort;
@@ -317,14 +328,25 @@ export function loadCases(root, suiteId, version) {
  */
 const EFFORT = /^[a-z][a-z0-9-]{0,31}$/;
 
+export function requiresExplicitEffort(root) {
+  const file = path.join(root, 'configs', 'effort-policy.yaml');
+  if (!fs.existsSync(file)) return false;
+  if (parseYaml(readText(file), 'effort-policy.yaml')?.require !== 'explicit') throw new Error('configs/effort-policy.yaml must require explicit effort');
+  return true;
+}
+
 /**
  * The targets of an experiment, one per model x harness x effort. `effort` is undefined
  * when the target sets none (the registry's reasoning_effort applies), a word such as
  * "high", or "default" for the harness default.
  */
-export function resolveExperiment(experiment, registry) {
+export function resolveExperiment(experiment, registry, { requireExplicitEffort = false } = {}) {
   const problems = [];
   const targets = [];
+  if (experiment.effort_policy != null && experiment.effort_policy !== 'explicit') problems.push('effort_policy must be "explicit" when supplied');
+  if (experiment.timeout_s != null && (typeof experiment.timeout_s !== 'number' || !Number.isFinite(experiment.timeout_s) || experiment.timeout_s < 0 || experiment.timeout_s * 1000 > 2147483647)) {
+    problems.push('timeout_s must be a finite number from 0 to 2147483.647 seconds; 0 means no execution deadline');
+  }
   const declared = Array.isArray(experiment.targets)
     ? experiment.targets
     : (experiment.models || []).map((model) => ({ model, harness: experiment.harness }));
@@ -345,6 +367,15 @@ export function resolveExperiment(experiment, registry) {
       continue;
     }
     for (const effort of efforts) {
+      if ((requireExplicitEffort || experiment.effort_policy === 'explicit') && (effort === undefined || effort === 'default')) {
+        problems.push(`targets[${index}]: explicit effort policy requires a named effort for ${entry.model}; set effort or efforts on the target or experiment`);
+      }
+      if ((requireExplicitEffort || experiment.effort_policy === 'explicit') && effort !== undefined && effort !== 'default' && effort !== 'unavailable') {
+        const levels = registry[entry.model]?.effort_levels;
+        if (!Array.isArray(levels) || !levels.every((level) => typeof level === 'string' && EFFORT.test(level) && level !== 'default' && level !== 'unavailable')) {
+          problems.push(`targets[${index}]: ${entry.model} needs a verified effort_levels array before a controlled effort can be selected`);
+        }
+      }
       if (effort !== undefined && !(typeof effort === 'string' && EFFORT.test(effort))) {
         problems.push(`targets[${index}]: effort ${JSON.stringify(effort)} must be a word such as low, medium, high or default`);
         continue;

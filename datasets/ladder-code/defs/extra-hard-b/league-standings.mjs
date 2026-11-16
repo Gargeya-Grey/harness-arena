@@ -7,7 +7,7 @@ const task = [
   'Points of a match. A team gets win points for a win, draw points for a draw and 0 for a loss. For a match event (not for an award) it also gets bonus points when it scored goals goals or more, and bonus points again when it lost by exactly one goal; both can apply to the same team in one match. An award counts as 3 goals for and 0 goals against for the winner, 0 for and 3 against for the other team, and gives no bonus points.',
   'Totals. The total of a team is the sum of its points from all its matches minus the sum of the points of all its deduct events (it can be below 0). The card points of a team are the sum of its card events. GD is goals for minus goals against over all its matches, and GF is its goals for.',
   'Order. Teams are ordered by total, the most first. Teams with equal totals form a group, and each group is ordered like this. Take only the matches between two teams of the group (a mini-league; deductions do not count there) and, for each team, the points of those matches, the GD of those matches and the GF of those matches. Order the group by mini-league points, then mini-league GD, then mini-league GF, the most first. Teams that are equal on all three stay together as a subgroup. If the mini-league splits the group into more than one subgroup, every subgroup of two or more teams is ordered again in the same way, with the mini-league of that subgroup only (its own matches). If it does not split the group (all teams are equal on all three), the group is ordered by overall GD, then overall GF, the most first, then by fewer card points, then by team name in plain character order (a < b), the first first.',
-  'The result is an array with one row [team, played, total, GD, GF] per team, in table order. A team with no matches has the row [team, 0, its total, 0, 0].',
+  'The result is an array with one row [team, played, total, GD, GF] per team, in table order. A team with no matches has the row [team, 0, its total, 0, 0]. Team names are arbitrary strings, including "__proto__", "constructor" and "toString"; only names present in teams receive deductions or card points.',
 ].join(' ');
 
 const rulesA = { win: 3, draw: 1, goals: 3, bonus: 1 };
@@ -71,8 +71,11 @@ export default {
     cards: 'then by fewer card points',
     name: 'in plain character order',
     unplayed: 'A team with no matches',
+    'name-keys': 'Team names are arbitrary strings',
   },
   tests: [
+    t('name-keys', [noBonus, ['__proto__'], []], [['__proto__', 0, 0, 0, 0]]),
+    t('name-keys', [noBonus, ['__proto__', 'constructor', 'toString'], [m('m', '__proto__', 'constructor', 2, 0), ['deduct', '__proto__', 1], ['card', 'constructor', 2], ['deduct', 'valueOf', 100]]], [['__proto__', 1, 2, 2, 2], ['toString', 0, 0, 0, 0], ['constructor', 1, 0, -2, 0]]),
     // m1 4-3: A 3 + 1 (4 goals) = 4; B 0 + 1 (3 goals) + 1 (lost by one) = 2. m2 1-1: 1 each. m3 0-2: C 3 (2 goals is under 3); A 0. C is deducted 2.
     // Totals A 4, B 2 + 1 = 3, C 1 + 3 - 2 = 2. GD: A (1) + (-2) = -1, B (-1) + 0 = -1, C 0 + 2 = 2. GF: A 4, B 3 + 1 = 4, C 1 + 2 = 3.
     t('bonus', [rulesA, ['A', 'B', 'C'], [m('m1', 'A', 'B', 4, 3), m('m2', 'B', 'C', 1, 1), m('m3', 'A', 'C', 0, 2), ['deduct', 'C', 2]]], [['A', 2, 4, -1, 4], ['B', 2, 4 - 1, -1, 4], ['C', 2, 2, 2, 3]]),

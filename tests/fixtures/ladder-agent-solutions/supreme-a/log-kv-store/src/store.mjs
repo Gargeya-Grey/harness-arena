@@ -19,7 +19,7 @@ function checkKey(key) {
 }
 
 export function openStore(disk, options = {}) {
-  const max = options.maxSegmentBytes ?? 1048576;
+  const max = options.maxSegmentBytes === undefined ? 1048576 : options.maxSegmentBytes;
   if (!Number.isInteger(max) || max < 64) throw new RangeError('maxSegmentBytes must be an integer >= 64');
   const recovered = recover(disk);
   const data = recovered.data;
@@ -67,7 +67,7 @@ export function openStore(disk, options = {}) {
       return true;
     },
     batch(ops) {
-      if (!Array.isArray(ops)) throw new TypeError('ops must be an array');
+      if (!Array.isArray(ops)) throw new RangeError('ops must be an array');
       if (ops.length < 1 || ops.length > 65535) throw new RangeError('a batch has 1 to 65535 operations');
       for (const op of ops) {
         if (op === null || typeof op !== 'object' || (op.op !== 'put' && op.op !== 'delete')) throw new TypeError('bad operation');

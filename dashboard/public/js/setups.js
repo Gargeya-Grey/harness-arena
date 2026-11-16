@@ -24,7 +24,7 @@ function setupWarning(cfg) {
 
 function passedCell(s, best) {
   const f = s.facts;
-  if (!f.decided) return html`<span class="nil">${f.unchecked ? 'not checked' : '–'}</span>`;
+  if (!f.decided) return html`<span class="nil">${f.incomplete ? 'unfinished' : f.unchecked ? 'not checked' : '–'}</span>`;
   const share = f.passed / f.decided;
   return html`<span class="pass"><span class="pbar" aria-hidden="true"><i style="width:${(share * 100).toFixed(1)}%"></i></span><span class="v">${passedText(f)}</span></span>${f.unchecked ? html`<span class="sub">${f.unchecked} not checked</span>` : ''}`;
 }
@@ -33,7 +33,8 @@ const COLUMNS = [
   { key: 'passed', label: 'Passed', show: () => true, cell: passedCell },
   { key: 'time', label: 'Typical time', show: (list) => list.some((s) => s.facts.time !== null), cell: (s) => (s.facts.time === null ? none() : html`<span class="v">${durText(s.facts.time)}</span>`) },
   { key: 'price', label: 'API price', show: (list) => list.some((s) => s.facts.price !== null), cell: (s) => (s.facts.price === null ? none() : html`<span class="v">${usdText(s.facts.price)}</span>`) },
-  { key: 'errors', label: 'Errors', show: (list) => list.some((s) => s.facts.errors > 0), cell: (s) => (s.facts.errors ? html`<span class="v bad">${s.facts.errors} of ${s.facts.tries}</span>${s.errorReason ? html`<span class="sub">${s.errorReason}</span>` : ''}${s.facts.lost ? html`<span class="sub">${s.facts.lost} lost to limits or sign-in, not counted</span>` : ''}` : html`<span class="nil">none</span>`) },
+  { key: 'incomplete', label: 'Unfinished', show: (list) => list.some((s) => s.facts.incomplete > 0), cell: (s) => (s.facts.incomplete ? html`<span class="v">${s.facts.incomplete} of ${s.facts.tries}</span><span class="sub">unjudged${s.facts.incompleteElapsed == null ? '' : ` · ${durText(s.facts.incompleteElapsed)} elapsed`}</span>` : html`<span class="nil">none</span>`) },
+  { key: 'errors', label: 'Errors', show: (list) => list.some((s) => s.facts.errors > s.facts.incomplete), cell: (s) => (s.facts.errors > s.facts.incomplete ? html`<span class="v bad">${s.facts.errors - s.facts.incomplete} of ${s.facts.tries}</span>${s.errorReason ? html`<span class="sub">${s.errorReason}</span>` : ''}${s.facts.lost ? html`<span class="sub">${s.facts.lost} lost to limits or sign-in, not counted</span>` : ''}` : html`<span class="nil">none</span>`) },
   { key: 'rating', label: 'Your rating', show: (list) => list.some((s) => s.facts.ratings > 0), cell: (s) => (s.facts.ratings ? html`<span class="v">${s.facts.rating.toFixed(1)}</span><span class="sub">of 5, ${plural(s.facts.ratings, 'rating')}</span>` : html`<span class="nil">none yet</span>`) },
   // Details: one click away.
   { key: 'slow', label: 'Slow end', details: true, show: (list) => list.some((s) => s.facts.slow !== null && s.facts.timed > 1), cell: (s) => (s.facts.slow === null ? none() : html`<span class="v">${durText(s.facts.slow)}</span>`) },

@@ -5,8 +5,7 @@ const OK = new Set(['source', 'cached', 'built']);
 const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 
 function attemptOf(run, node, outputs, attempt) {
-  const deps = {};
-  for (const dep of node.deps) deps[dep] = outputs.get(dep).output;
+  const deps = Object.fromEntries(node.deps.map((dep) => [dep, outputs.get(dep).output]));
   let result;
   try {
     result = run(node.name, { attempt, recipe: node.recipe, deps });
@@ -65,7 +64,7 @@ export function simulate(model, { slots, run, cache, keepGoing }) {
       return;
     }
     const depHashes = node.deps.map((dep) => upstreamHash(dep, nodes, outputs));
-    const reason = staleReason(node, cache[name], depHashes);
+    const reason = staleReason(node, Object.hasOwn(cache, name) ? cache[name] : undefined, depHashes);
     if (reason === null) {
       records.set(name, { status: 'cached' });
       outputs.set(name, { output: cache[name].output, hash: contentHash(cache[name].output) });
@@ -140,9 +139,9 @@ export function simulate(model, { slots, run, cache, keepGoing }) {
     t = Math.min(...running.map((job) => job.end));
   }
 
-  const targets = {};
+  const targets = Object.create(null);
   const stats = { source: 0, cached: 0, built: 0, failed: 0, skipped: 0 };
-  const next = {};
+  const next = Object.create(null);
   const inside = new Set(closure);
   for (const name of Object.keys(cache).sort()) {
     if (!inside.has(name) && model.built.has(name)) next[name] = cache[name];
@@ -157,5 +156,5 @@ export function simulate(model, { slots, run, cache, keepGoing }) {
     if (record.status === 'cached') next[name] = cache[name];
   }
   const sorted = Object.fromEntries(Object.keys(next).sort().map((name) => [name, next[name]]));
-  return { ok: stats.failed === 0 && stats.skipped === 0, makespan, startOrder, targets, cache: sorted, stats };
+  return { ok: stats.failed === 0 && stats.skipped === 0, makespan, startOrder, targets: Object.fromEntries(Object.entries(targets)), cache: sorted, stats };
 }

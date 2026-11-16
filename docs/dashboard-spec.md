@@ -435,14 +435,14 @@ Setups are told apart by their letter and name, not by colour. Charts draw in in
 
 | Metric | Definition | Uncertainty and edge cases |
 |---|---|---|
-| Quality | Mean evaluator value per configuration, 0-1; a failed call counts as 0, a lost call (usage limit, sign-in, CLI missing) is left out | Bootstrap 95% interval clustered by case (cases, then repeats), widened to Wilson on the case count, from 3 cases; show `n` and the case count; mark insufficient data |
-| Pass rate | Passed observations / counted observations (scored plus failed) | Same clustered bootstrap; unscored and lost excluded and counted |
+| Quality | Mean evaluator value per configuration, 0-1; a failed call counts as 0; incomplete execution and lost calls are unjudged and left out | Bootstrap 95% interval clustered by case (cases, then repeats), widened to Wilson on the case count, from 3 cases; show `n`, case coverage and unfinished count; mark insufficient data |
+| Pass rate | Passed observations / counted observations (scored plus failed) | Same clustered bootstrap; unscored, incomplete and lost excluded and counted separately |
 | Reliability | Repeat agreement: frequency of the majority outcome per case, averaged across cases | Only cases with 2+ repeats; score variance shown separately |
 | Cost | Notional API-equivalent cost from stored `cost_usd` | Label "not billed"; subscription amortization deferred |
 | Cost per passed case | Total cost / passed observations | `null` when no passes; show `n` |
 | Latency | Harness end-to-end duration; model-request duration when available | p50 and p95 nearest-rank; successful calls only; excluded count stated |
 | Tokens | Input, output, cache read, cache write | Show throughput only when duration is present |
-| Error rate | Rows with `error` / all attempts | Split into failed (scored 0) and lost (not scored) |
+| Error rate | Rows with `error` / all attempts | Split into failed (scored 0), lost (unjudged) and incomplete execution (unjudged). Display cutoff time separately from completion latency. |
 | Model check | Rows whose harness reported another model | Shown on the configuration with the count; `pinned: false` aliases marked |
 | Format compliance | Mean of evaluator values in dimension `format` | Show evaluator id and version |
 | Human rating | Mean 1-5 rating per configuration | Separate dimension; never blended; show reviewer and `n` |

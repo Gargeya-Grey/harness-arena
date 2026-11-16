@@ -13,8 +13,7 @@ const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 export function facts(agg) {
   const a = agg || {};
   const errors = a.errors_n || 0;
-  // A failed call scores 0 and counts against the setup. A lost one (quota, sign-in, CLI
-  // missing) counts neither way. An aggregate without failed_n counts every error.
+  // Only failed calls score 0. Lost calls and incomplete execution stay unjudged.
   const failed = a.failed_n ?? errors;
   const checked = a.scored_n || 0;
   const passed = a.passed_n || 0;
@@ -24,6 +23,8 @@ export function facts(agg) {
     errors,
     failed,
     lost: a.lost_n || 0,
+    incomplete: a.incomplete_n || 0,
+    incompleteElapsed: a.incomplete_elapsed_ms ?? null,
     mismatched: a.model_mismatch_n || 0,
     checked,
     passed,
@@ -140,11 +141,17 @@ function noAnswer(s, withName = true) {
 }
 
 function errorSentence(setups) {
-  const bad = setups.filter((s) => s.facts.errors > 0);
+  const bad = setups.map((s) => ({ ...s, facts: { ...s.facts, errors: s.facts.errors - s.facts.incomplete } })).filter((s) => s.facts.errors > 0);
   if (!bad.length) return null;
   if (bad.length === 1) return `${noAnswer(bad[0])}.`;
   if (bad.length === 2) return `${noAnswer(bad[0])}, and ${noAnswer(bad[1])}.`;
   return `${bad.length} setups gave no answer in some tries: see the Errors column.`;
+}
+
+function incompleteSentence(setups) {
+  const unfinished = setups.filter((s) => s.facts.incomplete > 0);
+  if (!unfinished.length) return null;
+  return unfinished.map((s) => `${s.name} had ${plural(s.facts.incomplete, 'unfinished try', 'unfinished tries')}, unjudged${s.facts.incompleteElapsed == null ? '' : ` after ${durText(s.facts.incompleteElapsed)} of elapsed execution`}.`).join(' ');
 }
 
 function uncheckedSentence(setups) {
@@ -172,8 +179,9 @@ export function answer({ setups, cases = 0 }) {
   // A run that stopped before scoring holds answers that count nowhere yet. Say how many.
   const stored = setups.reduce((sum, s) => sum + (s.facts.unscoredAnswers || 0), 0);
   const unscored = stored > 0 ? `${plural(stored, 'answer')} ${stored === 1 ? 'is' : 'are'} stored with no counted score, so ${stored === 1 ? 'it counts' : 'they count'} nowhere yet.` : null;
-  const say = (kind, sentences, more = []) => ({ kind, sentences, more: [...more, kind === 'empty' || kind === 'unchecked' ? null : unscored].filter(Boolean), firm: kind === 'gap' || kind === 'noise' || kind === 'level' });
+  const say = (kind, sentences, more = []) => ({ kind, sentences, more: [...more, incompleteSentence(setups), kind === 'empty' || kind === 'unchecked' ? null : unscored].filter(Boolean), firm: kind === 'gap' || kind === 'noise' || kind === 'level' });
   if (!setups.length) return say('empty', ['No answers yet.']);
+  if (setups.some((s) => s.facts.incomplete > 0) && setups.every((s) => s.facts.tries === s.facts.incomplete)) return say('unchecked', ['No completed answer yet.']);
   const decided = setups.filter((s) => s.facts.decided > 0);
   if (!decided.length || setups.every((s) => s.facts.checked === 0 && s.facts.errors < s.facts.tries)) {
     if (setups.every((s) => s.facts.tries === 0)) {
@@ -194,7 +202,7 @@ export function answer({ setups, cases = 0 }) {
     // Missing tries ask for a bigger run; missing checks do not, because the tries are already there.
     const short = setups.some((s) => s.facts.tries < MIN_TRIES);
     const clean = setups.filter((s) => s.facts.decided > 0 && s.facts.passed === s.facts.decided).length;
-    const what = setups.every((s) => s.facts.tries === 1) ? 'their only try' : setups.some((s) => s.facts.unchecked > 0) ? 'every checked try' : 'every try';
+    const what = setups.every((s) => s.facts.tries === 1) ? 'their only try' : setups.some((s) => s.facts.unchecked > 0 || s.facts.incomplete > 0) ? 'every checked try' : 'every try';
     const tally = clean === all ? `${both(all)} passed ${what}.` : `${clean} of ${all} setups passed ${what}.`;
     return say('few', [short ? 'Too few tries to name a winner.' : 'Too few checked tries to name a winner.'], [tally, errorSentence(setups), uncheckedSentence(setups), short ? `Run ${MIN_TRIES} tries per case to compare.` : null]);
   }

@@ -1,0 +1,36 @@
+id: smoke-explicit-effort
+description: >
+  The requested Beam, Haiku and Terra configurations, each at explicit high effort.
+  Model and harness both vary; level names do not establish equal compute.
+suite: smoke
+prompt: qa-single-turn
+effort_policy: explicit
+repeats: 3
+
+# Each target is one model key run through one harness. Run one harness only with
+# `node lab run experiments/smoke-explicit-effort.yaml --harness codex`.
+targets:
+  - model: beam-free
+    harness: opencode
+    effort: high
+  - model: claude-haiku-5.5
+    harness: claude-code
+    effort: high
+  - model: gpt-6.1-terra
+    harness: codex
+    effort: high
+
+# isolated: each run gets an empty temp folder, so no harness reads this repo's
+# AGENTS.md or files into its prompt. Use `repo` to measure that overhead on purpose.
+workdir: isolated
+timeout_s: 0
+
+evaluators:
+  # Correct answer, ignoring case, quotes and trailing punctuation.
+  - id: normalized-match
+    version: "1"
+    dimension: quality
+  # Byte-exact after trim: did the model obey "no punctuation, one word"?
+  - id: exact-match
+    version: "1"
+    dimension: format

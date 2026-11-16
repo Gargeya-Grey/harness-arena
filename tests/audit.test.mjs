@@ -439,7 +439,28 @@ test('the ladder suites read their references from tests/fixtures, and the froze
   assert.match(item.reference.path, /^tests\/fixtures\/ladder-code-solutions\/core\/ladder-code-palindrome\.mjs$/);
   const agent = JSON.parse(lab(REPO, ['audit', 'checks', '--suite', 'ladder-agent', '--suite-version', '1.0.0', '--cases', 'ladder-agent-cart-discount', '--max', '3', '--json']).out);
   const own = agent.tasks[0];
-  assert.deepEqual([own.status, own.reference.path, own.tests, own.sites, own.mutants, own.killed], ['audited', 'tests/fixtures/ladder-agent-solutions/core/cart-discount', 8, 1, 1, 1]);
+  assert.deepEqual([own.status, own.reference.path, own.tests, own.reason], ['excluded', 'tests/fixtures/ladder-agent-solutions/core/cart-discount', 8, 'reference does not match this version']);
+  assert.equal(own.detail, 'the reference passes 7 of 8 tests');
+  const repaired = JSON.parse(lab(REPO, ['audit', 'checks', '--suite', 'ladder-agent', '--suite-version', '2.0.0', '--cases', 'ladder-agent-cart-discount', '--max', '3', '--json']).out).tasks[0];
+  assert.deepEqual([repaired.status, repaired.tests, repaired.sites, repaired.mutants, repaired.killed], ['audited', 10, 1, 1, 1]);
+});
+
+test('a new workspace audit retains a proved mutant failure beside an unfinished probe', () => {
+  const root = tempRoot();
+  const source = 'export function f(n){return n < 1 ? 1 : 0;} export class Box {step(){return 1;}}';
+  put(root, {
+    'datasets/fx-mixed/suite.yaml': suiteYaml('fx-mixed', '1.0.0'),
+    'datasets/fx-mixed/cases.jsonl': jsonl([{ case_id: 'fx-mixed-one', tags: [], input: { workspace: 'one', task: 'Keep Box.step and f correct, with an executable test.' }, expected: { check: 'one' } }]),
+    'datasets/fx-mixed/workspaces/one/src/lib.mjs': source,
+    'datasets/fx-mixed/checks/references/one/src/lib.mjs': source,
+    'datasets/fx-mixed/checks/references/one/test/box.test.mjs': "import test from 'node:test';import assert from 'node:assert/strict';import {Box} from '../src/lib.mjs';test('step',()=>assert.equal(new Box().step(),1));",
+    'datasets/fx-mixed/checks/one/probe.mjs': "export const probes=[{name:'value',run:async({load})=>(await load('src/lib.mjs')).f(1)},{name:'unfinished',run:async({load})=>(await load('src/lib.mjs')).f(1)===1?new Promise(()=>{}):1}];",
+    'datasets/fx-mixed/checks/one/expected.json': JSON.stringify({ probes: { value: 0, unfinished: 1 }, tests: { files: ['test/box.test.mjs'], minimum_tests: 1, required_calls: [{ module: 'src/lib.mjs', export: 'Box', method: 'step', instance: true, test_file: 'test/box.test.mjs' }] } }),
+  });
+  const run = lab(root, ['audit', 'checks', '--suite', 'fx-mixed', '--suite-version', '1.0.0', '--max', '1', '--json']);
+  assert.equal(run.code, 0, run.err);
+  const item = JSON.parse(run.out).tasks[0];
+  assert.deepEqual([item.status, item.mutants, item.killed_by_check, item.excluded_mutants], ['audited', 1, 1, 0]);
 });
 
 // ---- bad use -----------------------------------------------------------------------------------

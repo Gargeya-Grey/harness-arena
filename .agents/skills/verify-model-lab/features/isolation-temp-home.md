@@ -1,6 +1,6 @@
 # Isolated user setup (temp home)
 
-With `user_config: isolated`, Codex, Gemini CLI and OpenCode run each call in a temp home: a new folder that holds a copy of the sign-in only. The CLI cannot see the owner's config, instructions, skills or MCP servers. The folder is deleted after the call.
+With `user_config: isolated`, Gemini CLI, OpenCode and non-Windows Codex use a temp home that holds a copy of the sign-in only. The CLI discovers no owner config there; filesystem reads elsewhere remain subject to the harness sandbox. The folder is deleted after the call. Native Windows Codex instead retains its initialized sandbox home and applies per-call context controls. Its global AGENTS.md remains loaded, so recorded setup is partly kept out.
 
 ## Sub-features
 
@@ -27,6 +27,8 @@ Preconditions:
 - **Live, one case per harness.** Make a temp experiment with `user_config: isolated` and one target for the harness, then `LAB_ROOT=$ROOT node lab run <file> --repeats 1 --cases smoke-001`. Proof: `raw.jsonl` has no error (or a provider error such as a usage limit), `harness_extra.temp_home.removed` is `true`, and input tokens are lower than a stored `loaded` row of the same model and case (Codex: about 15,400 against about 26,000). The OS temp folder holds no `lab-home-*` folder afterwards.
 
 ## Gotchas
+
+- Windows Codex is the installed-home exception to the temp-home checks above. Inspect its recorded `--ignore-user-config`, `--ignore-rules`, disabled feature values and skill-catalog controls, plus effective prompt/tool evidence. `--ignore-user-config` alone does not remove global instructions or skills. Require setup `partly kept out`, workspace-write on an isolated case folder and no outside-context reads in the live trace. Missing markers refuse before calling the model; markers do not guarantee that runtime repair can never be needed.
 
 - Never print or commit a credential file. To see that a credential changed, compare hashes, not contents.
 - OpenCode 2.x does not read `auth.json`. Its sign-in is in the `credential` table of `opencode.db`. The store needs Node 22.13 or newer (`node:sqlite`).

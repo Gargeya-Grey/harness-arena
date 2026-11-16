@@ -8,15 +8,13 @@ export function getOrLoad(cache, key, loader, options = {}) {
   if (!flights.has(cache)) flights.set(cache, new Map());
   const pending = flights.get(cache);
   if (pending.has(key)) return pending.get(key);
-  const flight = (async () => {
-    try {
-      const value = await loader(key);
+  const flight = Promise.resolve()
+    .then(() => loader(key))
+    .then((value) => {
       cache.set(key, value, options);
       return value;
-    } finally {
-      pending.delete(key);
-    }
-  })();
+    })
+    .finally(() => pending.delete(key));
   pending.set(key, flight);
   return flight;
 }

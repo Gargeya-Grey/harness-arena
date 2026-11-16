@@ -6,10 +6,11 @@ export default {
   name: 'lcsLength',
   signature: 'lcsLength(a, b) -> number',
   tags: ['dynamic-programming'],
-  task: 'Return the length of the longest common subsequence of strings a and b (characters in the same order, not necessarily next to each other).',
+  task: 'Return the length of the longest common subsequence of strings a and b (characters in the same order, not necessarily next to each other). A character is one JavaScript UTF-16 code unit, as read by string indexing; a supplementary Unicode code point occupies two units.',
   edges: {
     'not-adjacent': 'not necessarily next to each other',
     order: 'characters in the same order',
+    'code-unit': 'one JavaScript UTF-16 code unit',
   },
   tests: [
     t('not-adjacent', ['ABCBDAB', 'BDCABA'], 4),
@@ -22,5 +23,6 @@ export default {
     t('basic', ['aaaa', 'aa']),
     t('not-adjacent', ['axbxcxdxexf', 'abcdef']),
     t('basic', ['the quick brown fox jumps', 'a lazy dog quickly jumped over']),
+    t('code-unit', ['😀', '😀'], 2),
   ],
 };

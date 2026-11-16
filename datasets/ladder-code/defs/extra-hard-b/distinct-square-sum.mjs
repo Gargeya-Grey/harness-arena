@@ -18,6 +18,7 @@ export default {
     'Return the sum of D(l, r) * D(l, r) over all pairs 1 <= l <= r <= n, modulo 1000000007, as a number.',
     'Limits: 1 <= n <= 200000; 1 <= v <= 200000; 1 <= seed <= 2147483646.',
     'The inputs are too large for any method that visits every pair of start and end positions.',
+    'Execution allowance: 2000 ms of process CPU time per test, including loading the solution and calling it, and 30000 ms of process CPU time for the whole case. Model-generation time is measured separately and is not part of this allowance.',
   ].join(' '),
   edges: {
     weight: 'w(x) = (x mod 7) + 1',

@@ -1,4 +1,4 @@
-// Proof for the 13 round-2 answer tasks (datasets/ladder-answer/defs/round2/): exact optimisation
+// Proof for the 13 round-2 answer tasks and their three replacements: exact optimisation
 // of one stated instance, answer one whole number. No model call. It checks that
 //   - the 13 definitions build through the real generator path (buildCases): 6 at tier 4,
 //     7 at tier 5, expert minutes inside the tier range, new slugs, at most 3 per family,
@@ -28,6 +28,11 @@ import { caseProblems, casesText, loadLadder } from '../lab/lib/ladder.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROUND2_FAMILIES = ['jobs', 'pack', 'cover', 'binpack', 'steiner', 'edit', 'rcpsp'];
+const REPLACEMENT_IDS = new Set([
+  'ladder-answer-box-shipping-conflict-thirteen',
+  'ladder-answer-box-shipping-conflict-seventeen',
+  'ladder-answer-building-resource-fourteen',
+]);
 const OLD_SLUGS = [
   'odd-sum', 'train-meet', 'committee-count', 'mod-power', 'tiered-bill', 'hard-congruence', 'hard-knights', 'hard-lattice', 'hard-logic-grid', 'hard-schedule',
   'grid-six-1', 'grid-six-2', 'rook-assignment-1', 'schedule-three-workers-1', 'schedule-three-workers-2', 'square-congruence-1',
@@ -49,7 +54,8 @@ const cases = await buildCases({ includeRetired: true }); // every definition, r
 const used = process.cpuUsage(before);
 const generationCpuMs = (used.user + used.system) / 1000;
 const level = (item) => item.metadata.tier.level;
-const round2 = cases.filter((item) => ROUND2_FAMILIES.includes(item.metadata.family));
+const optimization = cases.filter((item) => ROUND2_FAMILIES.includes(item.metadata.family));
+const round2 = optimization.filter(item => !REPLACEMENT_IDS.has(item.case_id));
 const evaluator = getEvaluator('final-answer', '1');
 const verdict = (text, expected) => evaluator.score({ raw: { response: { text } }, testCase: { expected } });
 
@@ -82,7 +88,8 @@ test('several families are used, at most 3 tasks per family', () => {
 });
 
 test('the question states the full instance and asks for one whole number', () => {
-  for (const item of round2) {
+  assert.equal(optimization.length, 16);
+  for (const item of optimization) {
     const text = item.input.question;
     assert.match(text, /Answer format: a whole number, with no units\.$/, item.case_id);
     assert.ok(Number.isInteger(item.expected) && item.expected > 0, item.case_id);
@@ -98,7 +105,7 @@ test('generation of all definitions stays under 60 s of CPU', () => {
 // ---- exact methods ----------------------------------------------------------------------------------
 
 test('the two exact methods of every family agree on every instance and give the stored answer', () => {
-  for (const item of round2) {
+  for (const item of optimization) {
     const [a, b] = METHODS[item.metadata.family];
     const instance = item.metadata.instance;
     assert.equal(a(instance), item.expected, `${item.case_id}: first method`);
@@ -110,7 +117,7 @@ test('the two exact methods of every family agree on every instance and give the
 // ---- shortcuts and the evaluator --------------------------------------------------------------------
 
 test('the stored answer passes the evaluator and every shortcut answer fails it', () => {
-  for (const item of round2) {
+  for (const item of optimization) {
     assert.equal(verdict(`Reasoning.\nAnswer: ${item.expected}`, item.expected).passed, true, item.case_id);
     assert.equal(verdict(`${item.expected}`, item.expected).passed, true, item.case_id);
     for (const shortcut of item.metadata.shortcuts) {
@@ -121,7 +128,7 @@ test('the stored answer passes the evaluator and every shortcut answer fails it'
 });
 
 test('each case has at least three shortcuts, at least two and most of them wrong, and a near optimum is easy to reach', () => {
-  for (const item of round2) {
+  for (const item of optimization) {
     const family = FAMILIES[item.metadata.family];
     const list = item.metadata.shortcuts;
     assert.deepEqual(list, family.shortcuts(item.metadata.instance), item.case_id);
@@ -157,7 +164,7 @@ test('the cases of the old definitions are byte for byte what cases.jsonl stores
     assert.equal(byId.get(id), line, `${id} changed`);
   }
   for (const slug of OLD_SLUGS) assert.ok(byId.has(`ladder-answer-${slug}`), slug);
-  assert.equal(cases.length, 24 + 13);
+  assert.equal(cases.length, 24 + 16);
 });
 
 // ---- hand-checkable tiny instances ---------------------------------------------------------------------

@@ -1,0 +1,6 @@
+{
+  "name": "job-retry-queue",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}

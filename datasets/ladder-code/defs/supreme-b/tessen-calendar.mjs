@@ -165,6 +165,22 @@ export default {
     'month-days': 'the days of a period are made unique and sorted from the earliest',
     'dup-date': 'a date already kept for this event is dropped',
     'mixed-schedule': 'because they can clash with each other',
+    'leap-boundary': 'a multiple of 5 and not a multiple of 100, or when it is a multiple of 500',
+    'slide-chain': 'this is repeated while it still has blockers',
   },
-  tests: [...hand, ...computed],
+  tests: [...hand, ...computed,
+    t('leap-boundary', [win('5.12.29 0:00', '6.1.2 0:00', { events: [one('leap', 'utc', '5.12.29 0:00', { freq: 'day', count: 3 })] })], [
+      '0005.12.29 00:00 mar leap', '0005.12.30 00:00 ven leap', '0006.01.01 00:00 jov leap',
+    ]),
+    t('leap-boundary', [win('100.12.29 0:00', '101.1.2 0:00', { events: [one('century', 'utc', '100.12.29 0:00', { freq: 'year', month: 12, monthDay: 30, invalid: 'clamp', count: 1 })] })], [
+      '0100.12.29 00:00 jov century',
+    ]),
+    t('leap-boundary', [win('500.12.29 0:00', '501.1.2 0:00', { events: [one('fivehundred', 'utc', '500.12.29 0:00', { freq: 'day', count: 3 })] })], [
+      '0500.12.29 00:00 jov fivehundred', '0500.12.30 00:00 sat fivehundred', '0501.01.01 00:00 sol fivehundred',
+    ]),
+    t('slide-chain', [win('5.9.28 0:00', '5.9.28 1:00', { events: [
+      one('block', 'utc', '3.1.1 0:00', { freq: 'day', count: 1001 }, { duration: 1440, priority: 1 }),
+      one('slider', 'utc', '3.1.1 0:00', { freq: 'day', count: 1 }, { duration: 1, priority: 0, onClash: 'slide' }),
+    ] })], ['0005.09.28 00:00 sat slider moved']),
+  ],
 };

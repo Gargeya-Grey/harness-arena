@@ -9,6 +9,7 @@ import { storeFolders, takeLocks } from '../lib/lock.mjs';
 import { appendEntry, ensureLedger, ledgerPath, loadLedger, scoresEntry, trustRun } from '../lib/ledger.mjs';
 import { getEvaluator } from '../evaluators/index.mjs';
 import { writeRunFile } from '../lib/runwrite.mjs';
+import { errorClass } from '../lib/checks.mjs';
 
 export function resolveRunDir(root, ref) {
   if (fs.existsSync(path.join(ref, 'run.json'))) return path.resolve(ref);
@@ -105,8 +106,10 @@ export function scoreCommand(root, refs, { all = false, force = false, log = con
     for (const dir of dirs) {
       log(path.basename(dir));
       for (const item of scoreRun(root, dir, { log, force })) {
-        log(`  ${path.relative(dir, item.file).replace(/\\/g, '/')}: ${item.count} scores, ${item.passed} passed`);
+        log(item.count ? `  ${path.relative(dir, item.file).replace(/\\/g, '/')}: ${item.count} scores, ${item.passed} passed` : `  ${path.relative(dir, item.file).replace(/\\/g, '/')}: no completed answers to judge`);
       }
+      const incomplete = readJsonl(path.join(dir, 'raw.jsonl')).rows.filter((row) => errorClass(row.error) === 'incomplete').length;
+      if (incomplete) log(`  ${incomplete} unfinished attempt${incomplete === 1 ? '' : 's'}, unjudged`);
     }
   } finally {
     release();

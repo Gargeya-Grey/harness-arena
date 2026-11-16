@@ -4,7 +4,9 @@ One file per user-facing feature. Each file says how a user reaches the feature 
 
 | Feature | Surface | File | Sub-features |
 |---|---|---|---|
-| Run an experiment | CLI | [run-experiment.md](run-experiment.md) | run-dry, run-filter, run-live, run-errors, run-isolation, run-user-config, run-declared, run-agentic, run-resume, run-interleave |
+| Run an experiment | CLI | [run-experiment.md](run-experiment.md) | run-dry, run-filter, run-effort, run-live, run-errors, run-cutoff, run-isolation, run-user-config, run-declared, run-agentic, run-resume, run-interleave |
+| Visual web pilot | CLI and browser | [visual-web.md](visual-web.md) | visual-delivery, visual-render, visual-interactions, visual-review |
+| Foldaway Apartment | CLI and browser | [foldaway-apartment.md](foldaway-apartment.md) | apartment-modes, apartment-timeline, apartment-clearance, apartment-reversal |
 | Isolated user setup | CLI | [isolation-temp-home.md](isolation-temp-home.md) | iso-doctor, iso-dry, iso-record, iso-auth, iso-writeback |
 | Validate and report | CLI | [validate-report.md](validate-report.md) | validate, report, new-case |
 | Control page | Dashboard | [control-page.md](control-page.md) | home, run-preview, run-start, run-progress, run-stop, lab, appearance, shell, offline |

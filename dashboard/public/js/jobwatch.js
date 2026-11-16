@@ -15,11 +15,11 @@ export function finishedJobs(before, jobs) {
 //   20261105T060204Z__agentic__opencode-agentic__a4a7c9
 //     agentic-slugify-bug r0 beam-free: "Changed …" · 21651 ms · 64017 in / 971 out
 //     agentic-csv-quotes r1 pulse-alpha-free: ERROR timeout: … · ? ms · ? in / ? out
-const PLAN = /^Experiment \S+: .*, (\d+) call\(s\) across \d+ harness/;
+const PLAN = /^Experiment \S+: .*, (\d+) call\(s\) (?:across \d+ harness|in \d+ run\(s\))/;
 const RUN_ID = /^(\d{8}T\d{6}Z__\S+)$/;
 const CALL = /^ {2}(\S+) r\d+ \S+: (.*) · (?:\d+|\?) ms · \S+ in \/ \S+ out$/;
 
-export const emptyProgress = () => ({ total: null, done: 0, errors: 0, current: '', runIds: [] });
+export const emptyProgress = () => ({ total: null, done: 0, errors: 0, incomplete: 0, current: '', runIds: [] });
 
 // A job in words, from its command line: "run experiments/agentic.yaml --repeats 1" -> "agentic run".
 const NAMES = { score: 'scoring', validate: 'validation', doctor: 'harness check', report: 'report', runs: 'run list' };
@@ -41,7 +41,7 @@ export function jobTitle(job) {
 }
 
 export function runProgress(lines, from = emptyProgress()) {
-  const p = { ...from, runIds: [...from.runIds] };
+  const p = { ...from, incomplete: from.incomplete || 0, runIds: [...from.runIds] };
   for (const line of lines) {
     let m = PLAN.exec(line);
     if (m) {
@@ -56,7 +56,8 @@ export function runProgress(lines, from = emptyProgress()) {
     m = CALL.exec(line);
     if (m) {
       p.done += 1;
-      if (m[2].startsWith('ERROR ')) p.errors += 1;
+      if (m[2].startsWith('INCOMPLETE ') || m[2].startsWith('ERROR timeout:')) p.incomplete += 1;
+      else if (m[2].startsWith('ERROR ')) p.errors += 1;
       p.current = m[1];
     }
   }

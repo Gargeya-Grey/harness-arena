@@ -357,14 +357,15 @@ function drawOutcomes(w, cfgs, names) {
   const rows = cfgs.map((c) => {
     const a = aggOf(c.id) || {};
     const passed = count(a.passed_n);
-    return { c, name: names.get(c.id), total: count(a.n), passed, failed: count(a.scored_n) - passed, err: count(a.errors_n), uns: count(a.unscored_n) };
+    return { c, name: names.get(c.id), total: count(a.n), passed, failed: count(a.scored_n) - passed, err: count(a.errors_n) - count(a.incomplete_n), incomplete: count(a.incomplete_n), uns: count(a.unscored_n) };
   });
-  const words = (r) => [`${r.passed} passed`, r.failed ? `${r.failed} failed` : null, r.err ? `${r.err} no answer` : null, r.uns ? `${r.uns} not checked` : null].filter(Boolean).join(' · ');
+  const words = (r) => [`${r.passed} passed`, r.failed ? `${r.failed} failed` : null, r.err ? `${r.err} no answer` : null, r.incomplete ? `${r.incomplete} unfinished, unjudged` : null, r.uns ? `${r.uns} not checked` : null].filter(Boolean).join(' · ');
   const valueW = Math.ceil(Math.max(...rows.map((r) => words(r).length * CHAR))) + 8;
   const f = frame(w, valueW);
   const { layout, height } = rowLayout(rows, f.stacked ? w : f.labelW, f.stacked ? 58 : 18);
-  let g = svgStart(w, height, 'Every try per setup: passed, failed, no answer, not checked');
+  let g = svgStart(w, height, 'Every try per setup: passed, failed, no answer, unfinished and unjudged, not checked');
   g += '<defs><pattern id="hatch-uns" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="5" height="5" class="chart-hatch-bg"/><line x1="0" y1="0" x2="0" y2="5" class="chart-hatch-line"/></pattern></defs>';
+  g += '<defs><pattern id="hatch-inc" width="5" height="5" patternUnits="userSpaceOnUse"><rect width="5" height="5" class="chart-hatch-bg"/><line x1="0" y1="0" x2="5" y2="0" class="chart-hatch-line"/></pattern></defs>';
   rows.forEach((r, k) => {
     const { y, labelH } = layout[k];
     const by = f.stacked ? y + labelH + 34 : y + labelH / 2;
@@ -382,12 +383,13 @@ function drawOutcomes(w, cfgs, names) {
       seg(r.passed, 'chart-mark');
       seg(r.failed, 'chart-bar');
       seg(r.err, 'chart-error');
+      seg(r.incomplete, 'chart-hatch-rect', ' fill="url(#hatch-inc)"');
       seg(r.uns, 'chart-hatch-rect', ' fill="url(#hatch-uns)"');
     }
     g += t(f.stacked ? 0 : w, f.stacked ? y + labelH + 18 : y + labelH / 2 + 9, r.err ? 'chart-num chart-error-text' : 'chart-num', words(r), f.stacked ? 'start' : 'end');
   });
   g += '</svg>';
-  const legend = html`<div class="chart-legend"><span><span class="key-swatch key-swatch-pass"></span>passed</span><span><span class="key-swatch"></span>failed</span><span><span class="key-swatch key-swatch-error"></span>no answer</span><span><span class="key-swatch key-swatch-unscored"></span>not checked</span></div>`;
+  const legend = html`<div class="chart-legend"><span><span class="key-swatch key-swatch-pass"></span>passed</span><span><span class="key-swatch"></span>failed</span><span><span class="key-swatch key-swatch-error"></span>no answer</span><span><span class="key-swatch key-swatch-incomplete"></span>unfinished, unjudged</span><span><span class="key-swatch key-swatch-unscored"></span>not checked</span></div>`;
   return { svg: g, note: 'Every try of each setup.', after: legend };
 }
 

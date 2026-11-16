@@ -2,6 +2,10 @@
 // reference, wrong and naive solutions, so its slug stays taken and its proofs keep running;
 // bringing one back is deleting its line here.
 //
+// Historical rationale below uses a superseded score-band policy. Current policy in
+// docs/difficulty.md uses expert time only; model pass rates do not move or retire a task.
+// The old rule reference and bands are retained as history, not current acceptance rules.
+//
 // Suite 2.0.0 (calibration round 2, 8 Nov 2026): the pilot-1 panel (Claude Haiku, Claude Opus,
 // DeepSeek and Codex at low effort, one repeat, suite 1.0.0) solved these tier 4 and 5 tasks far
 // above their tier's band (extra-hard 0.10 to 0.45, supreme at most 0.2); Opus solved every one.

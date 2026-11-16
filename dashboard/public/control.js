@@ -267,10 +267,11 @@ function runSummary(job, p) {
     if (!p.total) return 'Starting the harness…';
     const k = p.current && S.state?.cases?.[p.current];
     const now = k ? caseName(p.current, k.suite || '', k.input) : p.current;
-    return `${progressText(p)}${p.errors ? ` · ${plural(p.errors, 'error')}` : ''}${now ? ` · last: ${now}` : ''}`;
+    return `${progressText(p)}${p.errors ? ` · ${plural(p.errors, 'error')}` : ''}${p.incomplete ? ` · ${p.incomplete} unfinished, unjudged` : ''}${now ? ` · last: ${now}` : ''}`;
   }
-  const answers = p.done - p.errors;
-  if (job.status === 'passed') return `Done: ${plural(answers, 'answer')}${p.errors ? `, ${plural(p.errors, 'error')}` : ''}.`;
+  const answers = p.done - p.errors - (p.incomplete || 0);
+  if (job.status === 'passed') return `Done: ${plural(answers, 'answer')}${p.errors ? `, ${plural(p.errors, 'error')}` : ''}${p.incomplete ? `, ${p.incomplete} unfinished and unjudged` : ''}.`;
+  if (p.incomplete && p.incomplete === p.done && !p.errors) return `${p.incomplete} unfinished and unjudged. Read the log for the execution cutoff.`;
   if (job.status === 'stopped') return `Stopped after ${plural(p.done, 'call')}. What it stored is kept.`;
   return `The run failed after ${plural(p.done, 'call')}. Read the log for the reason.`;
 }
@@ -447,9 +448,9 @@ function attentionItems() {
     if (seen.has(r.context_key)) continue;
     seen.add(r.context_key);
     const halt = r.harness?.settings?.halted;
-    if (!halt && r.status !== 'failed') continue;
+    if (!halt && r.status !== 'failed' && r.execution_status !== 'incomplete') continue;
     const name = r.experiment_id || r.suite?.id || 'run';
-    items.push({ tone: 'warn', title: halt ? `The last ${name} run stopped` : `The last ${name} run failed`, sub: halt ? `${HALT[halt] || halt}. ${ago(r.created_at)}.` : `${r.rows} of ${r.expected_rows} answers stored, ${plural(r.errors, 'error')}. ${ago(r.created_at)}.`, href: `/results.html#ctx=${encodeURIComponent(r.context_key)}`, act: 'Open the result' });
+    items.push({ tone: 'warn', title: halt ? `The last ${name} run stopped` : r.execution_status === 'incomplete' ? `The last ${name} run has unfinished execution` : `The last ${name} run failed`, sub: halt ? `${HALT[halt] || halt}. ${ago(r.created_at)}.` : r.execution_status === 'incomplete' ? `${plural(r.incomplete_n, 'unfinished attempt')}, unjudged. ${ago(r.created_at)}.` : `${r.rows} of ${r.expected_rows} answers stored, ${plural(r.errors, 'error')}. ${ago(r.created_at)}.`, href: `/results.html#ctx=${encodeURIComponent(r.context_key)}`, act: 'Open the result' });
   }
   const val = lastJob('validate');
   if (val && val.status === 'failed') items.push({ tone: 'err', title: 'Validate found problems', sub: `${ago(val.ended_at)}. Read its output on Lab.`, href: '#lab', act: 'Open Lab' });

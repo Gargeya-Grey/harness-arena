@@ -34,6 +34,16 @@ const MIXED = [
 
 export const probes = [
   {
+    name: 'zero allocation permits individually safe weights without an unsafe sum',
+    run: async ({ load }) => {
+      const { allocate } = await load('src/index.mjs');
+      const weights = [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER];
+      let positive;
+      try { allocate(1, weights); positive = 'accepted'; } catch (error) { positive = error.constructor.name; }
+      return [allocate(0, weights), positive];
+    },
+  },
+  {
     name: 'keeps a mixed invoice with prices without tax and with tax, line by line',
     run: async ({ load }) => [await build(load, { lines: MIXED }), await build(load, { lines: MIXED, pricesIncludeTax: true }), await build(load, { lines: MIXED.map((line, index) => (index === 0 ? { ...line, discount: { percentBp: 1000 } } : line)) })],
   },

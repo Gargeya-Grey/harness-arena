@@ -255,7 +255,7 @@ test('the tier table keeps no target band, and the source keeps no verdictFor', 
   for (const file of ['lab/commands/ladder.mjs', 'lab/lib/ladder.mjs']) assert.doesNotMatch(fs.readFileSync(path.join(REPO, file), 'utf8'), /verdictFor/, file);
 });
 
-test('a timeout counts as 0 for the configuration; a rate limit does not count at all', (t) => {
+test('a timeout and a rate limit leave task correctness undecided', (t) => {
   const root = makeRoot(t);
   writeRun(root, 'c00001', 'model-d', [
     { slug: 'c1', repeat: 0, error: { type: 'timeout' } },
@@ -265,10 +265,10 @@ test('a timeout counts as 0 for the configuration; a rate limit does not count a
   ]);
   ensureLedger(root);
   const [config] = reportOf(root).configs;
-  assert.deepEqual(cellOf(config, 1), [0, 1, 0.5], 'c1: 0 and 1, not solved');
+  assert.deepEqual(cellOf(config, 1), [1, 1, 1], 'c1: the timeout leaves one judged repeat, which is 1');
   assert.deepEqual(cellOf(config, 2), [1, 1, 1], 'c2: the lost call leaves one repeat, which is 1');
   assert.deepEqual(config.tiers[2].tasks, 2);
-  assert.deepEqual(config.total, { tasks: 6, counted: 2, solved: 1, mean: 0.75 });
+  assert.deepEqual(config.total, { tasks: 6, counted: 2, solved: 2, mean: 1 });
 });
 
 test('filters: one ladder suite (by id or kind) and chosen runs', (t) => {
@@ -541,6 +541,12 @@ test('setup state: a flag string parses, a missing flag leaks, a record that pro
   assert.equal(evidence('codex', asked(['HOME=<temp home>', 'USERPROFILE=<temp home>', 'CODEX_HOME=<temp home>/.codex'])).state, 'kept out');
   assert.deepEqual(evidence('codex', asked(['HOME=<temp home>', 'USERPROFILE=<temp home>'])), { state: 'leaked', missing: ['CODEX_HOME='] });
   assert.deepEqual(evidence('codex', asked(['CODEX_HOME='])), { state: 'leaked', missing: ['CODEX_HOME='] });
+  const installedCodex = ['--no-daemon', '--ignore-user-config', '--ignore-rules', '-c', 'project_doc_max_bytes=0', '-c', 'skills.include_instructions=false', '-c', 'features.memories=false', '-c', 'features.plugins=false', '-c', 'features.apps=false', '-c', 'features.hooks=false', '-c', 'features.skill_search=false'];
+  assert.deepEqual(evidence('codex', asked(installedCodex)), { state: 'partly kept out', missing: [] }, 'installed-home controls still load global AGENTS.md');
+  assert.deepEqual(evidence('codex', asked(installedCodex.filter((flag) => flag !== 'features.memories=false'))), { state: 'leaked', missing: ['features.memories=false'] });
+  assert.deepEqual(evidence('codex', asked([...installedCodex.filter((flag) => flag !== 'features.memories=false'), 'features.memories=true'])), { state: 'leaked', missing: ['features.memories=false'] });
+  assert.deepEqual(evidence('codex', asked([...installedCodex, '-c', 'features.memories=true'])), { state: 'leaked', missing: ['features.memories=false'] }, 'a later override is the effective value');
+  assert.deepEqual(evidence('codex', { user_config: 'loaded', user_config_flags: installedCodex }), { state: 'loaded', missing: [] }, 'historical loaded runs retain their recorded setup');
   assert.equal(evidence('gemini-cli', asked(['HOME=<temp home>', 'GEMINI_CLI_HOME=<temp home>', 'GOOGLE_GENAI_USE_GCA=true'])).state, 'kept out');
   assert.deepEqual(evidence('gemini-cli', asked(['GEMINI_CLI_HOME=<temp home>'])), { state: 'leaked', missing: ['GOOGLE_GENAI_USE_GCA=true'] });
   const xdg = ['XDG_CONFIG_HOME=<temp home>/.config', 'XDG_DATA_HOME=<temp home>/.local/share', 'XDG_STATE_HOME=<temp home>/.local/state', 'XDG_CACHE_HOME=<temp home>/.cache'];

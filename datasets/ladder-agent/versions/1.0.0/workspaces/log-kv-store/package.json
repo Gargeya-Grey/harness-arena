@@ -1,0 +1,6 @@
+{
+  "name": "log-kv-store",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}

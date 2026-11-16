@@ -62,11 +62,16 @@ test('every answer is one number, one word or an ISO date', () => {
 
 test('the retired tasks are left out of the suite, each with a reason, and their slugs stay taken', async () => {
   const retired = all.filter((item) => item.metadata.tier.retired);
-  assert.equal(retired.length, 13);
-  for (const item of retired) assert.match(item.metadata.tier.retired, /^Pilot 1 \(suite 1\.0\.0\): panel mean /, item.case_id);
+  assert.equal(retired.length, 16);
+  const originalRetirements = retired.filter(item => item.metadata.tier.retired.startsWith('Pilot 1'));
+  assert.equal(originalRetirements.length, 13);
+  for (const item of originalRetirements) assert.match(item.metadata.tier.retired, /^Pilot 1 \(suite 1\.0\.0\): panel mean /, item.case_id);
+  const reviewedRetirements = retired.filter(item => !originalRetirements.includes(item));
+  assert.deepEqual(reviewedRetirements.map(item => item.case_id).sort(), ['ladder-answer-box-shipping-seventeen-parcels', 'ladder-answer-box-shipping-thirteen-parcels', 'ladder-answer-building-fourteen-tasks']);
+  for (const item of reviewedRetirements) assert.match(item.metadata.tier.retired, /^Difficulty review \(suite 2\.0\.0\):.*no human timing was measured\.$/, item.case_id);
   assert.equal(all.length, cases.length + retired.length);
-  const stored = fs.readFileSync(path.join(ROOT, 'datasets', 'ladder-answer', 'cases.jsonl'), 'utf8');
-  for (const item of retired) assert.ok(!stored.includes(`"${item.case_id}"`), `${item.case_id} is still in cases.jsonl`);
+  const stored = new Set(fs.readFileSync(path.join(ROOT, 'datasets', 'ladder-answer', 'cases.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line).case_id));
+  for (const item of retired) assert.ok(!stored.has(item.case_id), `${item.case_id} is still in cases.jsonl`);
 });
 
 test('tier 5 uses at least three different families, tier 4 at least three', () => {
@@ -78,7 +83,7 @@ test('tier 5 uses at least three different families, tier 4 at least three', () 
 // ---- generated cases solve again from the stored instance -------------------------------------
 
 test('every generated case re-solves from its metadata to the stored answer, and the question is its rendering', () => {
-  assert.equal(generated.length, 27); // 14 from suite 1.0.0 (13 of them retired) and 13 from round 2
+  assert.equal(generated.length, 30);
   for (const item of generated) {
     const family = FAMILIES[item.metadata.family];
     assert.ok(family, `${item.case_id}: unknown family ${item.metadata.family}`);

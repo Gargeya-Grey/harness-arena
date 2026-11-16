@@ -20,11 +20,19 @@
     "the default size of a string is its UTF-8 length": [6,["b"],6,false],
     "a loaded value is shared by concurrent callers and reloaded after it expires": {"together":["k#1","k#1","k#1"],"warm":"k#1","cold":"k#2","custom":"j#3","stillCustom":"j#3","reloaded":"j#4","calls":4},
     "a failed load is not cached and waiting callers all see the failure": {"first":["rejected:boom","rejected:boom"],"second":"ok","third":"ok","calls":2,"has":true},
-    "keeps the default clock and the exports": ["x",true,[],3,3]
+    "keeps the default clock and the exports": ["x",true,[],3,3],
+    "a synchronous loader throw releases the shared load before retry": {"first":["rejected"],"next":"ok","calls":2},
+    "a failed cache insertion releases the shared load before retry": ["rejected",2,2]
   },
   "files": {
-    "test/cache.test.mjs": {"same_as_starter":true},
-    "test/duration.test.mjs": {"same_as_starter":true},
-    "test/loader.test.mjs": {"same_as_starter":true}
+    "test/cache.test.mjs": {
+      "same_as_starter": true
+    },
+    "test/duration.test.mjs": {
+      "same_as_starter": true
+    },
+    "test/loader.test.mjs": {
+      "same_as_starter": true
+    }
   }
 }

@@ -1,0 +1,22 @@
+id: foldaway-apartment-haiku-recovery
+description: >
+  One Haiku recovery attempt on the current reversible-apartment suite with no
+  execution deadline. Native completion, elapsed time, browser observations and
+  visual judgment are retained separately. Effort remains the harness default.
+suite: foldaway-apartment
+prompt: visual-web
+prompt_version: "1"
+cases:
+  - foldaway-apartment-reversible
+repeats: 1
+targets:
+  - model: claude-haiku-5.5
+    harness: claude-code
+workdir: isolated
+user_config: isolated
+access: edit
+timeout_s: 0
+evaluators:
+  - id: workspace-tests
+    version: "2"
+    dimension: format

@@ -12,8 +12,8 @@ The lab needs Node 20 or later. It has no dependencies, so there is no install s
 
 ```bash
 node lab doctor                                   # which harnesses work on this machine
-node lab run experiments/smoke-harness-sweep.yaml --dry-run
-node lab run experiments/smoke-harness-sweep.yaml # calls every target; writes results/
+node lab run experiments/smoke-explicit-effort.yaml --dry-run
+node lab run experiments/smoke-explicit-effort.yaml # calls every target; writes results/
 node lab dashboard                                # http://127.0.0.1:4317
 ```
 
@@ -34,7 +34,7 @@ The page runs the same `node lab` commands you would type, one at a time, on thi
 A smaller first run is one case and one repeat:
 
 ```bash
-node lab run experiments/smoke-harness-sweep.yaml --repeats 1 --cases smoke-001
+node lab run experiments/smoke-explicit-effort.yaml --repeats 1 --cases smoke-001
 ```
 
 ### The difficulty ladder
@@ -42,11 +42,11 @@ node lab run experiments/smoke-harness-sweep.yaml --repeats 1 --cases smoke-001
 The comparison suites are one **difficulty ladder**: 80 tasks in five tiers (easy 5, medium 10, hard 15, extra-hard 20, supreme 30), so strong configurations all pass the low tiers and the high tiers decide the comparison. [docs/difficulty.md](docs/difficulty.md) explains the scale (expert time, in the style of METR time horizons) and how a pilot calibrates it. Three experiments run it, one per suite, through four harnesses with one model each (the user setup kept out where the harness allows it). Start with a preview and one task, then the pilot (one repeat per task, 80 tasks times 4 targets is 320 calls), then read it:
 
 ```bash
-node lab run experiments/ladder-code.yaml --dry-run
-node lab run experiments/ladder-code.yaml --repeats 1 --cases ladder-code-palindrome
-node lab run experiments/ladder-answer.yaml --repeats 1
-node lab run experiments/ladder-code.yaml --repeats 1
-node lab run experiments/ladder-agent.yaml --repeats 1     # up to an hour per call at the top tier
+node lab run experiments/ladder-code-repaired-explicit-effort.yaml --dry-run
+node lab run experiments/ladder-code-repaired-explicit-effort.yaml --repeats 1 --cases ladder-code-palindrome
+node lab run experiments/ladder-answer-repaired-explicit-effort.yaml --repeats 1
+node lab run experiments/ladder-code-repaired-explicit-effort.yaml --repeats 1
+node lab run experiments/ladder-agent-repaired-explicit-effort.yaml --repeats 1     # up to an hour per call at the top tier
 node lab ladder
 node lab ladder --calibrate
 node lab dashboard
@@ -54,7 +54,7 @@ node lab dashboard
 
 `node lab ladder` puts configurations in rows and tiers in columns. Each cell is `solved/counted` tasks and the mean score; a task is solved when its mean score is 1. This is the table that shows where configurations separate. `--calibrate` adds one line per task with its information class (`no-data`, `one-config`, `all-solved`, `all-unsolved`, `disagree`), and one line per pair of configurations with the tasks both ran, the tasks only one of them solved, and an exact sign test. A tier is an estimate label, so the report gives no verdict on a task. It flags a task that one configuration solves while a stronger one (higher mean on the other tasks both ran) scores under 0.5 on every repeat. Per suite it uses the newest suite version that has counted runs; `--suite-version <suite>@<version>` picks another. `--suite`, `--runs` and `--json` filter or print the data.
 
-The older suites (`reasoning`, `coding`, `agentic` and their `-hard` forms) are retired. They sit in `datasets/archive/`, their experiments in `experiments/archive/`. Old runs still open and score, and an archived experiment still runs by path: `node lab run experiments/archive/coding-sweep.yaml --dry-run`.
+The older suites (`reasoning`, `coding`, `agentic` and their `-hard` forms) are retired. They sit in `datasets/archive/`, their experiments in `experiments/archive/`. Old runs still open, score and resume under their recorded settings. Fresh benchmark calls require named effort; use the new `*-explicit-effort.yaml` presets instead of an old default-effort definition.
 
 To add any other model that OpenCode reaches (`opencode models` lists them), add a key to `configs/models.yaml` with `model: <provider>/<model>`, add a target with that key, and run `node lab validate`.
 
@@ -106,13 +106,13 @@ Cost is optional. With `pricing` in the registry entry, the dashboard shows an A
 | Suite | Cases | Prompt | Evaluator | Experiment |
 |---|---|---|---|---|
 | `smoke` | 4 one-word questions: the harness check | `qa-single-turn` | `normalized-match@1`, `exact-match@1` | `smoke-harness-sweep` |
-| `ladder-answer` | 24 problems with one exact answer, tiers 1 to 5 | `reasoning-final-answer` | `final-answer@1`: the last `Answer:` line; numbers compare as numbers | `ladder-answer` |
-| `ladder-code` | 28 JavaScript functions with hidden tests, tiers 1 to 5 | `js-function` | `js-function@2`: share of tests passed, CPU-time limits | `ladder-code` |
-| `ladder-agent` | 28 agent tasks in starter projects, tiers 1 to 5 | `agent-task` | `workspace-tests@2`: share of hidden tests passed on the agent's final files, CPU-time limits | `ladder-agent` |
+| `ladder-answer` | 24 problems with one exact answer, tiers 1 to 5 | `reasoning-final-answer@1` | `final-answer@2`: one complete numeric scalar compared exactly | `ladder-answer-repaired-explicit-effort` |
+| `ladder-code` | 28 JavaScript functions with hidden tests, tiers 1 to 5 | `js-function@2` | `js-function@3`: share of tests passed; operational wall stops unjudged | `ladder-code-repaired-explicit-effort` |
+| `ladder-agent` | 28 agent tasks in starter projects, tiers 1 to 5 | `agent-task@2` | `workspace-tests@3`: hidden checks and declared executable tests; operational wall stops unjudged | `ladder-agent-repaired-explicit-effort` |
 
 Retired suites, kept in `datasets/archive/` because old runs name them: `reasoning`, `reasoning-hard`, `coding`, `coding-hard`, `agentic`, `agentic-hard`. They load by id, validate and score as before; they take no new case.
 
-`js-function@1` runs the model's code in its own Node process with the permission model on. The code can read only the sandbox runner file, and cannot write files, start processes, use workers, load addons or open `node:sqlite` (which gets past the permission model). The process gets none of your environment variables (Windows adds a few system ones, such as `PATH`), a 256 MB heap and a time limit. Each test gets a fresh context and 2 seconds. The expected values never enter the sandbox, and the lab counts only the result line that carries a random nonce, so escaped code cannot fake a score. Node does not limit network access or signals: code in the sandbox can use `fetch` and can send a signal to your other processes. So the sandbox keeps your files safe from that code, but it is not a network jail or an OS sandbox. `js-function@2` and `workspace-tests@2` use the same sandboxes but judge time by the CPU time of the process, so a busy machine does not change a verdict; the limits are in `docs/difficulty.md`. Version 1 stays for old runs.
+Function evaluators run model code in a separate permission-restricted Node process with a 256 MB heap and no inherited personal environment. Each test gets a fresh context. Expected values stay in the lab process. Filesystem writes, child processes, workers, addons and SQLite are disabled; Node's permissions do not isolate network access or signals. Current `js-function@3` and `workspace-tests@3` distinguish declared CPU/resource noncompliance from operational wall stops. A stop without established CPU noncompliance leaves that check unjudged. A definite failure from a different check still fails the case. Historical evaluator versions retain their original policies and scores, including version 2 wall guards that could affect a verdict. See [difficulty limits](docs/difficulty.md) and [the repair contract](docs/benchmark-repairs.md).
 
 **Agent tasks** (`access: edit` in the experiment; `run` and `validate` refuse a workspace case without it). The runner copies the case's starter project (`datasets/<suite>/workspaces/<name>/`) into the call's isolated folder, and the harness gets its edit flags, so the agent can edit files and run commands there. The flags are recorded in `harness.settings.access_flags`. After the call the runner stores every changed or deleted file under `artifacts/.../workspace/` in the run. `workspace-tests@1` rebuilds the final workspace from that evidence alone, and checks it against the hidden check in `datasets/<suite>/checks/<name>/`, which the agent never gets. `probe.mjs` runs in a sandbox like the one of `js-function@1` and only reports what the agent's code returns. `expected.json` holds the answers and file rules (`exists`, `includes`, `same_as_starter`), and only the lab process reads it. So agent code in the sandbox cannot see the answers, and changed globals there can only spoil its own values. You can score a stored run again at any time, with no model call. If the starter project has changed since the run, the row gets no score, and `node lab score` says so, because the rebuild would not be the agent's workspace. The runner stores up to 200 changed files, 1 MB each and 5 MB in all; a file over a limit is listed under `skipped` in the score details, and probes that need it fail. Home paths are removed from stored UTF-8 text files; other files are stored as they are.
 
@@ -121,8 +121,8 @@ An agent is a program with a shell on your machine; the edit flags let it act wi
 Start with one case before a full sweep. For example, these calls cost nothing on the free OpenCode model:
 
 ```bash
-node lab run experiments/ladder-code.yaml --harness opencode --repeats 1 --cases ladder-code-palindrome
-node lab run experiments/ladder-agent.yaml --harness opencode --repeats 1 --cases ladder-agent-slugify-bug
+node lab run experiments/ladder-code-repaired-explicit-effort.yaml --harness opencode --repeats 1 --cases ladder-code-palindrome
+node lab run experiments/ladder-agent-repaired-explicit-effort.yaml --harness opencode --repeats 1 --cases ladder-agent-slugify-bug
 ```
 
 ## Where runs live
@@ -166,7 +166,7 @@ Without `lab.local.yaml`, runs go to `results/` in the checkout, as before.
 
 ## How a comparison works
 
-- **Quality** counts every call. A call that failed through the configuration (timeout, no answer, harness crash, `left_workdir`) scores 0. A call that was **lost** (a usage limit or rate limit, a failed sign-in, a missing CLI) says nothing about the configuration: it leaves the score and shows in the Lost column. `answered_quality` in `/api/state` is the mean over answered calls only.
+- **Quality** judges completed attempts. Timeouts are **incomplete and unjudged**, with their count and elapsed execution shown separately. Other failed calls (no answer, harness crash, `left_workdir`) score 0. A call **lost** to a usage limit, failed sign-in or missing CLI also leaves correctness undecided. Read the score with its case coverage and Incomplete/Lost counts. `answered_quality` in `/api/state` is the mean over answered calls only. New experiments omit the wall-time cutoff by default; `timeout_s: 0` makes that choice explicit, and positive values set an operational cutoff.
 - **Intervals** resample cases, then the repeats inside each case, and are never narrower than the Wilson interval on the number of cases. Repeats of one case are not independent, so three cases with three repeats count as three tasks. Below 3 cases there is no interval.
 - **Model check.** Each row records `metadata.model_check`: `match`, `mismatch` (the harness reports another model, for example a fallback under load) or `unknown` (the harness reports none). The dashboard marks a configuration with a mismatch, and a model key with `pinned: false` (a free alias the provider can change).
 - **Harnesses interleave.** One experiment runs repeat by repeat and case by case across every harness, so a slow hour or a usage limit hits all of them alike. The runner reads each harness version again at the end; a CLI that updated itself during the run gets `harness.settings.version_end`.
@@ -203,7 +203,7 @@ datasets/archive/<suite>/  Retired suites, unchanged, still loaded by old runs
 configs/ladder.yaml        The difficulty ladder: tiers, expert time, tasks per tier and kind
 prompts/<prompt>/          prompt.yaml + frozen vN.yaml templates
 experiments/*.yaml         targets (model x harness), suite, prompt, repeats, evaluators (the Run page lists these)
-experiments/archive/       Retired experiments; they still run by path
+experiments/archive/       Historical definitions; fresh calls must meet the effort policy
 results/<run_id>/          Immutable run: run.json, raw.jsonl, scores/ (+ harness-events.ndjson, local only)
 reports/                   Derived. Write it again; do not edit it
 schemas/                   JSON Schema contract for every stored record

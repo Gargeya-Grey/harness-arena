@@ -85,6 +85,9 @@ invalid it throws a `TypeError` and applies nothing. An operation is valid when:
 `type` is `'insert'` or `'delete'`; `site` is a valid site name; `seq` and `clock` are integers of at least
 1; an insert has `after` null or a valid element id (`<site>@<positive integer>`) and a `char` of exactly one
 code point; a delete has `target` that is a valid element id. Other keys are ignored and not kept.
+Validation does not require a remote child's clock to exceed its parent's clock. Every accepted insert,
+including a lower-clock child, follows the parent-first tree traversal in section 3. Stamps order siblings,
+never a node against descendants of a different sibling.
 
 A valid operation is **ready** when both hold:
 1. its `seq` is exactly one more than the highest `seq` applied for its `site` (so each site's operations

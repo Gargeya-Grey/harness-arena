@@ -62,7 +62,7 @@ export function runsCommand(root, { log = console.log } = {}) {
   }
   for (const run of state.runs) {
     const harness = run.harness ? `${run.harness.name} ${run.harness.version}` : 'unknown harness';
-    log(`${run.created_at.slice(0, 19).replace('T', ' ')}  ${pad(run.liveness === 'stale' ? 'stale' : run.status, 10)}${pad(`${run.rows}/${run.expected_rows} rows`, 12)}${pad(`${run.errors} err`, 8)}${pad(harness, 24)}${run.models.join(', ')}`);
+    log(`${run.created_at.slice(0, 19).replace('T', ' ')}  ${pad(run.liveness === 'stale' ? 'stale' : run.execution_status ?? run.status, 10)}${pad(`${run.rows}/${run.expected_rows} rows`, 12)}${pad(`${run.errors - (run.incomplete_n || 0)} err`, 8)}${pad(harness, 24)}${run.models.join(', ')}${run.incomplete_n ? ` · ${run.incomplete_n} unfinished, unjudged` : ''}`);
     log(`  ${run.run_id}`);
     if (run.liveness === 'stale') log(`  stopped without finishing; continue it with: node lab run --resume ${run.run_id}`);
   }
@@ -79,17 +79,17 @@ export function reportMarkdown(state, context) {
   lines.push('');
   lines.push(`${context.cases.length} case(s) · ${context.repeats} repeat(s) · evaluators ${context.evaluators.map((e) => `${e.id}@${e.version}`).join(', ') || 'none'} · comparison ${context.comparison.mode}${context.comparison.axes.length ? ` (${context.comparison.axes.join(' + ')})` : ''}`);
   lines.push('');
-  lines.push('| Configuration | Quality (95% CI) | Pass rate | n (cases) | Failed | Lost | p50 latency | p95 latency | Cost total | Cost / pass | Mean in / out tokens |');
-  lines.push('|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
+  lines.push('| Configuration | Quality (95% CI) | Pass rate | n (cases) | Failed | Lost | Incomplete | Cutoff time total | p50 latency | p95 latency | Cost total | Cost / pass | Mean in / out tokens |');
+  lines.push('|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
   const rows = context.config_ids.map((id) => ({ config: state.configs[id], agg: context.aggregates[id] }));
   rows.sort((a, b) => (b.agg.mean_quality ?? -1) - (a.agg.mean_quality ?? -1));
   for (const { config, agg } of rows) {
     const ci = agg.quality_ci ? ` (${num(agg.quality_ci[0])}–${num(agg.quality_ci[1])})` : '';
     const flags = [agg.model_mismatch_n ? `${agg.model_mismatch_n} answered by another model` : '', config.pinned === false ? 'alias, not pinned' : ''].filter(Boolean);
-    lines.push(`| ${config.label}${flags.length ? ` (${flags.join('; ')})` : ''} | ${num(agg.mean_quality)}${ci} | ${pct(agg.pass_rate)} | ${agg.counted_n} (${agg.cases_n}) | ${agg.failed_n} | ${agg.lost_n} | ${ms(agg.p50_latency_ms)} | ${ms(agg.p95_latency_ms)} | ${usd(agg.total_cost_usd)} | ${usd(agg.cost_per_passed_case)} | ${num(agg.mean_input_tokens, 0)} / ${num(agg.mean_output_tokens, 0)} |`);
+    lines.push(`| ${config.label}${flags.length ? ` (${flags.join('; ')})` : ''} | ${num(agg.mean_quality)}${ci} | ${pct(agg.pass_rate)} | ${agg.counted_n} (${agg.cases_n}) | ${agg.failed_n} | ${agg.lost_n} | ${agg.incomplete_n} | ${ms(agg.incomplete_elapsed_ms)} | ${ms(agg.p50_latency_ms)} | ${ms(agg.p95_latency_ms)} | ${usd(agg.total_cost_usd)} | ${usd(agg.cost_per_passed_case)} | ${num(agg.mean_input_tokens, 0)} / ${num(agg.mean_output_tokens, 0)} |`);
   }
   lines.push('');
-  lines.push(`Runs: ${context.runs.join(', ')}. Quality counts a failed call (timeout, no answer, harness error) as 0; a lost call (usage limit, sign-in, CLI missing) is left out and counted under Lost. The interval resamples cases, then repeats. Cost is API-equivalent from registry pricing and not billed for subscription harnesses.`);
+  lines.push(`Runs: ${context.runs.join(', ')}. Timeouts are incomplete and unjudged; cutoff time is elapsed execution, not completion latency. Other failed calls (no answer, harness error) count as 0; lost calls (usage limit, sign-in, CLI missing) are also left out of correctness. The interval resamples cases, then repeats. Cost is API-equivalent from registry pricing and not billed for subscription harnesses.`);
   return lines.join('\n');
 }
 

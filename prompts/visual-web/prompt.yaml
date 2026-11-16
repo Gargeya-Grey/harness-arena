@@ -1,0 +1,5 @@
+id: visual-web
+current: "1"
+description: A descriptive browser-building task. Store the page in the current workspace for later browser and visual review.
+variables:
+  - task

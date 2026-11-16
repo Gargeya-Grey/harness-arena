@@ -61,9 +61,9 @@ export function resolveCommand(name) {
 
 /**
  * Run a command to completion. Never rejects: spawn failures and timeouts come
- * back as `error`. `onLine` sees each stdout line as it arrives.
+ * back as `error`. A zero timeout imposes no deadline. `onLine` sees each stdout line as it arrives.
  */
-export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, onLine } = {}) {
+export function runProcess(name, args, { cwd, input, timeoutMs = 0, env, onLine } = {}) {
   const resolved = resolveCommand(name);
   const started = Date.now();
   if (!resolved) {
@@ -103,12 +103,12 @@ export function runProcess(name, args, { cwd, input, timeoutMs = 300000, env, on
       clearTimeout(timer);
       resolve({ stdout, stderr, ms: Date.now() - started, ...result });
     };
-    const timer = setTimeout(() => {
+    const timer = timeoutMs > 0 ? setTimeout(() => {
       // Through the launcher the harness is a child of the launcher: end the whole tree.
       if (gated && process.platform === 'win32' && child.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
       else child.kill();
       finish({ code: null, error: { type: 'timeout', message: `${name} did not exit within ${Math.round(timeoutMs / 1000)} s` } });
-    }, timeoutMs);
+    }, timeoutMs) : null;
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {

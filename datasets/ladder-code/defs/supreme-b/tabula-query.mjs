@@ -30,6 +30,7 @@ const spec = [
   '4. At most one of: a comparison (= <> < <= > >=); "is null" and "is not null"; "in ( e1, e2, ... )" (at least one item, each a full expression) and "not in (...)"; "between low and high" and "not between low and high"; "like pattern" and "not like pattern". The operands of this level (the left operand, low, high, pattern) are expressions of level 5 or tighter. Two such tests in a row, as in a < b < c, are "syntax" (no level can join them).',
   '5. || (text join).  6. + and -.  7. * / and %.  8. a minus sign in front (it may repeat).',
   '9. A literal (int, dec, string, yes, no, null), a ref, a call "name ( [arguments] )" (a name followed by an opening bracket is a call, also after a space), or an expression in brackets.',
+  'Numeric literals are converted to values only when evaluated, after the whole query has passed both syntax passes and the stage has passed its name checks. A numeric literal in a skipped short-circuit branch or in an expression applied to no rows is not evaluated, so it cannot overflow.',
   '',
   'RULES OF THE OPERATORS. Conditions use three values: true, false and null ("unknown"). An operand of not, and, or that is neither a bool nor null is "type". not null is null. For "and": the left side is evaluated first; if it is false the result is false and the right side is not evaluated at all (so nothing in it can fail); otherwise the right side is evaluated, and the result is false if it is false, else null if any side is null, else true. "or" is the mirror: a true left side ends it with true; otherwise the right side is evaluated, and the result is true if it is true, else null if any side is null, else false.',
   'A comparison with a null side is null. Otherwise the two values are compared: numbers (int and dec mixed) by their exact value, text by code point (not by UTF-16 unit; so a character outside the first plane is larger than "z" and than a character at U+FFFF), bool with no smaller than yes. Values of two different kinds (a number and a text, and so on) are "type". "is null" and "is not null" always give true or false.',
@@ -253,6 +254,29 @@ const HIDDEN = new Set(['null-logic', 'join-left', 'group-null', 'rounding', 'er
 const hand = worked.filter((one) => HIDDEN.has(one.edge)).map((one) => t(one.edge, one.args, one.returns));
 const examples = worked.filter((one) => !HIDDEN.has(one.edge)).map((one) => ({ edge: one.edge, args: one.args, returns: one.returns }));
 
+const small = ['@t\nx:int\n1'];
+const tupleRows = [['a\u0001text:b', 'c'], ['a', 'b\u0001text:c']];
+const tupleBlock = '@t\nx:text|y:text\n"a\u0001text:b"|"c"\n"a"|"b\u0001text:c"';
+const regressions = [
+  t('explicit-alias', [small, 'from t | pick x as x | derive y = t.x'], { error: 'unknown-column' }),
+  t('tuple-values', [[tupleBlock], 'from t | distinct'], { columns: ['x', 'y'], rows: tupleRows }),
+  t('tuple-values', [[tupleBlock], 'from t | group x, y : n = count()'], { columns: ['x', 'y', 'n'], rows: tupleRows.map(row => [...row, 1]) }),
+  t('literal-evaluation', [small, 'from t | derive y = 9007199254740992 +'], { error: 'syntax' }),
+  t('literal-evaluation', [small, 'from t | derive y = iif(yes, 1, 9007199254740992)'], { columns: ['x', 'y'], rows: [[1, 1]] }),
+  ...[
+    [small, 'from t | derive y =', 'syntax'],
+    [['@t\nx:invalid\n1'], 'from t', 'data'],
+    [small, 'from missing', 'unknown-table'],
+    [small, 'from t | pick absent', 'unknown-column'],
+    [[...small, '@u\nx:int\n2'], 'from t | join u on yes | pick x', 'ambiguous-column'],
+    [small, 'from t | derive y = constructor()', 'unknown-function'],
+    [small, 'from t | derive x = 1', 'dup-column'],
+    [small, 'from t | derive y = upper(x)', 'type'],
+    [small, 'from t | derive y = 1 / 0', 'div-zero'],
+    [small, 'from t | derive y = 9007199254740992', 'overflow'],
+  ].map(([blocks, query, error]) => t('error-codes', [blocks, query], { error })),
+];
+
 // ---------------------------------------------------------------------------------------------
 // Seeded random queries over random tables. The expected value comes from the reference.
 
@@ -357,7 +381,11 @@ export default {
     rounding: 'half away from zero',
     'error-order': 'so "syntax" always wins over any other error',
     'mixed-query': 'Details per stage follow.',
+    'explicit-alias': 'With "as" it gets the new name (and loses its alias)',
+    'tuple-values': 'drops each row that has the same values as an earlier row',
+    'literal-evaluation': 'Numeric literals are converted to values only when evaluated',
+    'error-codes': 'with one of these codes',
   },
   examples,
-  tests: [...hand, ...computed],
+  tests: [...hand, ...computed, ...regressions],
 };

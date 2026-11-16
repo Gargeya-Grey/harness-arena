@@ -1,8 +1,8 @@
 function standings(rules, teams, events) {
   const { win, draw, goals, bonus } = rules;
   const stored = new Map();
-  const deduction = {};
-  const cards = {};
+  const deduction = Object.create(null);
+  const cards = Object.create(null);
   for (const team of teams) {
     deduction[team] = 0;
     cards[team] = 0;
@@ -18,9 +18,9 @@ function standings(rules, teams, events) {
     } else if (kind === 'void') {
       stored.delete(event[1]);
     } else if (kind === 'deduct') {
-      if (event[1] in deduction) deduction[event[1]] += event[2];
+      if (Object.hasOwn(deduction, event[1])) deduction[event[1]] += event[2];
     } else if (kind === 'card') {
-      if (event[1] in cards) cards[event[1]] += event[2];
+      if (Object.hasOwn(cards, event[1])) cards[event[1]] += event[2];
     }
   }
   const known = new Set(teams);
@@ -36,7 +36,7 @@ function standings(rules, teams, events) {
   };
   // Record of every team in `set` from the matches between two members of the set.
   const record = (set) => {
-    const rec = {};
+    const rec = Object.create(null);
     for (const team of set) rec[team] = { played: 0, points: 0, gf: 0, ga: 0 };
     for (const m of matches) {
       if (!set.has(m.home) || !set.has(m.away)) continue;

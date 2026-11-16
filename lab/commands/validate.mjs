@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { listDirs, listFiles, readJson, readJsonl } from '../lib/fsutil.mjs';
 import { SchemaSet } from '../lib/schema.mjs';
-import { ARCHIVE, VERSIONS_DIR, frozenVersions, targetProblems as checkTargets, loadPrompt, loadRegistry, loadSuite, loadYamlFile, paths, resolveExperiment, runDirs, suiteFolders } from '../lib/repo.mjs';
+import { ARCHIVE, VERSIONS_DIR, frozenVersions, targetProblems as checkTargets, loadPrompt, loadRegistry, loadSuite, loadYamlFile, paths, resolveExperiment, runDirs, suiteFolders, requiresExplicitEffort } from '../lib/repo.mjs';
 import { harnessesFile, loadAdapters, readDeclared } from '../adapters/index.mjs';
 import { getEvaluator } from '../evaluators/index.mjs';
 import { listTree } from '../lib/workspace.mjs';
@@ -23,6 +23,7 @@ export function validateRepo(root) {
   const rel = (file) => path.relative(root, file).replace(/\\/g, '/');
   const report = (file, message) => problems.push(`${rel(file)}: ${message}`);
   const check = (schema, value, file) => schemas.validate(schema, value).forEach((error) => report(file, error));
+  try { requiresExplicitEffort(root); } catch (error) { report(path.join(root, 'configs', 'effort-policy.yaml'), error.message); }
 
   let adapters = loadAdapters(null);
   try {

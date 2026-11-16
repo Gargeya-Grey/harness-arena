@@ -3,15 +3,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { buildState } from '../lab/lib/state.mjs';
-import { S, setData, chooseContext, readHash, hashFor, defaultSel, shownSetups, chartNames, cellObs } from '../dashboard/public/js/model.js';
+import { S, setData, chooseContext, readHash, hashFor, defaultSel, shownSetups, chartNames, cellObs, outcome } from '../dashboard/public/js/model.js';
 import { renderRatings } from '../dashboard/public/js/ratings.js';
 import { renderAnswer, renderHead } from '../dashboard/public/js/summary.js';
 import { renderSetups } from '../dashboard/public/js/setups.js';
 import { renderCases } from '../dashboard/public/js/cases.js';
 import { renderRuns } from '../dashboard/public/js/runs.js';
 import { renderCharts, chartPlan } from '../dashboard/public/js/charts.js';
-import { renderTestPicker } from '../dashboard/public/js/dialogs.js';
+import { renderSetupPicker, renderTestPicker } from '../dashboard/public/js/dialogs.js';
 import { csv, markdown, answerLines } from '../dashboard/public/js/exporter.js';
+import { renderInspector } from '../dashboard/public/js/inspector.js';
 
 const data = buildState(fileURLToPath(new URL('./fixtures/repo/', import.meta.url)));
 const SIX = data.contexts.find((c) => c.repeats === 3).key; // smoke: 4 cases, 3 tries, 6 setups
@@ -62,12 +63,55 @@ function open(key) {
 test.beforeEach(() => {
   nodes.clear();
   globalThis.document = { getElementById: node, querySelectorAll: () => [], querySelector: () => null, title: '' };
+  globalThis.CSS = { escape: String };
   setData(structuredClone(data));
   open(SIX);
 });
 test.afterEach(() => {
   delete globalThis.document;
   delete globalThis.requestAnimationFrame;
+  delete globalThis.CSS;
+});
+
+test('a stored timeout renders as unfinished and unjudged rather than failed', () => {
+  const cutoff = data.observations.find((row) => row.error?.type === 'timeout' && row.trusted !== false);
+  assert.ok(cutoff, 'historical timeout fixture exists');
+  open(cutoff.context_key);
+  S.sel = [cutoff.config_id];
+  assert.deepEqual(outcome(cutoff), { kind: 'incomplete', text: 'unfinished, unjudged', glyph: '◷' });
+  renderSetups();
+  assert.match(node('setups').innerHTML, /Unfinished/);
+  assert.match(node('setups').innerHTML, /unjudged/);
+  renderCases();
+  assert.match(node('cases').innerHTML, /tm-incomplete/);
+  assert.match(node('cases').innerHTML, /unfinished, unjudged/);
+  renderRuns();
+  assert.match(node('runs').innerHTML, /unfinished execution, unjudged/);
+  assert.match(node('runs').innerHTML, /data-label="Answers"[^>]*><span[^>]*>11 of 12/);
+  renderSetupPicker(new Set([cutoff.config_id]));
+  assert.match(node('pick-setups-body').innerHTML, /unfinished, unjudged/);
+});
+
+test('the inspector distinguishes an absent verdict from an absent automatic check', () => {
+  const observation = S.data.observations.find(row => row.context_key === SIX && row.status !== 'error' && row.trusted !== false);
+  observation.scores = [];
+  observation.passed = null;
+  observation.status = 'unscored';
+  S.insp = { obsId: observation.id, tab: 'answer' };
+  renderInspector();
+  assert.match(node('inspector').innerHTML, /No automatic verdict stored/);
+  assert.doesNotMatch(node('inspector').innerHTML, /this test has no automatic check/);
+});
+
+test('the inspector labels unfinished checks as unjudged beside a proven case failure', () => {
+  const observation = S.data.observations.find(row => row.context_key === SIX && row.status !== 'error' && row.trusted !== false);
+  observation.scores = [{ dimension: 'quality', evaluator_id: 'workspace-tests', value: 0, passed: false, details: { results: [{ name: 'wrong', ok: false }, { name: 'unfinished', ok: false, unjudged: true }] } }];
+  observation.passed = false;
+  S.insp = { obsId: observation.id, tab: 'answer' };
+  renderInspector();
+  assert.match(node('inspector').innerHTML, /0 of 1 judged checks passed/);
+  assert.match(node('inspector').innerHTML, /1 unjudged/);
+  assert.match(node('inspector').innerHTML, /class="muted"[^>]*>.*?unfinished.*?unjudged/s);
 });
 
 test('an observation of a run that does not count is in no view: every view reads one index', () => {
@@ -115,8 +159,8 @@ test('the head names the test and counts what it holds', () => {
 test('the answer names the leaders, the gap and the errors in words', () => {
   renderAnswer();
   const html = node('answer').innerHTML;
-  assert.match(html, /<p class="say">Claude Haiku 4\.5 · claude-code \(12 of 12\) and Gemini 2\.5 Flash \(11 of 11\) passed the most\. The other 4 setups are close enough that the gaps may be chance\.<\/p>/);
-  assert.match(html, /<p class="say-more">GPT-5 mini gave no answer in 1 of 12 tries \(time-out\)\. 1 answer was not checked, so it counts neither way\.<\/p>/);
+  assert.match(html, /<p class="say">Claude Haiku 4\.5 · claude-code \(12 of 12\), Gemini 2\.5 Flash \(11 of 11\) and GPT-5 mini \(11 of 11\) passed the most\. The other 3 setups are close enough that the gaps may be chance\.<\/p>/);
+  assert.match(html, /<p class="say-more">1 answer was not checked, so it counts neither way\. GPT-5 mini had 1 unfinished try, unjudged after 2\.0 min of elapsed execution\.<\/p>/);
   assert.match(html, /Mixed test: model, harness, effort and decoding settings differ\. Read differences as hints, not causes\./);
   assert.match(html, /data-act="rate-start"/, 'an answer no check decided invites a rating');
 });
@@ -142,12 +186,12 @@ test('setups: best first, only the columns with values, best values marked', () 
   renderSetups();
   const html = node('setups').innerHTML;
   const heads = [...html.matchAll(/<th scope="col" class="c-(\w+)">([^<]+)<\/th>/g)].map((m) => m[2]);
-  assert.deepEqual(heads, ['Setup', 'Passed', 'Typical time', 'API price', 'Errors']);
+  assert.deepEqual(heads, ['Setup', 'Passed', 'Typical time', 'API price', 'Unfinished']);
   assert.equal(count(html, /<tr>/g) - 1, 6);
   const names = [...html.matchAll(/class="who-name">([^<]+)</g)].map((m) => m[1]);
   assert.deepEqual(names.slice(0, 3), ['Claude Haiku 4.5', 'Gemini 2.5 Flash', 'GPT-5 mini']);
-  assert.equal(count(html, /class="c-passed is-best"/g), 2);
-  assert.match(html, /<span class="v bad">1 of 12<\/span>/);
+  assert.equal(count(html, /class="c-passed is-best"/g), 3);
+  assert.match(html, /<span class="v">1 of 12<\/span><span class="sub">unjudged/);
   assert.match(node('setups-foot').innerHTML, /The best value in its column\./);
   assert.equal(node('choose-btn').hidden, false);
   assert.equal(node('details-btn').textContent, 'Details');
@@ -168,7 +212,7 @@ test('case by case: one mark per try, each one named for a screen reader', () =>
   const html = node('cases').innerHTML;
   assert.equal(count(html, /<button type="button" class="tm tm-/g), 6 * 4 * 3);
   assert.match(html, /aria-label="Claude Haiku 4\.5 · claude-code, [^,]+, try 1 of 3: passed"/);
-  assert.match(html, /class="tm tm-error"/);
+  assert.match(html, /class="tm tm-incomplete"/);
   assert.equal(node('cases-note').textContent, '4 cases');
   assert.equal(node('only-btn').attrs['aria-checked'], 'false');
 });
@@ -237,6 +281,11 @@ test('charts: only charts that carry a result are main, and every width draws cl
       assert.match(svg, /<svg /, `${id} at ${width}`);
       assert.doesNotMatch(svg, /NaN|undefined|Infinity/, `${id} at ${width}`);
       assert.match(svg, /class="chart-identity"/, `${id} at ${width}`);
+      if (id === 'outcomes') {
+        assert.match(svg, /1 unfinished, unjudged/);
+        assert.match(svg, /fill="url\(#hatch-inc\)"/);
+        assert.doesNotMatch(svg, /1 no answer/);
+      }
     }
   }
   open(ONE);
@@ -405,6 +454,14 @@ test('exports say what the page says', () => {
   const rows = csv().trim().split('\n');
   assert.equal(rows.length, 7);
   assert.match(rows[0], /^setup,model,harness,harness_version,effort,user_setup,tries,passed,checked,not_checked,errors,pass_share/);
+  const header = rows[0].split(',');
+  const cutoff = rows.find((line) => line.startsWith('GPT-5 mini,')).split(',');
+  assert.equal(cutoff[header.indexOf('checked')], '11');
+  assert.equal(cutoff[header.indexOf('errors')], '0');
+  assert.equal(cutoff[header.indexOf('unfinished')], '1');
+  assert.equal(cutoff[header.indexOf('unfinished_elapsed_ms')], '120000');
+  assert.match(md, /\| Unfinished \|/);
+  assert.match(md, /1 unjudged · 2\.0 min elapsed/);
 });
 
 test('every browser script parses as a module', async () => {

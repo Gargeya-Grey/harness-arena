@@ -66,6 +66,14 @@ const summary = (result) => (result.ok ? { text: result.text, hunks: result.hunk
 
 const probes = [
   {
+    name: 'a missing final wire LF is distinct from an explicit logical no-newline marker',
+    run: async ({ load }) => {
+      const { parsePatch } = await lib(load);
+      const prefix = '--- a\n+++ b\n@@ -1 +1 @@\n';
+      return [' x', ' x\n', ' x\n\\ No newline at end of file'].map((wire) => parsePatch(prefix + wire).hunks[0].lines[0].line);
+    },
+  },
+  {
     name: 'keeps the exports and the line helpers',
     run: async ({ load }) => {
       const m = await lib(load);

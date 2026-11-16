@@ -27,11 +27,18 @@
     "keeps formatMoney for larger amounts and the refusal of bad amounts and currencies": ["1,234.50","1,234","1,000,000.00","-1,234.50","InvoiceError","InvoiceError","InvoiceError","InvoiceError","InvoiceError","InvoiceError","InvoiceError"],
     "allocate shares a total by largest remainder, equal remainders to the lower index": [[34,33,33],[4,2,1],[1,1,1,0],[3,0,2],[1,1,0],[0,1,0],[10],[33,33,33]],
     "keeps allocate for exact splits, zero weights and the refusal of bad input": [[2,3,5],[0,0],[],[4,4,4],"InvoiceError","InvoiceError","InvoiceError","InvoiceError","InvoiceError","InvoiceError"],
-    "keeps roundDiv for ties in both modes, also for negative numbers, and the refusal of bad input": [4,3,-3,-4,2,4,-2,-4,3,-3,0,0,0,-1,"InvoiceError","InvoiceError","InvoiceError","InvoiceError","InvoiceError"]
+    "keeps roundDiv for ties in both modes, also for negative numbers, and the refusal of bad input": [4,3,-3,-4,2,4,-2,-4,3,-3,0,0,0,-1,"InvoiceError","InvoiceError","InvoiceError","InvoiceError","InvoiceError"],
+    "zero allocation permits individually safe weights without an unsafe sum": [[0,0],"InvoiceError"]
   },
   "files": {
-    "test/credit.test.mjs": {"same_as_starter":true},
-    "test/invoice.test.mjs": {"same_as_starter":true},
-    "test/numbers.test.mjs": {"same_as_starter":true}
+    "test/credit.test.mjs": {
+      "same_as_starter": true
+    },
+    "test/invoice.test.mjs": {
+      "same_as_starter": true
+    },
+    "test/numbers.test.mjs": {
+      "same_as_starter": true
+    }
   }
 }

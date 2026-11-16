@@ -1,0 +1,13 @@
+version: "1"
+messages:
+  - role: user
+    content: |
+      Build the browser experience described below in the current folder.
+
+      {{task}}
+
+      Deliver index.html and any local CSS or JavaScript files it needs. It will be served from a local HTTP server. Use plain HTML, CSS and JavaScript; there is no build step. Do not install packages. For Three.js, use the pinned ES module https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js. Other external dependencies, fonts and image requests are unavailable; make the visuals with CSS, SVG or geometry.
+
+      The experience must work at desktop 1440 x 900 and phone 390 x 844, with no horizontal page overflow. Use keyboard-operable controls with visible focus and descriptive accessible names. Respect reduced-motion preferences for decorative motion. Browser behavior and actual screenshots will be reviewed separately from the delivery check, which only checks that index.html exists and is nonempty.
+
+      Work only in the current folder. Finish with a short summary of what you built.

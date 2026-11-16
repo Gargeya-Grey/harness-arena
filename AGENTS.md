@@ -37,7 +37,7 @@ datasets/archive/<suite>/ Retired suites, bytes unchanged; smoke stays in datase
 configs/ladder.yaml       The tier table: expert-time ranges, tasks per tier and kind
 prompts/<prompt>/         prompt.yaml + frozen vN.yaml templates
 experiments/*.yaml        targets x suite x prompt x repeats x evaluators (the dashboard lists only these)
-experiments/archive/      Retired experiments; they still run by path
+experiments/archive/      Historical definitions; fresh calls must meet the effort policy
 results/<run_id>/         Immutable run: run.json, raw.jsonl, scores/ (+ harness-events.ndjson, local only)
 reports/                  Derived aggregates: regenerate rather than edit
 schemas/                  JSON Schema contract for every stored record (ledger.schema.json: lab.ledger.jsonl)
@@ -67,6 +67,7 @@ docs/difficulty.md        The ladder: tiers, expert time, calibration rule
 7. Keep files Windows-safe and diff-friendly: UTF-8, LF, compact JSONL (one object per line), ISO 8601 UTC timestamps ending in `Z`, and no `: ? * " < > |` in filenames.
 8. Never spawn a harness through a shell. Pass the prompt on stdin or as one argument (`lab/adapters/process.mjs`).
 9. Live model calls cost money or subscription quota. Use `--dry-run`, the fixtures, or a one-case run (`--repeats 1 --cases <id>`) unless the owner asked for a full run.
+10. Every new benchmark comparison must set `effort_policy: explicit` and name the effort on each target (or a top-level effort). Do not use implicit or `default` effort. Verify model-specific support before selecting a level. Declare `effort: unavailable` only when the model has `effort_levels: []` or the harness has no effort control. Preserve historical default-effort evidence; a changed effort is a new experiment and run. `resolveExperiment` and `targetProblems` enforce strict declarations and registered capabilities.
 
 ## Tasks
 
@@ -97,11 +98,11 @@ Done when `node lab validate` and `npm test` pass, and `node lab ladder` prints 
 ### Run the ladder and read it
 
 ```bash
-node lab run experiments/ladder-answer.yaml --dry-run   # also ladder-code, ladder-agent
-node lab run experiments/ladder-code.yaml --repeats 1   # the pilot: one repeat per task
+node lab run experiments/ladder-answer-repaired-explicit-effort.yaml --dry-run   # also ladder-code, ladder-agent
+node lab run experiments/ladder-code-repaired-explicit-effort.yaml --repeats 1   # the pilot: one repeat per task
 node lab ladder                                         # configurations as rows, tiers as columns
 node lab ladder --calibrate                             # per task: information class; per pair: shared tasks
-node lab signal experiments/ladder-answer.yaml          # before a run: worth running, low signal or unknown (an estimate from stored runs, no model call)
+node lab signal experiments/ladder-answer-repaired-explicit-effort.yaml          # before a run: worth running, low signal or unknown (an estimate from stored runs, no model call)
 ```
 
 `node lab ladder` reads only the rows that count (closed, ledger-matched, scored runs), as the dashboard counts them. Unlike the dashboard, it pools the runs of one suite version across experiments: per suite, the newest version that has counted runs, or the one `--suite-version <suite>@<version>` names (repeat or comma-separate it). It prints which version of each suite it used and how many counted runs of other versions it left out. A suite version whose counted runs mix prompt versions is refused: pick runs with `--runs`. A cell is `solved/counted`, then the mean score. A task counts as solved when its mean score over the configuration's counted repeats is 1. A `*` marks a configuration that has results for fewer tasks than the tier holds. `--suite <ladder suite>` and `--runs <id,...>` filter; `--json` prints the same data.
@@ -140,7 +141,7 @@ Done when existing runs still point at the version they recorded and no frozen t
 
 ### Declare a comparison
 
-1. Copy an experiment file. Set `suite`, `prompt`, `targets` (`- model: <key>` / `harness: <name>`, optional `effort: <level>` or `efforts: [<level>, ...]`, `default` for the harness default), `repeats`, and `evaluators`. Add a `cases` list to run a subset.
+1. Copy an explicit-effort experiment file. Set `effort_policy: explicit`, `suite`, `prompt`, `targets` (`- model: <key>` / `harness: <name>` / named `effort: <level>` or `efforts: [<level>, ...]`), `repeats`, and `evaluators`. Verify and record supported `effort_levels` in the registry first. Add a `cases` list to run a subset. Historical definitions may retain defaults; new comparisons must not copy those defaults.
 2. For a controlled comparison, change one axis only: same model through two harnesses, two models through one harness, or one model at several efforts (`efforts: [low, medium, high]`).
 3. Use 3 or more cases, and 3 or more repeats when reliability matters. The dashboard shows confidence intervals only from 3 cases; repeats of one case are not more cases.
 

@@ -11,7 +11,8 @@ export function allocate(total, weights) {
     requireSafe(weight, 'weight');
     if (weight < 0) throw new InvoiceError('a weight is 0 or more');
   });
-  const sum = weights.reduce((a, b) => a + b, 0);
+  if (total === 0) return weights.map(() => 0);
+  const sum = requireSafe(weights.reduce((a, b) => a + b, 0), 'weight sum');
   if (sum === 0) {
     if (total !== 0) throw new InvoiceError('there is nothing to allocate to');
     return weights.map(() => 0);

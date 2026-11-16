@@ -1,0 +1,16 @@
+version: "2"
+messages:
+  - role: user
+    content: |
+      Write a JavaScript function named {{name}}.
+
+      Signature: {{signature}}
+      Behaviour: {{task}}
+
+      Rules:
+      - Reply in text only. Do not use tools, do not run code and do not create files.
+      - Reply with one ```js code block that defines the function {{name}}.
+      - Use plain JavaScript: no TypeScript, no imports, no require, no external packages.
+      - The function must not print anything.
+      - Each hidden test loads your code in a fresh context. Loading plus the call has a 2000 ms CPU allowance; all tests share a 30000 ms CPU allowance and a 256 MB heap limit.
+      - CPU-budget or heap noncompliance is distinct from a wrong returned value. An operational wall-clock backstop leaves unfinished tests unjudged. A definite failure from another test still fails the case.

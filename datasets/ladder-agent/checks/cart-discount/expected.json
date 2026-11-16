@@ -9,6 +9,27 @@
     "the total is rounded to cents": 53.97
   },
   "files": {
-    "test/cart.test.mjs": { "includes": ["applyDiscount"] }
+    "test/cart.test.mjs": {
+      "same_as_starter": true
+    },
+    "test/discount.test.mjs": {
+      "exists": true
+    }
+  },
+  "tests": {
+    "files": [
+      "test/cart.test.mjs",
+      "test/discount.test.mjs"
+    ],
+    "minimum_tests": 3,
+    "required_calls": [
+      {
+        "module": "src/cart.mjs",
+        "test_file": "test/discount.test.mjs",
+        "export": "Cart",
+        "method": "applyDiscount",
+        "instance": true
+      }
+    ]
   }
 }

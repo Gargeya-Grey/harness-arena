@@ -1,4 +1,4 @@
 function isPalindrome(s) {
-  const t = s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const t = s.toLowerCase().replace(/[^\p{L}\p{Nd}]/gu, '');
   return t === [...t].reverse().join('');
 }

@@ -116,7 +116,7 @@ export function renderSetupPicker(chosen) {
       ${list.map((s) => {
         const on = chosen.has(s.id);
         const f = s.facts;
-        const facts = [f.decided ? `passed ${passedText(f)}` : f.unchecked ? 'not checked' : 'no answers', f.time !== null ? `${durText(f.time)} typical` : null, f.errors ? `${f.errors} without answer` : null].filter(Boolean).join(' · ');
+        const facts = [f.decided ? `passed ${passedText(f)}` : f.incomplete ? 'unfinished execution' : f.unchecked ? 'not checked' : 'no answers', f.time !== null ? `${durText(f.time)} typical` : null, f.errors > f.incomplete ? `${f.errors - f.incomplete} without answer` : null, f.incomplete ? `${f.incomplete} unfinished, unjudged` : null].filter(Boolean).join(' · ');
         return html`<label class="choose-row${on ? ' is-on' : ''}${!on && full ? ' is-off' : ''}">
           <input type="checkbox" data-act="choose-tick" value="${s.id}" data-fk="tick:${s.id}"${on ? html` checked` : ''}${!on && full ? html` disabled` : ''}>
           <span class="choose-text"><span class="choose-name">${s.cfg.display_name}</span><span class="choose-sub">${harnessLine(s.cfg)}</span></span>

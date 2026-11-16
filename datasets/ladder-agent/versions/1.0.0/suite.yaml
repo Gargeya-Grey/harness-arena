@@ -1,0 +1,13 @@
+id: ladder-agent
+version: "1.0.0"
+description: >
+  The agent tasks of the difficulty ladder (docs/difficulty.md). Each case copies a
+  starter project into the run's isolated workdir; the agent edits files and may
+  run commands there; a hidden check scores the final workspace. Tasks run from
+  easy (under 2 minutes for an expert) to supreme (2 to 16 hours: a component built
+  from a spec, or a diagnosis across many files). Every check passes on the
+  reference solution in tests/fixtures/ladder-agent-solutions/. The tier of each
+  case is its first tag and metadata.tier. cases.jsonl is written by generate.mjs
+  from defs/. Score is the share of hidden tests passed.
+defaults:
+  repeats: 3

@@ -187,15 +187,25 @@ test('the spec of every case names each edge case that one of its tests checks',
   }
 });
 
-test('folded cases keep the task text and tests of their origin; new cases (tier 4) have none', () => {
+test('folded cases retain their original tests and preserve historical prompt bytes when clarified', () => {
   const byOrigin = new Map(cases.filter((item) => item.metadata.tier.origin).map((item) => [item.metadata.tier.origin, item]));
+  const historical = new Map(fs.readFileSync(path.join(ROOT, 'datasets/ladder-code/versions/2.0.0/cases.jsonl'), 'utf8').trim().split('\n').map(JSON.parse).map((item) => [item.case_id, item]));
+  const clarified = new Set(['palindrome', 'lcs']);
   assert.deepEqual([...byOrigin.keys()].sort(), Object.keys(ORIGINS).sort(), 'the folded origins');
   for (const [origin, { slug, tests, sha256 }] of Object.entries(ORIGINS)) {
     const item = byOrigin.get(origin);
     assert.equal(item.case_id, `ladder-code-${slug}`);
     assert.ok(tierOf(item) <= 3, `${origin}: folds into tier 1 to 3`);
     assert.ok(item.expected.tests.length >= tests, `${item.case_id}: fewer tests than its origin`);
-    const kept = JSON.stringify({ input: item.input, tests: item.expected.tests.slice(0, tests) });
+    const original = historical.get(item.case_id);
+    assert.ok(original, `${item.case_id}: the frozen pre-clarification case exists`);
+    assert.deepEqual(item.expected.tests.slice(0, tests), original.expected.tests.slice(0, tests), `${item.case_id}: original tests remain first and unchanged`);
+    if (clarified.has(slug)) {
+      assert.equal(item.input.name, original.input.name);
+      assert.equal(item.input.signature, original.input.signature);
+      assert.ok(item.input.task.startsWith(original.input.task), `${item.case_id}: the clarification retains the complete original task`);
+    } else assert.deepEqual(item.input, original.input, `${item.case_id}: an unchanged prompt stays byte-identical`);
+    const kept = JSON.stringify({ input: original.input, tests: original.expected.tests.slice(0, tests) });
     assert.equal(crypto.createHash('sha256').update(kept).digest('hex'), sha256, `${item.case_id}: the first ${tests} tests and the input differ from ${origin}`);
   }
   for (const item of cases.filter((one) => tierOf(one) === 4)) assert.equal(item.metadata.tier.origin, undefined, `${item.case_id}: a new task has no origin`);

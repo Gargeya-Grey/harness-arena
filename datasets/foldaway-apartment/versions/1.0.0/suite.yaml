@@ -1,0 +1,9 @@
+id: foldaway-apartment
+version: "1.0.0"
+description: >
+  Three increasingly demanding versions of one folding apartment experience.
+  Tier labels are untimed expert estimates, separate from the canonical ladder.
+  Native format scores check delivery only. Actual 3D geometry, transitions,
+  browser behavior and visual design require separate retained observations.
+defaults:
+  repeats: 1

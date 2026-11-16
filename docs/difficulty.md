@@ -20,9 +20,9 @@ A run uses one suite and one prompt, so the ladder is three suites that share th
 
 | Suite | Prompt | Evaluator | Task |
 |---|---|---|---|
-| `ladder-answer` | `reasoning-final-answer` | `final-answer@1` | A problem with one exact answer. |
-| `ladder-code` | `js-function` | `js-function@2` | One JavaScript function, run against hidden tests. |
-| `ladder-agent` | `agent-task` | `workspace-tests@2` | Change a starter project; a hidden check scores the result. |
+| `ladder-answer` | `reasoning-final-answer` | `final-answer@2` | A problem with one exact answer. |
+| `ladder-code` | `js-function@2` | `js-function@3` | One JavaScript function, run against hidden tests. |
+| `ladder-agent` | `agent-task@2` | `workspace-tests@3` | Change a starter project; a hidden check scores the result. |
 
 Agent tasks take the largest share of the top tiers, because long tasks are where configurations differ most (METR).
 
@@ -36,7 +36,8 @@ Difficulty is not guessed from how a task looks. It is set in two steps.
 The professional works under the same conditions as the model:
 
 - **Answer tasks: no computer.** The prompt forbids tools, so the expert time is the time to solve on paper. A short script would solve some tier 4 and 5 answer tasks in 15 to 40 minutes; that is the point of them, because the model has no script either. A harness that lets the model run code in answer mode breaks this condition. The pilot checks each harness's tool calls on answer tasks.
-- **Code and agent tasks: normal tools.** An editor, Node and a shell, as in METR's and SWE-bench's human baselines.
+- **Code tasks: no tools.** The frozen function prompt forbids code execution, file creation and tool calls. A human timing study must use that same restriction. The old normal-tools estimate is not a matched human baseline.
+- **Agent tasks: normal tools.** An editor, Node and a shell are allowed in the supplied workspace.
 
 Expert time is the scale because it is the best-supported measure of task difficulty for AI systems that we know of:
 
@@ -76,22 +77,34 @@ Rules for a task that the runs flag:
 - **Pilot 1 (8 Nov 2026, suites 1.0.0).** Claude Haiku, Claude Opus, DeepSeek and Codex at low effort, one repeat. Tiers 3 to 5 were far too easy: answer means 0.50 to 1.00 except `route-twelve-towns` (0.0), code means 0.57 to 1.00, with Opus solving all ten supreme code tasks in one reply. Two levers worked: exact optimisation, where strong models stop at a near optimum (every model gave 186 for `route-twelve-towns`, whose optimum is 180), and code whose every test depends on many rules. Limit: the Claude Code runs of this pilot and of the first minutes of pilot 2 say `isolated`, but they loaded the owner's global `CLAUDE.md` and the auto memory of the home folder's project. The call folder is under the home folder, and the isolation flags did not cover instruction files. Some answers begin with a tier line from those instructions. The fix (8 Nov 2026) sets `CLAUDE_CODE_DISABLE_CLAUDE_MDS` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY`, and later runs list both in `user_config_flags`, so a run without them in that list had the leak.
 - **Suites 2.0.0 (calibration round 2).** Tiers 1 and 2 and the tier-3 tasks stay. The old tier 4 and 5 answer and code tasks are retired (their reasons and pilot-1 means are in `_retired.mjs`), except `route-twelve-towns`. New tasks take the slots: 13 answer tasks of exact optimisation in seven families (`defs/round2/`), 7 tier-4 code tasks (`defs/extra-hard-b/`), and 10 tier-5 code tasks: long single-reply programs with dense rules (`defs/supreme-b/`) and deep algorithms with a CPU margin of at least 10x (`defs/supreme-c/`). Pilot 2 measures them; a task that the runs flag is checked by the rules above.
 
-Timing limits. Every verdict limit of the ladder is CPU time of the process that runs the answer, so a busy machine does not change a verdict. The speed probes in agent checks and the speed checks in the ladder's own tests judge by CPU time too. The ladder experiments use `js-function@2` and `workspace-tests@2`:
+### Execution and verification limits
 
-| Evaluator | CPU limit | What happens past it |
+Model generation and code verification are separate. The repaired effort-explicit presets set timeout_s to zero, so model generation has no deadline. An explicitly configured generation cutoff is incomplete execution, never a wrong-answer score; its elapsed time remains measurable.
+
+New comparisons use final-answer@2, js-function@3 and workspace-tests@3. New code and agent prompts disclose their verification resource allowances. final-answer@2 compares a complete decimal scalar exactly, including equivalent decimal/scientific notation, and rejects expressions or trailing units. Text answers retain the declared normalization. The scalar grammar/tolerance of final-answer@1 stays available for historical runs.
+
+| Evaluator | Declared allowance | Interpretation |
 |---|---|---|
-| `js-function@2` | 2000 ms per test: loading the code into the test's fresh context plus the call | That test fails. |
-| `js-function@2` | 30000 ms for all tests of a case | The tests that have not started fail, with the reason in their result. |
-| `js-function@2` | 256 MB of heap (a limit of memory, not time) | V8 ends the process. The tests run again, one process each: the test that fills the heap fails, and the others keep their results. |
-| `workspace-tests@2` | 60000 ms for a whole check, tested between probes | The probes that have not started have no result and say why; the file rules and the probes that ran still count. |
+| js-function@3 | 2000 ms loading-plus-call CPU per fresh test; 30000 ms CPU per case; 256 MB heap | Record CPU/resource noncompliance separately from a wrong returned value. |
+| workspace-tests@3 | 60000 ms CPU in the check process, tested between probes; 256 MB heap | Finished probe observations remain available. Executable-test rules, when declared, run in a separate restricted process. |
 
-Each evaluator also has a wall-clock backstop that only stops code that never ends. It follows the load: the backstop of a test is 2000 ms times the wall/CPU ratio the sandbox process has seen (1 on an idle machine, at most 10; 25% more when the ratio is over 1.1). A test that the backstop stops after it used less than 95% of its CPU limit runs again with the longer backstop, so the wall clock never decides a test that the CPU clock would pass. A test that is still stopped fails. The per-probe timer of a check (5 s) works the same way, The wall limit of a code sandbox process is 30 s times the cap (300 s), because the sandbox always ends by itself and only a hang meets it. The wall limit of a check process is 2x its CPU budget (120 s), longer on a busy machine (10x at most), because one probe that never returns cannot be interrupted. When a check process is stopped by its backstop, the probes that had finished keep their results.
+The function sandbox starts with two times the CPU allowance as wall headroom and follows measured wall/CPU load, up to ten times. A stopped attempt at or below its full loading-plus-call CPU allowance retries, including the former 95%-100% gap and a stable load ratio. After three attempts, a wall-clock stop with no proven CPU noncompliance leaves that check unjudged. Workspace operational wall/probe timeouts follow the same rule. If another check has established a failure, the case scores zero as a proven case failure while unfinished checks remain individually unjudged. Without a definite failure, the scorer prints a skip reason and writes no case quality score. These operational guards are finite; they are not a guarantee that host load cannot affect execution.
 
-`js-function@1` (2 s per test, 30 s per process) and `workspace-tests@1` (60 s per check) judge by wall clock and stay for old runs, which must reproduce their scores. Scores of different evaluator versions are never compared: `node lab ladder` refuses to mix them. A run scored with version 1 stays at version 1. Scores are derived, so `node lab score` can recompute a doubtful one without new model calls.
+Historical js-function@1, js-function@2, workspace-tests@1 and workspace-tests@2 retain their implementations and scores. In particular, version 2's old 95% retry rule does not provide the previously claimed universal CPU-only guarantee. A changed policy is a new evaluator and experiment, never a rewrite of historical scores. The ladder refuses to mix evaluator versions in one comparison.
 
-Ladder references stay at least 3x inside each limit (`tests/ladder-code-*.test.mjs` asserts under 0.667 s of CPU per test).
+Ladder references stay at least three times inside the nominal CPU allowance. A reference passing the allowance does not establish the human-time tier or guarantee that every valid implementation meets the same performance requirement.
 
-Speed probes proved to fail a natural slow solution (tests under `tests/fixtures/ladder-agent-solutions/*/<slug>--slow*/`): build-scheduler, http1-parser (2 of 4: a body in one-byte pieces, tiny chunks), regex-engine (many matches), markdown-renderer (md35, md37), rrule-expander (rr40 to rr43), spreadsheet-engine (sp33, sp34). Not proved, because every natural slow method either stays under the threshold or never ends: sql-engine (LIKE), regex-engine (exponential patterns), rga-text-crdt (rg33 to rg36: the slow method stays within 1.2 times each limit, and at rg33 the reference is quadratic too), bytecode-vm (vm23), diff-patch (3 probes), log-kv-store (2 probes), http1-parser (long headers). Not claimed, because the natural slow method is under 2 times the limit and passed on a faster CI runner: http1-parser (many pipelined requests), rrule-expander (rr44). These still check the result at size; a method that never ends meets the CPU limit of the evaluator.
+### Human timing protocol
+
+Every current tier is an unmeasured prior unless its basis records an actual timed solve. Time a competent person from reading the supplied task and starter, using the same permitted tools, to a correct final answer or implementation. Record that receipt and validation result. For optimization, record time to a checkable optimality certificate separately; a final-number-only score does not require a model to supply that certificate. Report multiple solvers and variation near tier boundaries. Do not derive a human time from a model score, a fast script, a search-node count or a relaxation gap.
+
+### Repair release
+
+The audited packing-13, packing-17 and building-14 instances had short certifying bounds contrary to their recorded proof-work premises. They are retired with their original definitions and historical suite versions preserved. Three new IDs fill the same tier slots. Their expected values have independent exact-method agreement, feasible witnesses and positive gaps for the named simple bounds. That closes those known shortcuts only; it does not calibrate their replacement human-time priors. The quota remains 80 tasks across the five tiers.
+
+See [the repair contract](benchmark-repairs.md) for current versions, outcome interpretation and retained regression evidence.
+
+Speed probes proved to fail a natural slow solution (tests under `tests/fixtures/ladder-agent-solutions/*/<slug>--slow*/`): build-scheduler, http1-parser (2 of 4: a body in one-byte pieces, tiny chunks), regex-engine (many matches), markdown-renderer (md35, md37), rrule-expander (rr40 to rr43), spreadsheet-engine (sp33, sp34). Not proved, because every natural slow method either stays under the threshold or never ends: sql-engine (LIKE), regex-engine (exponential patterns), rga-text-crdt (rg33 to rg36: the slow method stays within 1.2 times each limit, and at rg33 the reference is quadratic too), bytecode-vm (vm23), diff-patch (3 probes), log-kv-store (2 probes), http1-parser (long headers). Not claimed, because the natural slow method is under 2 times the limit and passed on a faster CI runner: http1-parser (many pipelined requests), rrule-expander (rr44). These still check the result at size. A never-ending method may hit an operational backstop without a CPU measurement; that check remains unjudged and does not erase other proven failures.
 
 Four targets are a small panel. Most tasks are run by few configurations, so many pairs share only some tasks and the sign test is weak. A frontier configuration in the panel is the next step: without one, the top tier's headroom above the strongest models is not measured.
 

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Foldaway Apartment · One room, three ways to live</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="masthead">
+    <a class="wordmark" href="#apartment" aria-label="Foldaway Apartment"><span class="mark" aria-hidden="true">f.</span>FOLDAWAY<span class="wordmark-note">A STUDY IN SMALL LIVING</span></a>
+    <span class="reference-badge"><span aria-hidden="true"></span>Playable reference</span>
+  </header>
+  <main id="apartment">
+    <section class="introduction" aria-labelledby="title">
+      <div><p class="eyebrow">30 M². NO EXTRA WALLS.</p><h1 id="title">One room.<br>Three ways to <em>live.</em></h1></div>
+      <p class="intro-copy">A table opens. A chair finds its corner. A wall becomes a bed.<br class="desktop-break"> Take the apartment from morning to midnight, one movement at a time.</p>
+    </section>
+    <div class="experience">
+      <div class="scene-column">
+        <figure class="scene-frame">
+          <div class="scene-topline"><span><span class="small-dot" aria-hidden="true"></span>APARTMENT 01</span><span>6.0 × 5.0 M</span></div>
+          <div id="scene" class="scene" role="img" aria-label="Cutaway apartment with a folding table, two sliding chairs, a sliding screen and a hinged wall-bed" aria-describedby="scene-description"><p id="load-message">Opening the apartment…</p></div>
+          <figcaption id="scene-description"><span id="scene-caption">Studio ready. The bed is folded against the back wall.</span><button id="view" class="text-button" type="button">View from above</button></figcaption>
+        </figure>
+        <section class="timeline" aria-label="Transformation controls">
+          <div class="timeline-top"><label for="transformation">Transformation</label><output for="transformation" id="progress-value">00%</output></div>
+          <input id="transformation" type="range" min="0" max="100" step="1" value="0" aria-describedby="scrub-hint">
+          <div class="timeline-labels" aria-hidden="true"><span>Studio</span><span>Dining</span><span>Bedroom</span></div>
+          <div class="playback"><button id="play" class="play-button" type="button"><span aria-hidden="true" id="play-icon">▶</span><span id="play-label">Play</span></button><p id="scrub-hint">Drag to explore every fold.</p><button id="reset" class="text-button" type="button">Reset</button></div>
+        </section>
+      </div>
+      <aside class="inspector" aria-label="Apartment modes">
+        <div class="chapter"><span id="chapter-number">01</span><span id="mode-label">STUDIO</span><span class="chapter-rule" aria-hidden="true"></span></div>
+        <h2 id="story-title">Make room for ideas.</h2><p class="story-copy" id="story-copy">A compact desk, a quiet window and the whole afternoon ahead.</p>
+        <div class="mode-buttons" role="group" aria-label="Room mode">
+          <button type="button" data-mode="Studio" aria-pressed="true"><span class="mode-number" aria-hidden="true">01</span><span>Studio</span><span class="mode-detail">For a fresh thought</span><span class="mode-arrow" aria-hidden="true">↗</span></button>
+          <button type="button" data-mode="Dining" aria-pressed="false"><span class="mode-number" aria-hidden="true">02</span><span>Dining</span><span class="mode-detail">For a longer dinner</span><span class="mode-arrow" aria-hidden="true">↗</span></button>
+          <button type="button" data-mode="Bedroom" aria-pressed="false"><span class="mode-number" aria-hidden="true">03</span><span>Bedroom</span><span class="mode-detail">For a slower ending</span><span class="mode-arrow" aria-hidden="true">↗</span></button>
+        </div>
+        <div class="mechanism"><p class="eyebrow">THE QUIET CHOREOGRAPHY</p><p id="stage-label">Studio ready</p><ol><li><span class="mechanism-dot" id="table-dot" aria-hidden="true"></span><span>Fold the table leaves</span><span id="table-status">Folded</span></li><li><span class="mechanism-dot" id="chairs-dot" aria-hidden="true"></span><span>Give the chairs a home</span><span id="chairs-status">At desk</span></li><li><span class="mechanism-dot" id="bed-dot" aria-hidden="true"></span><span>Lower the wall-bed</span><span id="bed-status">Stowed</span></li></ol></div>
+        <p class="motion-note" id="motion-note" hidden>Reduced motion is on. Modes change instantly; the slider still lets you inspect every stage.</p>
+        <p class="aside-note">The floor plan stays the same.<br>The possibilities don't.</p>
+      </aside>
+    </div>
+    <p class="announcement" role="status" id="announcement"></p>
+    <noscript><p>This apartment needs JavaScript and WebGL. The table folds and slides clear before a wall-bed lowers; use the room modes and transformation slider when JavaScript is available.</p></noscript>
+  </main>
+  <footer><span>SMALL SPACE. FULL LIFE.</span><span>Model Lab · Reference experience, not a model response</span></footer>
+  <script type="module" src="./app.mjs"></script>
+</body>
+</html>

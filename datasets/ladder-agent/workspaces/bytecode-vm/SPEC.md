@@ -162,9 +162,12 @@ costs no step and adds no entry to the trace; its errors are at the `(`.
 - **Call depth.** A call of a function from the language fails with `Stack overflow.` (at its `(`) when it would
   make more than `options.maxCallDepth` such calls active at once. Builtins do not count.
 - **Steps.** One *step* is counted for each call of a function from the language and for each iteration of a loop
-  (each time control returns from the end of the body, or by `continue`, to the loop test). When the count passes
-  `options.maxSteps`, the next such event fails with `Step limit exceeded.` at the `(` of the call or at the
+  (each time control returns from the end of the body, or by `continue`, to the loop test). The count starts at
+  zero. Increment it for each such event; if the incremented count exceeds `options.maxSteps`, that same event
+  fails with `Step limit exceeded.` at the `(` of the call or at the
   `while` / `for` keyword. For a call the checks go in this order: callable, arity, depth, steps.
+  Thus `fn f() {} f();` fails at its first call with `maxSteps: 0`. With `maxSteps: 2`, two calls succeed
+  and a third call fails. Builtin calls do not increment this count.
 - The program must run on a virtual machine with its own frame stack and its own value stack: a recursion of
   20 000 calls (with a larger `maxCallDepth`) must work, which a recursive tree walker in JavaScript cannot do.
   A loop of a million iterations must take well under a second or two.

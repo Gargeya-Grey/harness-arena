@@ -33,6 +33,6 @@ Preconditions:
 ## Gotchas
 
 - A cell with a `*` means the configuration has counted results for fewer tasks than the tier holds. Experiments differ in targets, so compare totals only between configurations that ran the same tasks. The negative-discrimination check already compares only shared tasks.
-- A rate-limited or sign-in-failed call is lost: it leaves the mean. A timeout or crash counts as 0.
+- A rate-limited or sign-in-failed call is lost and leaves the mean. A timeout is incomplete and unjudged; it also leaves the mean. A completed harness crash counts as 0. Read coverage alongside task means, because an unfinished repeat gave no correctness evidence.
 - A root without `configs/ladder.yaml` (for example `tests/fixtures/repo`) gives `No usable difficulty ladder`.
 - The classes are a prompt to look at a task, not a ruling: the pilot panel is small (`docs/difficulty.md`, Evidence). A tier is a label of an expert-time estimate. The report does not say how a tier should score.

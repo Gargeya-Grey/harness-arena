@@ -14,7 +14,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { CPU_LIMITS, getEvaluator, loadCheck, runJsTestsV2, runWorkspaceCheckV2 } from '../evaluators/index.mjs';
+import { CPU_LIMITS, getEvaluator, hasDefiniteFailure, loadCheck, runJsTestsV2, runWorkspaceCheckV2, runWorkspaceCheckV3 } from '../evaluators/index.mjs';
 import { REPO_ROOT, loadSuite, paths, runDirs, suiteDir } from '../lib/repo.mjs';
 import { isoNow, readJson, readJsonl, safeSegment, sha256 } from '../lib/fsutil.mjs';
 import { applyMutation, mutationSites, pickSites } from '../lib/mutate.mjs';
@@ -224,7 +224,8 @@ function checkWorkspace({ fixtureDir, check, overlay, mutation, limits }) {
     const runDir = path.join(scratch, 'run');
     fs.mkdirSync(runDir); // not a run folder: a scratch folder
     const artifact = snapshotWorkspace({ fixtureDir, workDir: work, runDir, base: 'w', artifactId: 'audit', createdAt: isoNow() });
-    return runWorkspaceCheckV2({ fixtureDir, check, runDir, manifestPath: artifact.path, limits });
+    const runner = check.tests ? runWorkspaceCheckV3 : runWorkspaceCheckV2;
+    return runner({ fixtureDir, check, runDir, manifestPath: artifact.path, limits });
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true }); // not a run folder: a scratch folder
   }
@@ -241,10 +242,11 @@ function auditAgentCase({ root, suite, block, item, max }) {
     return excludedCase(item, 'agent', 'no readable check', { detail: String(error.message).slice(0, 200) });
   }
   const record = { ...baseRecord(item, 'agent'), reference: { path: shownPath(root, overlay), sha256: treeHash(overlay) } };
-  const total = Object.keys(check.probes).length + Object.keys(check.files).length;
+  const total = Object.keys(check.probes).length + Object.keys(check.files).length + (check.tests ? 1 : 0);
   record.tests = total;
   const base = checkWorkspace({ fixtureDir, check, overlay });
   const again = checkWorkspace({ fixtureDir, check, overlay });
+  if ((base.unjudged && !hasDefiniteFailure(base.results)) || (again.unjudged && !hasDefiniteFailure(again.results))) return { ...record, status: 'excluded', reason: 'reference verification was unjudged' };
   if (signature(base) !== signature(again)) {
     return { ...record, status: 'excluded', reason: NOT_DETERMINISTIC, detail: `two runs of the reference passed ${passed(base)} and ${passed(again)} of ${base.results.length} tests` };
   }
@@ -261,13 +263,14 @@ function auditAgentCase({ root, suite, block, item, max }) {
     const run = checkWorkspace({ fixtureDir, check, overlay, mutation, limits });
     const shown = { file: mutation.file, line: mutation.site.line, operator: mutation.site.operator, code: mutation.site.code };
     const total = run.results.length;
+    if (run.unjudged && !hasDefiniteFailure(run.results)) return { ...shown, outcome: 'excluded', reason: 'mutant verification was unjudged', pass: null, total };
     // A file the snapshot left out (over its size limit) never reached the check, so the check did not see the bug.
     const left = (run.skipped ?? []).find((entry) => entry.path === mutation.file);
     if (left) return { ...shown, outcome: 'excluded', reason: `${mutation.file} was not in the snapshot (${left.reason}), so the check never saw the planted bug`, pass: null, total };
     const probes = run.results.filter((result) => !result.name.startsWith('file '));
     const broken = probes.length > 0 && probes.every((result) => !result.ok && /SyntaxError/.test(result.error ?? ''));
-    if (run.error || broken) return { ...shown, outcome: 'excluded', reason: run.error ?? probes[0].error.slice(0, 160), pass: null, total };
-    const verdict = judgeResults(run.results);
+    if ((run.error && !(run.unjudged && hasDefiniteFailure(run.results))) || broken) return { ...shown, outcome: 'excluded', reason: run.error ?? probes[0].error.slice(0, 160), pass: null, total };
+    const verdict = judgeResults(run.results.filter(item => !item.unjudged || item.definite_failure));
     if (verdict.outcome === 'excluded') return { ...shown, ...verdict, pass: null, total };
     return { ...shown, ...verdict, pass: passed(run), total };
   });

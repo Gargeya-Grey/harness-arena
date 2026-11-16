@@ -1,0 +1,27 @@
+id: foldaway-apartment-pilot
+description: >
+  Bounded one-repeat pilot of the reversible apartment on the requested model
+  configurations. Models and harnesses both vary. Native format checks delivery
+  only; browser observations and visual review remain separate evidence.
+suite: foldaway-apartment
+prompt: visual-web
+prompt_version: "1"
+cases:
+  - foldaway-apartment-reversible
+repeats: 1
+targets:
+  - model: beam-free
+    harness: opencode
+  - model: claude-haiku-5.5
+    harness: claude-code
+  - model: gpt-6.1-terra
+    harness: codex
+    effort: high
+workdir: isolated
+user_config: isolated
+access: edit
+timeout_s: 600
+evaluators:
+  - id: workspace-tests
+    version: "2"
+    dimension: format

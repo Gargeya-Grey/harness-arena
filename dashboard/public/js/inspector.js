@@ -53,17 +53,21 @@ function checkHtml(o) {
   const out = outcome(o);
   if (o.status === 'error') return '';
   const s = (o.scores || []).find((x) => x.dimension === 'quality') || (o.scores || [])[0];
-  if (!s) return html`<section class="pane"><h3 class="pane-h">Check</h3><p class="muted">${out.kind === 'unscored' ? 'Not checked: this test has no automatic check for this answer.' : 'No check result stored.'}</p></section>`;
+  if (!s) return html`<section class="pane"><h3 class="pane-h">Check</h3><p class="muted">No automatic verdict stored. Verification is unjudged or unavailable.</p></section>`;
   const d = s.details || {};
   const results = Array.isArray(d.results) ? d.results : null;
+  const unjudged = results?.filter(r => r.unjudged && !r.definite_failure).length || 0;
   const head = results
-    ? `${results.filter((r) => r.ok).length} of ${results.length} checks passed`
+    ? `${results.filter((r) => r.ok).length} of ${results.length - unjudged}${unjudged ? ' judged' : ''} checks passed${unjudged ? `; ${unjudged} unjudged` : ''}`
     : out.text.charAt(0).toUpperCase() + out.text.slice(1);
   const expected = d.expected !== undefined ? d.expected : null;
   const got = d.extracted !== undefined ? d.extracted : d.actual !== undefined ? d.actual : null;
   return html`<section class="pane"><h3 class="pane-h">Check <span class="mark mark-${out.kind}">${out.glyph} ${out.text}</span></h3>
     <p class="check-head">${head}<span class="muted"> · ${s.evaluator_id}</span></p>
-    ${results ? html`<ul class="checks">${results.map((r) => html`<li class="${r.ok ? 'ok' : 'bad'}"><span class="ck" aria-hidden="true">${r.ok ? '✓' : '✕'}</span><span>${r.name}</span><span class="sr">${r.ok ? 'passed' : 'failed'}</span></li>`)}</ul>` : ''}
+    ${results ? html`<ul class="checks">${results.map((r) => {
+      const unknown = r.unjudged && !r.definite_failure;
+      return html`<li class="${unknown ? 'muted' : r.ok ? 'ok' : 'bad'}"><span class="ck" aria-hidden="true">${unknown ? '?' : r.ok ? '✓' : '✕'}</span><span>${r.name}${unknown ? ' (unjudged)' : ''}</span><span class="sr">${unknown ? '' : r.ok ? 'passed' : 'failed'}</span></li>`;
+    })}</ul>` : ''}
     ${expected !== null ? html`<dl class="kv"><dt>Expected</dt><dd class="mono">${typeof expected === 'string' ? expected : JSON.stringify(expected)}</dd>${got !== null ? html`<dt>Got</dt><dd class="mono">${typeof got === 'string' ? got : JSON.stringify(got)}</dd>` : ''}</dl>` : ''}
     ${d.error ? html`<p class="bad">${typeof d.error === 'string' ? d.error : JSON.stringify(d.error)}</p>` : ''}
   </section>`;
@@ -84,7 +88,7 @@ function answerTab(o, cfg) {
   const err = o.error || {};
   const question = k ? Object.entries(k.input || {}).filter(([key]) => key !== 'workspace') : [];
   return html`
-    ${o.status === 'error' ? html`<section class="pane"><h3 class="pane-h">No answer</h3><div class="errbox"><strong>${errorWord(err.type) || 'error'}</strong><span>${String(err.message || 'No message.').split('\n')[0]}</span></div></section>` : ''}
+    ${o.status === 'error' ? html`<section class="pane"><h3 class="pane-h">${o.error_class === 'incomplete' ? 'Unfinished execution' : 'No answer'}</h3><div class="errbox"><strong>${o.error_class === 'incomplete' ? 'Unjudged cutoff' : errorWord(err.type) || 'error'}</strong><span>${String(err.message || 'No message.').split('\n')[0]}</span></div></section>` : ''}
     ${checkHtml(o)}
     ${files ? html`<section class="pane"><h3 class="pane-h">Files the agent changed</h3>${files.changed.length || files.deleted.length ? html`<ul class="files">${files.changed.map((p) => html`<li><span class="mono">${p}</span></li>`)}${files.deleted.map((p) => html`<li><span class="mono">${p}</span> <span class="muted">deleted</span></li>`)}</ul>` : nil('No file changed.')}</section>` : ''}
     ${arts.length ? html`<section class="pane"><h3 class="pane-h">Picture</h3>${arts.map((a) => artifactHtml(a, `${cfg.display_name}, ${o.case_id}, try ${o.repeat + 1}`, true))}</section>` : ''}

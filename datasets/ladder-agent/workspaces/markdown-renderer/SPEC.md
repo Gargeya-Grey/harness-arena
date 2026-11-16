@@ -118,9 +118,12 @@ list, do not count for the outer list. Any other list is **tight**.
 ## 6. Link reference definitions
 
 When no paragraph is open, a line of the form `[label]: dest` or `[label]: dest "title"` (up to 3 spaces
-before; any number of spaces, also none, after the colon and before the title; the title is in `"` or `'`, and a title in parentheses is not one; nothing else on the line) defines
+before; any number of spaces, also none, after the colon; at least one space before a title; the title is in `"` or `'`, and a title in parentheses is not one; nothing else on the line) defines
 a link and produces no output. The label has no unescaped `[` or `]`, and is not blank. The destination is a
-run of non-space characters; if it is wrapped in `<` `>`, those are removed. Backslash escapes in destination
+maximal run of non-space characters, including quotes. Consume that entire run before looking for a title.
+If the entire run is wrapped in `<` `>`, those are removed. A quoted suffix without a separating space belongs
+to the destination: `[a]: /u't'` has destination `/u't'` and no title, while `[a]: /u 't'` has destination `/u`
+and title `t`. This precedence also applies when angle brackets occur in the run. Backslash escapes in destination
 and title are processed. A label is matched after `normalizeLabel`. The first definition of a label wins.
 Definitions may come after the link that uses them, anywhere in the document. A definition line that does not
 fit this form is paragraph text.

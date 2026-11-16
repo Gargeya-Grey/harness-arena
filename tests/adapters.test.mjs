@@ -4,11 +4,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ADAPTERS, getAdapter } from '../lab/adapters/index.mjs';
 import { flattenMessages, stderrError } from '../lab/adapters/process.mjs';
-import { defineCli } from '../lab/adapters/cli.mjs';
+import { defineCli, withExtra } from '../lab/adapters/cli.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = (name) => fs.readFileSync(path.join(here, 'fixtures', 'harness', name), 'utf8');
@@ -96,6 +97,72 @@ test('CLI args never pass the prompt through a shell and pin the model', () => {
   assert.ok(claude.includes('--no-session-persistence'));
   const codex = getAdapter('codex').args({ model: 'gpt-6-luna', effort: 'low', cwd: '/tmp/x' });
   assert.ok(codex.includes('read-only'), 'codex runs in a read-only sandbox');
+});
+
+test('codex: edit calls keep workspace access and the installed sandbox configuration', () => {
+  const adapter = getAdapter('codex');
+  const args = withExtra(adapter.args({ model: 'gpt-6.1-terra', effort: 'high', access: 'edit' }), adapter.edit.args);
+  assert.equal(args[args.indexOf('-s') + 1], 'workspace-write');
+  assert.ok(!args.includes('read-only'));
+  assert.ok(!args.includes('danger-full-access'));
+  assert.ok(!args.includes('--dangerously-bypass-approvals-and-sandbox'));
+  assert.ok(!args.some((arg) => arg.startsWith('windows.sandbox=')), 'the owner chooses the installed sandbox backend');
+  const answer = adapter.args({ model: 'gpt-6.1-terra', access: 'answer' });
+  assert.equal(answer[answer.indexOf('-s') + 1], 'read-only');
+  assert.ok(!answer.some((arg) => arg.startsWith('windows.sandbox=')), 'answer calls do not receive the edit backend override');
+});
+
+test('codex: isolated Windows edit calls refuse repeated sandbox setup before a model is called', () => {
+  const adapter = getAdapter('codex');
+  const input = { model: 'gpt-6.1-terra', access: 'edit', tempHome: 'C:/task-owned-temporary-home' };
+  if (process.platform === 'win32') assert.throws(() => adapter.args(input), /repeated Windows approval[\s\S]*user_config: loaded[\s\S]*No model call/);
+  else assert.doesNotThrow(() => adapter.args(input));
+  assert.doesNotThrow(() => adapter.args({ ...input, tempHome: null }));
+});
+
+test('codex: Windows isolation removes personal memory and skills while retaining the installed home', (t) => {
+  if (process.platform !== 'win32') return t.skip('native Windows configuration');
+  const adapter = getAdapter('codex');
+  assert.equal(adapter.isolation.home, null);
+  assert.ok(adapter.isolation.flags.includes('--ignore-user-config'));
+  assert.ok(adapter.isolation.flags.includes('--ignore-rules'));
+  assert.ok(adapter.isolation.flags.includes('skills.include_instructions=false'));
+  for (const feature of ['memories', 'plugins', 'apps', 'hooks', 'skill_search']) {
+    assert.ok(adapter.isolation.flags.includes(`features.${feature}=false`), feature);
+  }
+  assert.ok(adapter.isolation.args.includes('--no-daemon'));
+  assert.match(adapter.isolation.note, /global AGENTS\.md.*still loads/);
+  assert.match(adapter.isolation.note, /partly kept out/);
+  assert.ok(adapter.isolation.clearEnv.includes('CODEX_THREAD_ID'));
+});
+
+test('codex: Windows isolated edits reapply only the verified installed backend and refuse missing setup', (t) => {
+  if (process.platform !== 'win32') return t.skip('native Windows configuration');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-codex-backend-test-'));
+  t.after(() => {
+    assert.equal(path.dirname(home), fs.realpathSync(os.tmpdir()));
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+  const adapter = getAdapter('codex');
+  const input = { model: 'gpt-6.1-terra', access: 'edit', isolated: true, env: { CODEX_HOME: home } };
+  assert.throws(() => adapter.args(input), /existing config.toml[\s\S]*No model call/);
+  fs.writeFileSync(path.join(home, 'config.toml'), '[windows]\nsandbox = "elevated"\n');
+  assert.throws(() => adapter.args(input), /already initialized elevated sandbox[\s\S]*No model call/);
+  for (const rel of ['.sandbox/setup_marker.json', '.sandbox-secrets/sandbox_users.json']) {
+    fs.mkdirSync(path.dirname(path.join(home, rel)), { recursive: true });
+    fs.writeFileSync(path.join(home, rel), '{}');
+  }
+  let args = adapter.args(input);
+  assert.equal(args[0], '--no-daemon');
+  assert.ok(args.includes('windows.sandbox="elevated"'));
+  fs.writeFileSync(path.join(home, 'config.toml'), "[windows]\nsandbox = 'unelevated' # owner setting\n");
+  args = adapter.args(input);
+  assert.ok(args.includes('windows.sandbox="unelevated"'));
+  assert.ok(!args.includes('windows.sandbox="elevated"'));
+  fs.writeFileSync(path.join(home, 'config.toml'), 'windows.sandbox = "elevated"\n');
+  assert.ok(adapter.args(input).includes('windows.sandbox="elevated"'));
+  fs.writeFileSync(path.join(home, 'config.toml'), '[windows]\nsandbox = "unknown"\n');
+  assert.throws(() => adapter.args(input), /could not verify[\s\S]*No model call/);
 });
 
 test('opencode: parses text, sums usage over steps, counts tools', () => {

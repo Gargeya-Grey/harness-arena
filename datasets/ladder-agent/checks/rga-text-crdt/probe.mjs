@@ -84,6 +84,20 @@ function simulate(createReplica, seed, steps, sites) {
 
 export const probes = [
   {
+    name: 'accepted low child clocks keep complete sibling subtrees together',
+    run: async ({ load }) => {
+      const { createReplica } = await lib(load);
+      const base = [ins('a', 1, 10, null, 'A'), ins('b', 1, 5, null, 'B'), ins('c', 1, 1, 'a@1', 'C')];
+      const outputs = [];
+      for (const order of permutations(base)) {
+        const replica = createReplica('receiver');
+        for (const op of order) replica.receive([op]);
+        outputs.push(replica.text());
+      }
+      return outputs;
+    },
+  },
+  {
     name: 'rg01 local typing, deleting and the shape of the operations',
     run: async ({ load }) => {
       const { createReplica } = await lib(load);

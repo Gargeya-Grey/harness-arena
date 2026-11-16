@@ -139,7 +139,7 @@ test('the supreme-b set holds 5 tier 5 spec cases with unique ids', () => {
     assert.ok(item.input.signature.startsWith(`${item.input.name}(`), `${item.case_id}: signature starts with the function name`);
     assert.ok(item.input.task.length > 4000, `${item.case_id}: the task text is a long set of rules`);
     const count = item.expected.tests.length;
-    assert.ok(count >= 12 && count <= 20, `${item.case_id}: ${count} tests, expected 12 to 20`);
+    assert.ok(count >= 12 && count <= 35, `${item.case_id}: ${count} tests, expected 12 to 35 including explicit error regressions`);
   }
 });
 

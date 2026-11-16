@@ -44,9 +44,9 @@ test('run progress reads the plan, the run ids and each call, errors included', 
     '  agentic-csv-quotes r0 pulse-free: ERROR timeout: no answer in 600 s · ? ms · ? in / ? out',
   ];
   const first = runProgress(lines.slice(0, 6));
-  assert.deepEqual(first, { total: 18, done: 1, errors: 0, current: 'agentic-slugify-bug', runIds: ['20261105T060204Z__agentic__opencode-agentic__a4a7c9'] });
+  assert.deepEqual(first, { total: 18, done: 1, errors: 0, incomplete: 0, current: 'agentic-slugify-bug', runIds: ['20261105T060204Z__agentic__opencode-agentic__a4a7c9'] });
   const next = runProgress(lines.slice(6), first);
-  assert.deepEqual(next, { total: 18, done: 2, errors: 1, current: 'agentic-csv-quotes', runIds: ['20261105T060204Z__agentic__opencode-agentic__a4a7c9'] });
+  assert.deepEqual(next, { total: 18, done: 2, errors: 0, incomplete: 1, current: 'agentic-csv-quotes', runIds: ['20261105T060204Z__agentic__opencode-agentic__a4a7c9'] });
   assert.deepEqual(first.runIds.length, 1, 'the earlier progress is not changed');
   assert.deepEqual(runProgress(['  agentic-x r0 beam-free: workspace not stored: EBUSY']), emptyProgress());
   assert.equal(jobName({ command: 'run', label: 'run experiments/agentic.yaml --repeats 1' }), 'agentic run');
@@ -55,4 +55,19 @@ test('run progress reads the plan, the run ids and each call, errors included', 
   assert.equal(jobTitle({ command: 'run', dry_run: true, label: 'run experiments/agentic-sweep.yaml --dry-run' }), 'Preview of agentic-sweep');
   assert.equal(jobTitle({ command: 'run', label: 'run experiments/agentic-sweep.yaml' }), 'Run of agentic-sweep');
   assert.equal(jobTitle({ command: 'score', label: 'score --all' }), 'Scoring');
+});
+
+test('current run progress separates unfinished calls from answers and execution errors', async () => {
+  const { runProgress } = await import('../dashboard/public/js/jobwatch.js');
+  const p = runProgress([
+    'Experiment recovery: suite smoke 1.0.0, prompt qa v1, 3 call(s) in 1 run(s)',
+    '  smoke-001 r0 haiku: "4" · 40 ms · 10 in / 1 out',
+    '  smoke-002 r0 haiku: INCOMPLETE (unjudged) timeout: deadline reached · 600000 ms · ? in / ? out',
+    '  smoke-003 r0 haiku: ERROR harness_error: crashed · 20 ms · ? in / ? out',
+  ]);
+  assert.equal(p.total, 3);
+  assert.equal(p.done, 3);
+  assert.equal(p.incomplete, 1);
+  assert.equal(p.errors, 1);
+  assert.equal(p.done - p.errors - p.incomplete, 1);
 });

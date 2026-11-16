@@ -30,6 +30,7 @@ Preconditions: the Launch steps in SKILL.md, with the fixture data root. The fix
 - **Choose setups.** Untick all but two, Show them: the table has two rows, and the hash has `cfg=`. Reload: the same two show.
 - **Case by case.** 72 marks (6 setups × 4 cases × 3 tries). Turn on Only where setups differ: fewer rows, and `#cases-note` reads "N of 4 cases differ".
 - **Side panel.** Select a mark. At 1440px the page makes room for the panel and the mark keeps a halo. Next try moves along the case. Escape closes it, and focus returns to the mark.
+- **Unjudged verification.** A row without a score says that no automatic verdict is stored and verification is unjudged or unavailable. It must not claim that the task lacks an automatic check. For a proven case failure with unfinished probes, only judged probes enter the check count. Each unfinished probe has visible unjudged text and is not announced as failed. `tests/dashboard-ui.test.mjs` covers these render paths; verify the side panel against a disposable fixture root in Chromium too.
 - **Charts.** Time, Passed against price and Consistency show first; Tokens and Outcomes sit under More charts. Open the one-setup test: no chart shows first.
 - **Runs.** Score again on a fixture run starts a `score <run id>` job (`--force` only after Confirm: score it on a stopped run); the job bar shows, and the row stays when it ends.
 - **Phone.** At 360px and 390px the tables become cards, chart text reads at 16px or more, and `document.documentElement.scrollWidth` does not exceed the viewport.

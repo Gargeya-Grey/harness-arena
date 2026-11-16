@@ -250,7 +250,10 @@ export default {
     'bridge-collapse': 'all three discs are removed from the game',
     fort: 'the actor already owns 2 forts',
     'mixed-play': 'several events at one count happen in this order',
+    'action-whitespace': 'tokens separated by exactly one space, with no space at the start or the end',
   },
   examples,
-  tests: [...hand, ...computed],
+  tests: [...hand, ...computed, t('action-whitespace', [{ rows: ['.'], reserve: 1, first: 'A' }, [' put a1', 'put  a1', 'put\ta1', 'put a1 ']], {
+    rows: ['-'], reserve: { A: 1, B: 1 }, score: { A: -4, B: -4 }, faults: ['1:bad-format', '2:bad-format', '3:bad-format', '4:bad-format'], played: 4, ended: 'actions', winner: 'draw',
+  })],
 };

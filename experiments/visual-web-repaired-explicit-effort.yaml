@@ -1,0 +1,28 @@
+id: visual-web-repaired-explicit-effort
+description: >
+  Explicit high-effort comparison of Beam, Haiku and Terra through their requested
+  harnesses. Model and harness both vary; equal effort names do not imply equal
+  compute budgets. Native format checks delivery; browser and visual review are separate.
+suite: visual-web
+prompt: visual-web
+prompt_version: "1"
+effort_policy: explicit
+repeats: 1
+targets:
+  - model: beam-free
+    harness: opencode
+    effort: high
+  - model: claude-haiku-5.5
+    harness: claude-code
+    effort: high
+  - model: gpt-6.1-terra
+    harness: codex
+    effort: high
+workdir: isolated
+user_config: isolated
+access: edit
+timeout_s: 0
+evaluators:
+  - id: workspace-tests
+    version: "3"
+    dimension: format

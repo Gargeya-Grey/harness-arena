@@ -1,0 +1,29 @@
+id: ladder-agent-explicit-effort
+description: >
+  The requested Beam, Haiku and Terra configurations, each at explicit high effort.
+  Model and harness both vary; level names do not establish equal compute.
+suite: ladder-agent
+prompt: agent-task
+effort_policy: explicit
+repeats: 3
+
+targets:
+  - model: beam-free
+    harness: opencode
+    effort: high
+  - model: claude-haiku-5.5
+    harness: claude-code
+    effort: high
+  - model: gpt-6.1-terra
+    harness: codex
+    effort: high
+
+workdir: isolated
+user_config: isolated
+access: edit
+timeout_s: 0
+
+evaluators:
+  - id: workspace-tests
+    version: "2"
+    dimension: quality

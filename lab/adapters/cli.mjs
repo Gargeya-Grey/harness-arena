@@ -93,12 +93,12 @@ export function defineCli(spec) {
 
       // One process call. `tempHome` is the temp home folder of an isolated call, else null.
       const execute = async (env, tempHome) => {
-        const ctx = { model, effort, prompt, system, user, cwd, persist, maxTurns, access, tempHome, env };
+        const ctx = { model, effort, prompt, system, user, cwd, persist, maxTurns, access, isolated, tempHome, env };
         const args = withExtra(spec.args(ctx), extra);
         const run = await runProcess(spec.bin, args, { cwd, input: spec.stdin ? spec.stdin(ctx) : '', timeoutMs, env });
         if (run.error) {
           // A timed-out call may still have made a session; clean up what its output names.
-          // Its events are kept too, so the runner's guard sees what the agent did.
+          // Keep its native diagnostics too; an unfinished call is not zero activity.
           let partial = null;
           if (run.stdout) {
             try {
@@ -108,7 +108,7 @@ export function defineCli(spec) {
             }
           }
           if (spec.after && partial) await spec.after(partial, ctx);
-          return { error: run.error, wall_ms: run.ms, events: partial?.events ?? [] };
+          return { ...partial, text: null, finish_reason: null, error: run.error, wall_ms: run.ms, stderr: run.stderr, events: partial?.events ?? [] };
         }
         const parsed = { ...spec.parse(run), wall_ms: run.ms, stderr: run.stderr };
         if (spec.after) await spec.after(parsed, ctx);

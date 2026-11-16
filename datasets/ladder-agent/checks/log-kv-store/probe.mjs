@@ -137,6 +137,26 @@ const entriesOf = async (load, files, options) => {
 
 export const probes = [
   {
+    name: 'omitted and undefined segment limits use the exact published default',
+    run: async ({ load }) => {
+      const result = [];
+      for (const options of [undefined, { maxSegmentBytes: undefined }]) {
+        const disk = new Disk();
+        const store = await open(load, disk, options);
+        const states = [];
+        const remember = () => { const stats = store.stats(); states.push([stats.segments, stats.bytes, stats.active]); };
+        store.put('a', 'x'.repeat(100));
+        remember();
+        store.put('b', 'x'.repeat(1048576 - 124));
+        remember();
+        store.put('c', '');
+        remember();
+        result.push(states);
+      }
+      return result;
+    },
+  },
+  {
     name: 'keeps the exports and the checksum',
     run: async ({ load }) => {
       const mod = await lib(load);
@@ -398,10 +418,22 @@ export const probes = [
     name: 'every segment is read at most once when a store opens',
     run: async ({ load }) => {
       const disk = new Disk({ [seg(1)]: P('a', '1'), [seg(2)]: P('b', '2'), [seg(3)]: S(1) });
-      await open(load, disk);
+      const allowed = new Set(disk.names());
+      const store = await open(load, disk);
       const counts = {};
       for (const name of disk.reads) counts[name] = (counts[name] ?? 0) + 1;
-      return { max: Math.max(...Object.values(counts)), names: Object.keys(counts).sort() };
+      return { max: Math.max(0, ...Object.values(counts)), onlySegments: Object.keys(counts).every((name) => allowed.has(name)), entries: store.entries() };
+    },
+  },
+  {
+    name: 'an omitted or undefined segment option uses the default',
+    run: async ({ load }) => {
+      const mod = await lib(load);
+      return [undefined, {}, { maxSegmentBytes: undefined }, { maxSegmentBytes: 64 }].map((options) => {
+        const disk = new Disk();
+        const store = mod.openStore(disk, options);
+        return [store.entries(), disk.ops.length];
+      });
     },
   },
   {

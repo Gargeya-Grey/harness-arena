@@ -43,16 +43,19 @@ store.stats();                   // { keys, segments, bytes, active }
 * `delete(key)` checks its key like `put` does (also when the key is missing). `put(key, value)`: a key is a non-empty string of at most 255 UTF-8 bytes, else `RangeError`; a key or value that is
   not a string is a `TypeError`. A string with a lone surrogate (it is not well formed UTF-16) is a `RangeError`, for a key or a value. A bad argument writes
   nothing and changes nothing. (Check the type first, then the surrogates, then the size.)
-* `batch(ops)`: `ops` is an array with 1 to 65535 operations (else `RangeError`), each `{ op: 'put', key, value }`
+* `batch(ops)`: `ops` is an array with 1 to 65535 operations (else `RangeError`, including a non-array), each `{ op: 'put', key, value }`
   or `{ op: 'delete', key }` (any other shape or `op` is a `TypeError`; keys as above). All operations are
   checked before anything is written. The operations apply in order, so a later one sees an earlier one. A
   batch is one record in the log, with every given operation in it, also a delete of a missing key.
 * `keys(prefix)` and `entries(prefix)` need a string prefix when one is given (`TypeError` otherwise).
-* `options.maxSegmentBytes`: integer >= 64, default `1048576`, else `RangeError`.
+* `options.maxSegmentBytes`: integer >= 64, else `RangeError`. An omitted property or `undefined` uses
+  the default `1048576`; `null` is not a default and throws `RangeError`.
 * `stats()`: `keys` is the number of live keys; `segments` the number of segment files the store has; `bytes` their total
   size; `active` the number of the segment the next write goes to, after the move described in "Writing" (1 if there is no segment).
 * The store keeps all data in memory. `get`, `has`, `keys`, `entries` and `stats` never call the disk. `openStore` calls
-  `read` at most once for each segment file, and never reads another file.
+  `read` at most once for each segment file, and never reads another file. It may read and cache all
+  initially listed segment files before pruning superseded ones, or skip a segment whose contents are
+  unnecessary after the supersede marker is known. Both strategies obey the same at-most-once rule.
 
 ## Files and records
 

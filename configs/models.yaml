@@ -8,6 +8,7 @@
 #   context_window       Tokens, for reference.
 #   reasoning_effort     Optional default effort. An experiment target overrides it with
 #                        effort: <level> or efforts: [<level>, ...]; each effort is its own run.
+#   effort_levels        Verified supported levels; [] means verified unavailable control.
 #   pinned               Optional, default true. false for an alias the provider can point at
 #                        another model at any time (free tiers such as opencode/beam-free).
 #                        The dashboard and the report mark such a configuration.
@@ -22,6 +23,15 @@
 # Prices change. Each pricing entry says when and where it was read.
 
 models:
+  gpt-6.1-terra:
+    provider: openai
+    model: gpt-6.1-terra
+    display_name: GPT-6.1 Terra
+    # Listed by the signed-in Codex CLI model catalog on 2026-11-15.
+    reasoning_effort: high
+    effort_levels: [low, medium, high, xhigh, max, ultra] # Installed Codex catalog, 2026-11-15.
+    params: {}
+
   deepseek-v4.1-flash-max:
     provider: deepseek
     model: deepseek/deepseek-v4.1-flash
@@ -41,6 +51,8 @@ models:
     model: claude-haiku-5-5
     display_name: Claude Haiku 5.5
     context_window: 1000000
+    # https://platform.claude.com/docs/en/build-with-claude/effort, checked 2026-11-15.
+    effort_levels: [low, medium, high, xhigh, max]
     # No temperature: this model rejects non-default sampling values.
     params:
       max_tokens: 1024
@@ -86,6 +98,7 @@ models:
     provider: opencode
     model: opencode/beam-free
     display_name: Beam (free)
+    effort_levels: [low, medium, high, xhigh, max] # OpenCode 2.3.0 model.list, 2026-11-15.
     pinned: false # a free alias; OpenCode can change the model behind it
     params: {}
 

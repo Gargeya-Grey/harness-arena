@@ -277,4 +277,27 @@ export const probes = [
       return [cache.get('a'), cache.ttlOf('a') > 0, names, mod.sizeOf('abc'), mod.sizeOf({ ab: 'c' })];
     },
   },
+  {
+    name: 'a synchronous loader throw releases the shared load before retry',
+    run: async ({ load }) => {
+      const { getOrLoad } = await lib(load);
+      const { cache } = await make(load);
+      let calls = 0;
+      const loader = () => { if (++calls === 1) throw new Error('sync'); return 'ok'; };
+      const first = await Promise.allSettled([getOrLoad(cache, 'k', loader)]);
+      const next = await getOrLoad(cache, 'k', loader);
+      return { first: first.map((value) => value.status), next, calls };
+    },
+  },
+  {
+    name: 'a failed cache insertion releases the shared load before retry',
+    run: async ({ load }) => {
+      const { getOrLoad } = await lib(load);
+      let sets = 0;
+      let calls = 0;
+      const cache = { has: () => false, set: () => { if (++sets === 1) throw new Error('set'); } };
+      const first = await Promise.allSettled([getOrLoad(cache, 'k', () => ++calls)]);
+      return [first[0].status, await getOrLoad(cache, 'k', () => ++calls), calls];
+    },
+  },
 ];
