@@ -587,23 +587,37 @@ function setOptions(select, choices, placeholder = '') {
 
 function renderSetupPicker() {
   const available = S.catalog?.setups ?? [];
+  const harnesses = S.catalog?.harnesses ?? [];
   const harness = $('setup-harness');
   const provider = $('setup-provider');
   const model = $('setup-model');
   const effort = $('setup-new-effort');
   const options = values => [...new Set(values)].sort().map(value => [value, value]);
-  setOptions(harness, options(available.map(setup => setup.harness)));
+  setOptions(harness, options(harnesses.map(item => item.name)));
   const inHarness = available.filter(setup => setup.harness === harness.value);
   setOptions(provider, options(inHarness.map(setup => setup.provider)));
-  const inProvider = inHarness.filter(setup => setup.provider === provider.value);
-  setOptions(model, inProvider.map(setup => [setup.model, `${setup.display_name} ? ${setup.model_id}`]));
+  const routes = new Map();
+  for (const item of inHarness.filter(setup => setup.provider === provider.value)) {
+    const saved = routes.get(item.model_id);
+    const sameLevels = saved && JSON.stringify(targetLevels(saved)) === JSON.stringify(targetLevels(item));
+    if (!saved || (item.discovered && !sameLevels && targetLevels(item).length)
+      || (!item.discovered && saved.discovered && (sameLevels || !targetLevels(saved).length))) routes.set(item.model_id, item);
+  }
+  const inProvider = [...routes.values()].sort((a, b) => a.display_name.localeCompare(b.display_name));
+  setOptions(model, inProvider.map(setup => [setup.model, setup.display_name === setup.model_id ? setup.model_id : `${setup.display_name} (${setup.model_id})`]));
   const setup = inProvider.find(setup => setup.model === model.value);
   const used = setup ? setupRows().filter(row => pairKey(row) === pairKey(setup)).map(row => row.effort) : [];
   const levels = setup ? targetLevels(setup).filter(level => !used.includes(level)) : [];
   setOptions(effort, levels.map(level => [level, effortLabel(level)]));
-  $('setup-picker-note').textContent = !setup ? '' : effort.disabled
-    ? targetLevels(setup).length ? 'All verified efforts for this setup are included.' : 'The registry has no verified effort levels for this model on this harness.'
+  const source = harnesses.find(item => item.name === harness.value);
+  const discovery = source?.discovery;
+  const status = source?.installed === false ? 'CLI is missing from PATH.'
+    : discovery?.status === 'ready' ? `${plural(discovery.count, 'model')} reported by the CLI.`
+      : discovery?.message || 'Refresh to check the installed CLI for more models.';
+  const routeStatus = !setup ? 'No model routes are currently listed.' : effort.disabled
+    ? targetLevels(setup).length ? 'All verified efforts for this setup are included.' : 'No verified thinking-effort levels are available for this model on this harness.'
     : '';
+  $('setup-picker-note').textContent = [status, routeStatus].filter(Boolean).join(' ');
   $('add-setup').disabled = !currentExp() || !levels.length;
   return setup;
 }
@@ -621,7 +635,7 @@ function renderSetups() {
   rows.forEach((row, index) => {
     const card = document.createElement('div');
     card.className = 'setup-row';
-    card.innerHTML = `<div class="row-text"><h3 id="setup-name-${index}">${esc(row.display_name || row.model)}</h3><p>${esc([row.harness, row.provider, row.model_id].filter(Boolean).join(' ? '))}</p></div>
+    card.innerHTML = `<div class="row-text"><h3 id="setup-name-${index}">${esc(row.display_name || row.model)}</h3><p>${esc([row.harness, row.provider, row.model_id].filter(Boolean).join(' | '))}</p></div>
       <div><label id="setup-label-${index}" for="setup-effort-${index}">Thinking effort</label><select id="setup-effort-${index}" data-row-effort="${index}" aria-labelledby="setup-name-${index} setup-label-${index}"></select></div>
       <button type="button" class="btn quiet small" data-remove-setup="${index}" aria-label="Remove ${esc(row.display_name || row.model)} on ${esc(row.harness)} at ${esc(effortLabel(row.effort || 'default'))}">Remove</button>`;
     const select = card.querySelector('select');
@@ -830,6 +844,31 @@ $('exp-select').addEventListener('change', (e) => {
 $('suite-select').addEventListener('change', event => chooseFamily(event.target.value));
 $('effort-select').addEventListener('change', event => {
   if (event.target.value) updateSetups(applySharedEffort(setupRows(), event.target.value), 'effort-select');
+});
+$('refresh-models').addEventListener('click', async () => {
+  const button = $('refresh-models');
+  const status = $('refresh-models-status');
+  button.disabled = true;
+  status.textContent = 'Reading model catalogs from installed CLIs. No model calls are made.';
+  try {
+    S.catalog = await api('POST', '/api/catalog/refresh', {});
+    if (S.sel.customTargets) {
+      const setups = new Map(S.catalog.setups.map(setup => [pairKey(setup), setup]));
+      S.sel.customTargets = S.sel.customTargets.map(row => {
+        const setup = setups.get(pairKey(row));
+        return { ...(setup ?? { ...row, choices: [] }), effort: row.effort };
+      });
+    }
+    renderSetups();
+    countCalls();
+    const connected = S.catalog.harnesses.filter(item => item.discovery?.status === 'ready');
+    const total = connected.reduce((sum, item) => sum + item.discovery.count, 0);
+    status.textContent = connected.length ? `${plural(total, 'model route')} found across ${plural(connected.length, 'harness')}.` : 'No CLI catalogs were loaded. Choose a harness for details.';
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 });
 for (const id of ['setup-harness', 'setup-provider', 'setup-model']) {
   $(id).addEventListener('change', renderSetupPicker);

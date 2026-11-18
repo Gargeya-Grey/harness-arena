@@ -42,6 +42,7 @@ Preconditions: the Launch steps in SKILL.md (disposable data root, port 4391). N
 ## Premium control acceptance
 
 - Open Run on a disposable root. Add a model outside the preset. Add the same model at a second effort. Confirm that the shared control excludes levels absent from any selected ladder. Set a shared effort and check that identical rows merge. Clear the rows and verify zero calls and disabled Preview and Start.
+- Open the Harness picker and confirm every configured harness is listed, even when its model picker is empty. Refresh CLI metadata and check that imported model IDs and their reported efforts are selectable, and that unavailable connections show a reason. Preview a newly discovered model and verify its exact harness, model ID, and effort in the dry-run log.
 - Search experiments by mode/id, retain the selected preset outside matches, and inspect actual availability reasons. A harmless one-case Preview must name exactly the selected model/harness/case/repeat and leave the run-folder list unchanged.
 - `#narrow` starts open. Harness, effort and setup policy are readable before starting. Check the existing two-press Start guard without approving a live call.
 - Lab uses one column while `#lab-output-col` is hidden. Selecting a job opens named output; polling preserves the reader's scroll. Appearance and technical help are named disclosures.

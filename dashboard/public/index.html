@@ -96,13 +96,15 @@
               </li>
               <li class="row block">
                 <div class="row-text"><h3>Add a model</h3><p>Add the same model again to compare two thinking efforts.</p></div>
+                <button type="button" class="btn secondary small" id="refresh-models">Refresh from installed harnesses</button>
+                <p class="selection-note" id="refresh-models-status" role="status"></p>
                 <div class="setup-picker">
                   <div><label for="setup-harness">Harness</label><select id="setup-harness"></select></div>
                   <div><label for="setup-provider">Provider</label><select id="setup-provider"></select></div>
                   <div><label for="setup-model">Model</label><select id="setup-model"></select></div>
                   <div><label for="setup-new-effort">Thinking effort</label><select id="setup-new-effort"></select></div>
                 </div>
-                <p class="selection-note" id="setup-picker-note"></p>
+                <p class="selection-note" id="setup-picker-note" aria-live="polite"></p>
                 <button type="button" class="btn secondary small" id="add-setup" disabled>Add setup</button>
               </li>
               <li class="row block">

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createServer } from '../dashboard/server.mjs';
+import { catalogModelKey, saveModelCatalog } from '../lab/lib/model-catalog-store.mjs';
 import { chromePath, launchBrowser } from '../tools/visual-web/browser.mjs';
 
 let available = true;
@@ -25,6 +26,13 @@ async function closeFixture(page, browser, server, root) {
 test('Run edits individual and shared efforts, previews exactly the selected setups, and preserves the store', { skip: !available, timeout: 60000 }, async () => {
   const root = execFileSync(process.execPath, [fileURLToPath(new URL('../.agents/skills/verify-model-lab/scripts/temp-root.mjs', import.meta.url))], { encoding: 'utf8' }).trim();
   const before = fs.readdirSync(path.join(root, 'results')).sort();
+  const modelId = 'other-provider/example';
+  const discovered = catalogModelKey('opencode', modelId);
+  saveModelCatalog(root, {
+    version: 1,
+    models: { [discovered]: { provider: 'other-provider', model: modelId, display_name: modelId, effort_levels: ['low'], catalog_harness: 'opencode', harness_models: { opencode: modelId } } },
+    sources: { opencode: { status: 'ready', keys: [discovered] } },
+  });
   const server = createServer({ root });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser;
@@ -43,6 +51,11 @@ test('Run edits individual and shared efforts, previews exactly the selected set
       input.dispatchEvent(new Event('change', { bubbles: true }));
     }, [id, value]);
     const values = id => page.evaluate(id => [...document.getElementById(id).options].map(option => option.value), id);
+    assert.deepEqual(await values('setup-harness'), ['claude-code', 'codex', 'command-code', 'gemini-cli', 'opencode']);
+    assert.match(await page.evaluate(() => document.querySelector('#setup-name-2 + p').textContent), /codex \| openai \| gpt-6\.1-terra/);
+    await select('setup-harness', 'gemini-cli');
+    assert(await page.evaluate(() => document.getElementById('setup-model').disabled));
+    assert.match(await page.evaluate(() => document.getElementById('setup-picker-note').textContent), /No model routes/);
     assert((await values('setup-effort-2')).includes('ultra'));
     assert(!(await values('setup-effort-0')).includes('ultra'));
     assert(!(await values('effort-select')).includes('ultra'));
@@ -52,8 +65,9 @@ test('Run edits individual and shared efforts, previews exactly the selected set
     await select('exp-select', 'visual-web-terra-recovery.yaml');
     await page.click('#one-call-btn');
     await select('setup-harness', 'opencode');
-    await select('setup-provider', 'opencode');
-    await select('setup-model', 'beam-free');
+    await select('setup-provider', 'other-provider');
+    await select('setup-model', discovered);
+    assert(await page.evaluate(() => document.querySelector('#setup-model option:checked').textContent === 'other-provider/example'));
     await select('setup-new-effort', 'low');
     await page.click('#add-setup');
     await select('setup-harness', 'codex');
@@ -70,8 +84,12 @@ test('Run edits individual and shared efforts, previews exactly the selected set
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
       }
     }
-    await page.click('#start-btn');
-    assert.match(await page.evaluate(() => document.getElementById('start-btn').textContent), /Start 3 calls with edits\?/);
+    const confirmation = await page.evaluate(() => {
+      const button = document.getElementById('start-btn');
+      button.click();
+      return button.textContent;
+    });
+    assert.match(confirmation, /Start 3 calls with edits\?/);
     assert.equal((await (await fetch(origin + '/api/jobs')).json()).running, null);
     await page.click('#preview-btn');
     let job;
@@ -84,7 +102,7 @@ test('Run edits individual and shared efforts, previews exactly the selected set
     const detail = await (await fetch(origin + '/api/jobs/' + job.id)).json();
     const log = JSON.stringify(detail);
     assert.match(log, /3 call\(s\) in 3 run\(s\)/);
-    assert.match(log, /opencode: beam-free/);
+    assert.match(log, /opencode: .*other-provider\/example/);
     for (const effort of ['max', 'low', 'ultra']) assert.match(log, new RegExp(`effort[ =]+${effort}`, 'i'));
     assert.match(log, /nothing was called or written/);
     assert.deepEqual(fs.readdirSync(path.join(root, 'results')).sort(), before);

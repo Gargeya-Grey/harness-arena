@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadYamlFile, paths, resolveExperiment } from './repo.mjs';
+import { readModelCatalog } from './model-catalog-store.mjs';
 
 export const setupKey = ({ model, harness }) => `${harness}|${model}`;
 
@@ -11,15 +12,17 @@ function describeSetup({ model, harness }, registry, adapters) {
   const provider = ['opencode', 'command-code'].includes(harness) && id?.includes('/') ? id.split('/')[0] : entry.provider;
   const levels = adapter.supports_effort ? entry.effort_levels : [];
   const verified = Array.isArray(levels) && levels.every(level => typeof level === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(level) && !['default', 'unavailable'].includes(level));
-  return { model, harness, provider, model_id: id, display_name: entry.display_name || model,
+  return { model, harness, provider, model_id: id, display_name: entry.display_name || model, discovered: Boolean(entry.catalog_harness),
     effort_levels: verified ? levels : [], choices: verified ? levels.length ? levels : ['unavailable'] : [] };
 }
 
 // A model is routable where the registry maps it explicitly or a preset declares the pair.
 export function setupCatalog(root, registry, adapters) {
   const pairs = new Map();
+  const activeModels = new Set(Object.values(readModelCatalog(root).sources).flatMap(source => source.keys ?? []));
   const add = (target) => {
     if (Object.hasOwn(registry, target.model) && Object.hasOwn(adapters, target.harness)) {
+      if (registry[target.model].catalog_harness && !activeModels.has(target.model)) return;
       pairs.set(setupKey(target), describeSetup(target, registry, adapters));
     }
   };

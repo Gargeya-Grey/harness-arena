@@ -27,6 +27,7 @@ docs/plans/
 # Note: results/ is intentionally committed - runs are evidence.
 # New runs go to the ignored data folder named in lab.local.yaml (see README).
 lab.local.yaml
+/.lab-model-catalog.json*
 
 # Command Code keeps its notes about the user here; they are personal, not project files.
 .commandcode/

@@ -12,6 +12,8 @@ import { loadAdapters } from '../lab/adapters/index.mjs';
 import { isoNow } from '../lab/lib/fsutil.mjs';
 import { planExperiment } from '../lab/commands/run.mjs';
 import { setupCatalog } from '../lab/lib/setup-catalog.mjs';
+import { readModelCatalog } from '../lab/lib/model-catalog-store.mjs';
+import { resolveCommand } from '../lab/adapters/process.mjs';
 
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'lab', 'cli.mjs');
 const MAX_LINES = 5000;
@@ -144,7 +146,12 @@ export function catalog(root) {
   let models = [];
   const problems = [];
   try {
-    harnesses = Object.values(adapters).map((a) => ({ name: a.name, declared: Boolean(a.declared) }));
+    const linked = readModelCatalog(root).sources;
+    harnesses = Object.values(adapters).map((a) => {
+      const source = linked[a.name];
+      return { name: a.name, declared: Boolean(a.declared), installed: Boolean(a.bin && resolveCommand(a.bin)),
+        discovery: source ? { status: source.status, message: source.message, count: source.keys.length } : null };
+    });
   } catch (error) {
     problems.push(error.message);
   }

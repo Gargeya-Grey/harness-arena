@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {planExperiment} from '../lab/commands/run.mjs';
+import {planExperiment, planFromExperiment} from '../lab/commands/run.mjs';
+import {catalogModelKey, saveModelCatalog} from '../lab/lib/model-catalog-store.mjs';
 import {buildArgs, catalog} from '../dashboard/jobs.mjs';
 import {signalForQuery} from '../lab/lib/signal.mjs';
 
@@ -76,5 +77,30 @@ test('explicit setups can bring a second harness into the preset and repeat a mo
     assert.throws(() => buildArgs(root, { ...body, targets: [{ ...targets[0], harness: 'command-code' }] }), /registered model and harness/);
   } finally {
     fs.rmSync(other);
+  }
+});
+
+test('a discovered route is usable without a preset or tracked registry change and survives in a recorded plan', () => {
+  const key = catalogModelKey('opencode', 'other-provider/example');
+  const entry = { provider: 'other-provider', model: 'other-provider/example', display_name: 'Example', effort_levels: ['thinking'],
+    catalog_harness: 'opencode', harness_models: { opencode: 'other-provider/example' }, pinned: false };
+  const store = { version: 1, models: { [key]: entry }, sources: { opencode: { status: 'ready', keys: [key] } } };
+  saveModelCatalog(root, store);
+  try {
+    const available = catalog(root);
+    assert(available.harnesses.some(harness => harness.name === 'gemini-cli'));
+    assert.deepEqual(available.setups.find(setup => setup.model === key)?.choices, ['thinking']);
+    const file = path.join(root, 'experiments', 'effort.yaml');
+    const targets = [{ model: key, harness: 'opencode', effort: 'thinking' }];
+    const plan = planExperiment(root, file, { targets });
+    assert.deepEqual(plan.experiment.targets, targets);
+    assert.equal(plan.registry[key].model, 'other-provider/example');
+    store.sources.opencode.keys = [];
+    saveModelCatalog(root, store);
+    assert(!catalog(root).setups.some(setup => setup.model === key));
+    assert.throws(() => planExperiment(root, file, { targets }), /registered model and harness/);
+    assert.deepEqual([...planFromExperiment(root, plan.experiment).groups.keys()], ['opencode@thinking']);
+  } finally {
+    fs.rmSync(path.join(root, '.lab-model-catalog.json'));
   }
 });

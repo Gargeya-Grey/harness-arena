@@ -14,6 +14,7 @@ import { appendJsonl, isoNow, resolveInside, safeSegment, writeJson } from '../l
 import { catalog, createJobs } from './jobs.mjs';
 import { prepareRerun } from './run-actions.mjs';
 import { storageSummary, deleteRun, resetHistory } from '../lab/lib/storage.mjs';
+import { refreshModelCatalog } from '../lab/lib/discover-models.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 const HOST = '127.0.0.1';
@@ -266,6 +267,7 @@ export function createServer({ root = labRoot(), jobOptions } = {}) {
     sendJson(res, 200, { deleted: path.basename(file, '.json') });
   }
 
+  let modelRefresh;
   const server = http.createServer(async (req, res) => {
     try {
       const host = req.headers.host || '';
@@ -284,6 +286,13 @@ export function createServer({ root = labRoot(), jobOptions } = {}) {
       if (route === 'GET /api/artifact') return serveArtifact(req, res, url);
       if (route === 'GET /api/signal') return sendJson(res, 200, (await import('../lab/lib/signal.mjs')).signalForQuery(root, Object.fromEntries(url.searchParams)));
       if (route === 'GET /api/catalog') return sendJson(res, 200, catalog(root));
+      if (route === 'POST /api/catalog/refresh') {
+        await readJsonBody(req);
+        if (jobs.running()) return sendJson(res, 409, { error: 'Wait for the current job to finish before refreshing the catalog.' });
+        modelRefresh ??= refreshModelCatalog(root).finally(() => { modelRefresh = null; });
+        await modelRefresh;
+        return sendJson(res, 200, catalog(root));
+      }
       if (route === 'GET /api/rerun') return sendJson(res, 200, prepareRerun(root, url.searchParams.get('run_id')));
       if (route === 'GET /api/storage') return sendJson(res, 200, storageSummary(root));
       if (route === 'POST /api/storage/delete' || route === 'POST /api/storage/reset') {
@@ -300,6 +309,7 @@ export function createServer({ root = labRoot(), jobOptions } = {}) {
       if (route === 'GET /api/jobs') return sendJson(res, 200, jobs.list());
       if (route === 'POST /api/jobs') {
         const body = await readJsonBody(req);
+        if (modelRefresh && body.command === 'run') return sendJson(res, 409, { error: 'Wait for the model catalog refresh to finish.' });
         try {
           return sendJson(res, 202, { job: jobs.start(body) });
         } catch (error) {

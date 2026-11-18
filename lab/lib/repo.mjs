@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { parseYaml } from './yaml.mjs';
 import { readJsonl, readText, sha256 } from './fsutil.mjs';
 import { copyTree, treeHash } from './workspace.mjs';
+import { readModelCatalog } from './model-catalog-store.mjs';
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -168,8 +169,8 @@ export function loadYamlFile(file) {
 
 export function loadRegistry(root) {
   const file = paths(root).registry;
-  if (!fs.existsSync(file)) return {};
-  return loadYamlFile(file)?.models || {};
+  const registered = fs.existsSync(file) ? loadYamlFile(file)?.models || {} : {};
+  return { ...readModelCatalog(root).models, ...registered };
 }
 
 /**
