@@ -52,3 +52,29 @@ test('a harness without effort control can explicitly retain unavailable even wh
   assert.deepEqual([...plan.groups.values()].map(group=>group.effort),['unavailable']);
   assert.throws(()=>planExperiment(root,file,{effort:'high'}),/no effort control/i);
 });
+
+test('explicit setups can bring a second harness into the preset and repeat a model at another effort', () => {
+  const other = path.join(root, 'experiments', 'other.yaml');
+  fs.writeFileSync(other, fs.readFileSync(path.join(root, 'experiments', 'effort.yaml'), 'utf8').replace('harness: codex', 'harness: claude-code'));
+  try {
+    const targets = [
+      { model: 'toy', harness: 'codex', effort: 'low' },
+      { model: 'toy', harness: 'codex', effort: 'high' },
+      { model: 'toy', harness: 'claude-code', effort: 'high' },
+    ];
+    const body = { command: 'run', experiment: 'effort.yaml', targets, cases: ['smoke-001'], repeats: 1 };
+    const args = buildArgs(root, body);
+    assert.deepEqual(JSON.parse(args[args.indexOf('--targets') + 1]), targets);
+    const plan = planExperiment(root, path.join(root, 'experiments', body.experiment), body);
+    assert.deepEqual([...plan.groups.keys()], ['codex@low', 'codex@high', 'claude-code@high']);
+    assert.deepEqual(plan.experiment.targets, targets);
+    const signal = signalForQuery(root, { experiment: body.experiment, targets: JSON.stringify(targets), cases: 'smoke-001' });
+    assert.equal(signal.setups.length, 3);
+    assert.throws(() => buildArgs(root, { ...body, targets: [] }), /at least one setup/);
+    assert.throws(() => buildArgs(root, { ...body, targets: [targets[0], targets[0]] }), /listed twice/);
+    assert.throws(() => buildArgs(root, { ...body, targets: [{ ...targets[0], effort: 'ultra' }] }), /verified supported level/);
+    assert.throws(() => buildArgs(root, { ...body, targets: [{ ...targets[0], harness: 'command-code' }] }), /registered model and harness/);
+  } finally {
+    fs.rmSync(other);
+  }
+});

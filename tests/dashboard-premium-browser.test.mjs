@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createServer } from '../dashboard/server.mjs';
 import { chromePath, launchBrowser } from '../tools/visual-web/browser.mjs';
@@ -20,6 +21,80 @@ async function closeFixture(page, browser, server, root) {
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
+
+test('Run edits individual and shared efforts, previews exactly the selected setups, and preserves the store', { skip: !available, timeout: 60000 }, async () => {
+  const root = execFileSync(process.execPath, [fileURLToPath(new URL('../.agents/skills/verify-model-lab/scripts/temp-root.mjs', import.meta.url))], { encoding: 'utf8' }).trim();
+  const before = fs.readdirSync(path.join(root, 'results')).sort();
+  const server = createServer({ root });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  let browser;
+  let page;
+  try {
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    browser = await launchBrowser();
+    page = await browser.page();
+    await page.send('Page.addScriptToEvaluateOnNewDocument', { source: "localStorage.setItem('lab-exp', 'ladder-code-repaired-explicit-effort.yaml');" });
+    await page.navigate(origin + '/#run');
+    for (let i = 0; i < 100 && !(await page.evaluate(() => document.querySelector('#setup-effort-2'))); i++) await delay(50);
+    const select = (id, value) => page.evaluate(([id, value]) => {
+      const input = document.getElementById(id);
+      if (![...input.options].some(option => option.value === value)) throw new Error(`${value} is missing from ${id}`);
+      input.value = value;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }, [id, value]);
+    const values = id => page.evaluate(id => [...document.getElementById(id).options].map(option => option.value), id);
+    assert((await values('setup-effort-2')).includes('ultra'));
+    assert(!(await values('setup-effort-0')).includes('ultra'));
+    assert(!(await values('effort-select')).includes('ultra'));
+    await select('effort-select', 'medium');
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('[data-row-effort]')].map(item => item.value)), ['medium', 'medium', 'medium']);
+    await select('suite-select', 'visual-web');
+    await select('exp-select', 'visual-web-terra-recovery.yaml');
+    await page.click('#one-call-btn');
+    await select('setup-harness', 'opencode');
+    await select('setup-provider', 'opencode');
+    await select('setup-model', 'beam-free');
+    await select('setup-new-effort', 'low');
+    await page.click('#add-setup');
+    await select('setup-harness', 'codex');
+    await select('setup-provider', 'openai');
+    await select('setup-model', 'gpt-6.1-terra');
+    await select('setup-new-effort', 'ultra');
+    await page.click('#add-setup');
+    await select('setup-effort-0', 'max');
+    assert.equal(await page.evaluate(() => document.getElementById('plan-n').textContent), '3');
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(theme => document.documentElement.setAttribute('data-theme', theme), theme);
+      for (const width of [390, 1440]) {
+        await page.viewport(width, 880);
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+      }
+    }
+    await page.click('#start-btn');
+    assert.match(await page.evaluate(() => document.getElementById('start-btn').textContent), /Start 3 calls with edits\?/);
+    assert.equal((await (await fetch(origin + '/api/jobs')).json()).running, null);
+    await page.click('#preview-btn');
+    let job;
+    for (let i = 0; i < 100; i++) {
+      const data = await (await fetch(origin + '/api/jobs')).json();
+      job = data.jobs?.[0];
+      if (job && !data.running) break;
+      await delay(100);
+    }
+    const detail = await (await fetch(origin + '/api/jobs/' + job.id)).json();
+    const log = JSON.stringify(detail);
+    assert.match(log, /3 call\(s\) in 3 run\(s\)/);
+    assert.match(log, /opencode: beam-free/);
+    for (const effort of ['max', 'low', 'ultra']) assert.match(log, new RegExp(`effort[ =]+${effort}`, 'i'));
+    assert.match(log, /nothing was called or written/);
+    assert.deepEqual(fs.readdirSync(path.join(root, 'results')).sort(), before);
+    await page.click('#clear-setups');
+    assert(await page.evaluate(() => document.getElementById('preview-btn').disabled && document.getElementById('start-btn').disabled));
+    assert.deepEqual(page.errors, []);
+  } finally {
+    await closeFixture(page, browser, server, root);
+  }
+});
 
 test('ladder no-result disclosure keeps wide tables contained across tablet layouts', { skip: !available, timeout: 60000 }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-premium-browser-'));

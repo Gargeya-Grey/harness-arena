@@ -5,9 +5,9 @@
 ## Sub-features
 
 - `home` - `#live-job` while a job runs (progress, `#live-stop`, `#live-open`); `#latest`: the three newest tests with their meta line and the first sentence of their answer, linked to Results; `#attention-sect` only when something is wrong; `#first-sect` only with no results.
-- `run-preview` - Run: native `#exp-select` with `#exp-search`, `details#narrow` ("Narrow it down": `#harness-chips` with 2 or more harnesses, `#model-chips`, `#case-chips`, `#repeats`), the plan (`#plan-n`, `#plan-break`); Preview starts `run ... --dry-run`.
+- `run-preview` - Run: native `#exp-select` with `#exp-search`, Model setups with individual effort and a harness/provider/model picker, Cases and tries (`#case-chips`, `#repeats`), and the plan (`#plan-n`, `#plan-break`). Preview starts `run ... --dry-run`.
 - `run-signal` - `#signal`, above the Preview and Start buttons: Worth running, Low signal or Unknown with its reasons, from `GET /api/signal`. It reads stored runs only, calls no model and writes nothing. A change of selection clears the old result at once.
-- `explicit-selection` - All/None model and case choices determine the visible count, signal query and run request. Empty choices disable both Preview and Start.
+- `explicit-selection` - Setup rows and case choices determine the count, signal query and run request. Clear setups or deselect all cases to verify that Preview and Start disable.
 - `experiment-search` - Search keeps the selected experiment outside matches and exposes exact configuration and actual availability reasons.
 - `run-start` - `#start-btn` asks once (`Start N calls?`, 5 s); the second press starts the run.
 - `run-progress` - `#run-output-sect`: a bar of answers done, the current case, errors so far, the log under "Show the log", and See results when the run ends.
@@ -26,7 +26,7 @@
 Preconditions: the Launch steps in SKILL.md (disposable data root, port 4391). Never press Start on a real experiment: it calls models. To prove `run-start` and `run-stop`, declare a fake harness in `$ROOT/configs/harnesses.yaml` (`bin: node`, `args: ["-e", "setTimeout(() => console.log('Paris'), 4000)"]`, `stdin: true`, `output: text`) and an experiment `$ROOT/experiments/slow-test.yaml` with one target on it.
 
 - **Home.** Each Latest results row shows a different meta line, and a click opens that test on Results.
-- **Preview.** Run, choose `ladder-agent` (keyboard: focus the trigger, arrows, Enter), open Narrow it down, select the chip of `ladder-agent-slugify-bug`, tries 1, Preview. The log ends with `Dry run: nothing was called or written.` and `$ROOT/results` gains no folder. The progress head reads "Preview of ladder-agent". The experiment list holds only the files at the top of `experiments/`: `opencode-agentic` (in `experiments/archive/`) is not in it.
+- **Preview.** Run, choose a Ladder agent preset (keyboard: focus the trigger, arrows, Enter), open Cases and tries, select only the chip for a single task and set tries to 1. Select Preview. The log names each included setup and ends with `Dry run: nothing was called or written.` The results directory gains no folder.
 - **Signal.** Choose an experiment: `#signal` shows a verdict and its reasons, and `node lab signal experiments/<name>.yaml --json` gives the same verdict. Narrow to another model: the old verdict clears at once, and a new one follows. `$ROOT/results` gains no folder.
 - **Start guard.** Press Start once: the label reads `Start N calls?` and `GET /api/jobs` shows `running: null`.
 - **Stop.** With `slow-test`, Start twice, then Stop once: the job ends `stopped`, and the newest `run.json` has `status: failed`.
@@ -41,7 +41,7 @@ Preconditions: the Launch steps in SKILL.md (disposable data root, port 4391). N
 
 ## Premium control acceptance
 
-- Open Run on a disposable root. All effective models/cases are visibly included; All and None are explicit. Clearing the last one makes the count zero, disables Preview/Start and cancels stale signal. A harness change preserves valid explicit choices.
+- Open Run on a disposable root. Add a model outside the preset. Add the same model at a second effort. Confirm that the shared control excludes levels absent from any selected ladder. Set a shared effort and check that identical rows merge. Clear the rows and verify zero calls and disabled Preview and Start.
 - Search experiments by mode/id, retain the selected preset outside matches, and inspect actual availability reasons. A harmless one-case Preview must name exactly the selected model/harness/case/repeat and leave the run-folder list unchanged.
 - `#narrow` starts open. Harness, effort and setup policy are readable before starting. Check the existing two-press Start guard without approving a live call.
 - Lab uses one column while `#lab-output-col` is hidden. Selecting a job opens named output; polling preserves the reader's scroll. Appearance and technical help are named disclosures.

@@ -84,22 +84,37 @@
               <li class="row block" id="exp-detail" hidden></li>
             </ul>
           </section>
+          <section class="sect" aria-labelledby="setups-h">
+            <div class="sect-label"><h2 id="setups-h">Model setups</h2><span class="sect-note" id="setups-count"></span></div>
+            <ul class="group glass">
+              <li class="row block">
+                <div class="setup-list" id="setup-list"></div>
+                <div class="setup-actions">
+                  <button type="button" class="btn secondary small" id="restore-setups">Restore preset setups</button>
+                  <button type="button" class="btn quiet small" id="clear-setups">Clear setups</button>
+                </div>
+              </li>
+              <li class="row block">
+                <div class="row-text"><h3>Add a model</h3><p>Add the same model again to compare two thinking efforts.</p></div>
+                <div class="setup-picker">
+                  <div><label for="setup-harness">Harness</label><select id="setup-harness"></select></div>
+                  <div><label for="setup-provider">Provider</label><select id="setup-provider"></select></div>
+                  <div><label for="setup-model">Model</label><select id="setup-model"></select></div>
+                  <div><label for="setup-new-effort">Thinking effort</label><select id="setup-new-effort"></select></div>
+                </div>
+                <p class="selection-note" id="setup-picker-note"></p>
+                <button type="button" class="btn secondary small" id="add-setup" disabled>Add setup</button>
+              </li>
+              <li class="row block">
+                <div class="row-text"><h3><label for="effort-select">Set thinking effort for all</label></h3><p id="effort-note"></p></div>
+                <select id="effort-select" aria-describedby="effort-note"></select>
+              </li>
+            </ul>
+          </section>
           <section class="sect">
             <details class="narrow glass" id="narrow" open>
-              <summary><svg class="i" aria-hidden="true"><use href="#i-chev"/></svg><span class="narrow-h">Models, effort and cases</span><span class="narrow-sum" id="narrow-sum">Everything in the preset</span></summary>
+              <summary><svg class="i" aria-hidden="true"><use href="#i-chev"/></svg><span class="narrow-h">Cases and tries</span><span class="narrow-sum" id="narrow-sum"></span></summary>
               <ul class="group">
-                <li class="row block" id="harness-row">
-                  <div class="row-text"><h3 id="harness-h">Harness</h3><p>Run only the setups that use this harness.</p></div>
-                  <div class="chips" id="harness-chips" role="radiogroup" aria-labelledby="harness-h"></div>
-                </li>
-                <li class="row block">
-                  <div class="selection-head"><div class="row-text"><h3 id="models-h">Models</h3><p id="models-note"></p></div><div class="selection-actions"><button type="button" class="btn quiet small" data-select="models" data-selection="all" aria-label="Select all models">All</button><button type="button" class="btn quiet small" data-select="models" data-selection="none" aria-label="Select no models">None</button></div></div>
-                  <div class="chips" id="model-chips" role="group" aria-labelledby="models-h"></div>
-                </li>
-                <li class="row block">
-                  <div class="row-text"><h3><label for="effort-select">Thinking effort</label></h3><p id="effort-note">Keep the preset values or choose an effort supported by every selected setup.</p></div>
-                  <select id="effort-select" aria-describedby="effort-note"><button><selectedcontent></selectedcontent></button><option value="">Keep preset efforts</option></select>
-                </li>
                 <li class="row block">
                   <div class="selection-head"><div class="row-text"><h3 id="cases-h">Cases</h3><p id="cases-note"></p></div><div class="selection-actions"><button type="button" class="btn quiet small" data-select="cases" data-selection="all" aria-label="Select all cases">All</button><button type="button" class="btn quiet small" data-select="cases" data-selection="none" aria-label="Select no cases">None</button></div></div>
                   <div class="chips" id="case-chips" role="group" aria-labelledby="cases-h"></div>

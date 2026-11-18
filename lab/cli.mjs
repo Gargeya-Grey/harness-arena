@@ -23,6 +23,7 @@ Commands
       --harness <name>      Only the targets that use this harness
       --models <a,b>        Only the targets for these model keys
       --effort <level>      Use this verified thinking effort for the selected setups
+      --targets <json>      Select explicit setup objects with model, harness and effort
       --repeats <n>         Override the experiment's repeats
       --cases <a,b>         Run only these case ids (recorded in the run)
       --dry-run             Show what would run; call nothing, write nothing
@@ -93,6 +94,7 @@ async function main(argv) {
       harness: { type: 'string' },
       models: { type: 'string' },
       effort: { type: 'string' },
+      targets: { type: 'string' },
       confirm: { type: 'string' },
       repeats: { type: 'string' },
       cases: { type: 'string' },
@@ -122,12 +124,13 @@ async function main(argv) {
     case 'run': {
       if (!positionals[0] && !values.resume) throw new Error('Name an experiment file: node lab run experiments/<name>.yaml, or resume a run: node lab run --resume <run-id>');
       if (positionals[0] && values.resume) throw new Error('Give an experiment file or --resume <run-id>, not both');
-      if (values.resume && (values.harness || values.models || values.repeats || values.cases || values.effort)) throw new Error('--resume continues the run as it was planned; --harness, --models, --repeats, --cases and --effort do not apply');
+      if (values.resume && (values.harness || values.models || values.repeats || values.cases || values.effort || values.targets !== undefined)) throw new Error('--resume continues the run as it was planned; run selection overrides do not apply');
       const results = await runCommand(root, positionals[0] ? path.resolve(positionals[0]) : null, {
         resume: values.resume,
         force: values.force,
         harness: values.harness,
         effort: values.effort,
+        targets: values.targets === undefined ? undefined : JSON.parse(values.targets),
         models: values.models ? values.models.split(',').map((item) => item.trim()).filter(Boolean) : undefined,
         repeats: values.repeats != null ? Number(values.repeats) : undefined,
         cases: values.cases ? values.cases.split(',').map((item) => item.trim()).filter(Boolean) : undefined,

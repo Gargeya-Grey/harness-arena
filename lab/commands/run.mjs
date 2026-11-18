@@ -12,7 +12,8 @@ import { parseYaml } from '../lib/yaml.mjs';
 import { effectiveEffort, requiresExplicitEffort, loadPrompt, mainCheckout, targetProblems, loadRegistry, loadSuite, paths, renderMessages, resolveExperiment, runDirs } from '../lib/repo.mjs';
 import { costUsd } from '../lib/metrics.mjs';
 import { copyTree, snapshotWorkspace, stampDiff, treeHash, treeStamp } from '../lib/workspace.mjs';
-import { getAdapter } from '../adapters/index.mjs';
+import { getAdapter, loadAdapters } from '../adapters/index.mjs';
+import { selectedTargets } from '../lib/setup-catalog.mjs';
 import { extractSvg } from '../evaluators/index.mjs';
 import { resolveRunDir, scoreRun } from './score.mjs';
 import { errorClass, modelCheck, normalizeErrorType, runLiveness } from '../lib/checks.mjs';
@@ -95,7 +96,7 @@ export function planExperiment(root, file, options = {}) {
 }
 
 /** The plan for an experiment object: from a file, or the copy a run recorded (resume). */
-export function planFromExperiment(root, experiment, { harness: onlyHarness, models: onlyModels, repeats: repeatOverride, cases: caseOverride, effort: effortOverride, requireExplicitEffort = false, sha = null, name = experiment?.id || 'experiment' } = {}) {
+export function planFromExperiment(root, experiment, { harness: onlyHarness, models: onlyModels, repeats: repeatOverride, cases: caseOverride, effort: effortOverride, targets: targetOverride, requireExplicitEffort = false, sha = null, name = experiment?.id || 'experiment' } = {}) {
   const file = name;
   const registry = loadRegistry(root);
   const { targets, problems } = resolveExperiment(experiment, registry, { requireExplicitEffort });
@@ -127,7 +128,10 @@ export function planFromExperiment(root, experiment, { harness: onlyHarness, mod
   // One run per harness and effort: a run's models share one effort setting, so two
   // efforts of one model are two runs, two configurations, one comparison.
   const selected = targets.filter((target) => (!onlyHarness || target.harness === onlyHarness) && (!onlyModels || onlyModels.includes(target.model)));
-  const chosen = effortOverride === undefined ? selected : [...new Map(selected.map((target) => [`${target.model}|${target.harness}`, { ...target, effort: effortOverride }])).values()];
+  if (targetOverride !== undefined && (onlyHarness || onlyModels || effortOverride !== undefined)) throw new Error('Use either explicit setups or the harness, models and effort filters');
+  const chosen = targetOverride !== undefined
+    ? selectedTargets(root, registry, loadAdapters(root), targetOverride)
+    : effortOverride === undefined ? selected : [...new Map(selected.map((target) => [`${target.model}|${target.harness}`, { ...target, effort: effortOverride }])).values()];
   if (effortOverride !== undefined) {
     if (typeof effortOverride !== 'string' || !/^[a-z][a-z0-9-]{0,23}$/.test(effortOverride) || effortOverride === 'default') throw new Error('Choose an explicit supported effort level');
     for (const target of chosen) {
@@ -149,7 +153,7 @@ export function planFromExperiment(root, experiment, { harness: onlyHarness, mod
   if (!groups.size) throw new Error(onlyHarness || onlyModels ? `No target matches ${[onlyHarness && `harness "${onlyHarness}"`, onlyModels && `models ${onlyModels.join(', ')}`].filter(Boolean).join(' and ')}` : 'No targets to run');
   // A run records the cases it executed. The full suite is recorded as "all" by omitting the list.
   const recorded = { ...experiment };
-  if (effortOverride !== undefined) {
+  if (effortOverride !== undefined || targetOverride !== undefined) {
     recorded.targets = chosen.map(({model, harness, effort, label}) => ({model, harness, effort, ...(label ? {label} : {})}));
     recorded.effort_policy = 'explicit';
     delete recorded.models;

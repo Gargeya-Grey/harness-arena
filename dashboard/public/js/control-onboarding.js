@@ -1,4 +1,4 @@
-import { caseIds, harnessesOf, modelsOf, experimentProblems, initialExperiment, initialSelection, effortLevels, selectionView } from './run-selection.js';
+import { caseIds, harnessesOf, modelsOf, experimentProblems, initialExperiment, initialSelection, effortLevels, selectionView, pairKey } from './run-selection.js';
 
 export function preferredPreset(catalog, suite, current = '') {
   const presets = (catalog?.experiments || []).filter(experiment => experiment.suite === suite);
@@ -26,12 +26,24 @@ export function rerunSelection(catalog, payload) {
   const problems = [...experimentProblems(experiment)];
   const harness = request.harness || '';
   if (harness && !harnessesOf(experiment).includes(harness)) problems.push(`The original harness ${harness} is not in this preset.`);
-  for (const [field, available, label] of [['models', modelsOf(experiment, harness), 'model'], ['cases', caseIds(experiment), 'case']]) {
+  const fields = [['cases', caseIds(experiment), 'case']];
+  if (!request.targets) fields.push(['models', modelsOf(experiment, harness), 'model']);
+  for (const [field, available, label] of fields) {
     const values = request[field];
     if (!Array.isArray(values) || !values.length) problems.push(`The original run has no available ${label} selection.`);
     else for (const value of values) if (!available.includes(value)) problems.push(`The original ${label} ${value} is no longer available in this preset.`);
   }
   const selection = { exp: experiment.file, harness, effort: request.effort || '', models: new Set(request.models || []), cases: new Set(request.cases || []), repeats: String(request.repeats ?? '') };
+  if (request.targets) {
+    selection.customTargets = request.targets.flatMap(target => {
+      const setup = catalog.setups?.find(item => pairKey(item) === pairKey(target));
+      if (!setup) {
+        problems.push(`The original model ${target.model} on ${target.harness} is no longer available.`);
+        return [];
+      }
+      return [{ ...setup, effort: target.effort }];
+    });
+  }
   problems.push(...selectionView(experiment, selection).problems);
   return { selection: problems.length ? null : selection, problems: [...new Set(problems)] };
 }

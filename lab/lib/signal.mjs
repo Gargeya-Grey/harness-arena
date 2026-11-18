@@ -372,6 +372,10 @@ export function signalForQuery(root, query) {
     return items;
   };
   const options = {};
+  if ('targets' in query) {
+    try { options.targets = JSON.parse(query.targets); }
+    catch { throw bad('Invalid setup selection'); }
+  }
   if (query.effort !== undefined && query.effort !== '') options.effort = query.effort;
   const harnesses = list(query.harness, 'harness name');
   if (harnesses.length > 1) throw bad('Name one harness');

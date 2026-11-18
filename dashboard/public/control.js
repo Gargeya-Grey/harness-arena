@@ -6,7 +6,7 @@ import { setData, contexts } from './js/model.js';
 import { verdictFor, caseLabel as soleCase } from './js/summary.js';
 import { testTitle, testMeta, shortDate, caseName, plural as words } from './js/words.js';
 import { captureDisclosures, restoreDisclosures } from './js/ui.js';
-import { caseIds, harnessesOf, modelsOf, experimentTitle, experimentMatches, experimentProblems, initialExperiment, initialSelection, effortLevels, effortLabel, selectionView, runRequest, signalQuery } from './js/run-selection.js';
+import { caseIds, modelsOf, pairKey, targetLevels, applySharedEffort, experimentTitle, experimentMatches, experimentProblems, initialExperiment, initialSelection, effortLevels, effortLabel, selectionView, runRequest, signalQuery } from './js/run-selection.js';
 import { preferredPreset, oneCallSelection, rerunSelection } from './js/control-onboarding.js';
 
 const $ = (id) => document.getElementById(id);
@@ -522,11 +522,6 @@ function caseLabel(e, id) {
 
 function renderChips() {
   const e = currentExp();
-  const hs = harnessesOf(e);
-  $('harness-row').hidden = !hs.length;
-  $('harness-chips').innerHTML = ['', ...hs].map((h) => `<button type="button" class="mchip" role="radio" aria-checked="${S.sel.harness === h}" tabindex="${S.sel.harness === h ? 0 : -1}" data-harness="${esc(h)}">${h ? esc(h) : 'All harnesses'}</button>`).join('');
-  const models = modelsOf(e, S.sel.harness);
-  $('model-chips').innerHTML = models.map((m) => `<button type="button" class="mchip" aria-pressed="${S.sel.models.has(m)}" data-model="${esc(m)}" title="${esc(m)}">${esc(e.targets.find(target => target.model === m)?.display_name || m)}</button>`).join('');
   const ids = caseIds(e);
   $('case-chips').innerHTML = ids.length ? ids.map((c) => `<button type="button" class="mchip" aria-pressed="${S.sel.cases.has(c)}" data-case="${esc(c)}" title="${esc(c)}">${esc(caseLabel(e, c))}</button>`).join('') : '<span class="chip muted">No cases found</span>';
 }
@@ -541,16 +536,18 @@ function pickExp({ reset = true } = {}) {
     $('edit-notice').hidden = true;
     $('repeats').value = '';
     renderChips();
+    renderSetups();
     countCalls();
     return;
   }
   const problems = experimentProblems(e);
-  detail.innerHTML = `<h3 class="experiment-title">${esc(experimentTitle(e))}</h3>${e.description ? '<p class="exp-desc"></p>' : ''}<p class="setup-policy">User setup ${e.user_config === 'isolated' ? 'asked to stay out. Each run records what stayed out.' : 'loads through each harness.'}${e.access === 'edit' ? ' Agent task with file edits.' : ''}</p><p class="field-label">Included setups</p><div class="targets" id="included-targets" aria-label="Included setups"></div>${problems.length ? `<div class="notice warn"><strong>Unavailable</strong><ul>${problems.map((problem) => `<li>${esc(problem)}</li>`).join('')}</ul></div>` : ''}<details class="config-details" id="experiment-config"><summary>Technical preset details</summary><dl><dt>Exact id</dt><dd><code>${esc(e.id)}</code></dd><dt>File</dt><dd><code>experiments/${esc(e.file)}</code></dd><dt>Suite</dt><dd>${esc(e.suite)}</dd><dt>Prompt</dt><dd>${esc(e.prompt || 'Not specified')}</dd><dt>Model keys</dt><dd>${modelsOf(e).map(model => `<code>${esc(model)}</code>`).join(', ')}</dd></dl></details>`;
+  detail.innerHTML = `<h3 class="experiment-title">${esc(experimentTitle(e))}</h3>${e.description ? '<p class="exp-desc"></p>' : ''}<p class="setup-policy">User setup ${e.user_config === 'isolated' ? 'asked to stay out. Each run records what stayed out.' : 'loads through each harness.'}${e.access === 'edit' ? ' Agent task with file edits.' : ''}</p>${problems.length ? `<div class="notice warn"><strong>Unavailable</strong><ul>${problems.map((problem) => `<li>${esc(problem)}</li>`).join('')}</ul></div>` : ''}<details class="config-details" id="experiment-config"><summary>Technical preset details</summary><dl><dt>Exact id</dt><dd><code>${esc(e.id)}</code></dd><dt>File</dt><dd><code>experiments/${esc(e.file)}</code></dd><dt>Suite</dt><dd>${esc(e.suite)}</dd><dt>Prompt</dt><dd>${esc(e.prompt || 'Not specified')}</dd><dt>Model keys</dt><dd>${modelsOf(e).map(model => `<code>${esc(model)}</code>`).join(', ')}</dd></dl></details>`;
   if (e.description) detail.querySelector('.exp-desc').textContent = e.description;
   $('repeats').value = S.sel.repeats;
   $('repeats').placeholder = String(e.repeats);
   $('edit-notice').hidden = e.access !== 'edit';
   renderChips();
+  renderSetups();
   countCalls();
 }
 
@@ -565,12 +562,8 @@ function countCalls() {
     .map(([k, v]) => `<dt>${k}</dt><dd class="num">${esc(v)}</dd>`).join('');
   $('call-count').classList.toggle('bad', !valid);
   $('call-count').textContent = valid ? `${plural(targets.length, 'setup')} × ${plural(cases.length, 'case')} × ${plural(repeats, 'try')}.` : view.problems[0];
-  $('narrow-sum').textContent = `${plural(view.selectedModels.length, 'model')} · ${plural(cases.length, 'case')} included`;
-  $('models-note').textContent = `${view.selectedModels.length} of ${view.models.length} included${S.sel.harness ? ` for ${S.sel.harness}` : ''}.`;
+  $('narrow-sum').textContent = `${plural(cases.length, 'case')} included`;
   $('cases-note').textContent = `${cases.length} of ${caseIds(e).length} included. Select at least one.`;
-  const included = $('included-targets');
-  if (included) included.innerHTML = targets.length ? targets.map((target) => `<div class="target"><b>${esc(target.display_name || target.model)}</b><span class="setup-tag">${esc(target.harness)}</span><span class="setup-tag effort-tag">${esc(target.effort === 'unavailable' ? 'Effort unavailable' : `${effortLabel(target.effort || 'default')} thinking`)}</span></div>`).join('') : '<p class="selection-note">No setup included.</p>';
-  renderEffort();
   $('one-call-btn').disabled = !oneCallSelection(e);
   $('repeats-hint').textContent = repeats < 3 ? 'Use 3 or more to compare setups. Fewer is fine for a first look.' : 'Enough tries to compare setups.';
   disarm();
@@ -579,19 +572,85 @@ function countCalls() {
   return calls;
 }
 
-function renderEffort() {
-  const levels = effortLevels(currentExp(), S.sel);
-  const select = $('effort-select');
-  select.replaceChildren(selectButton(), new Option('Keep preset efforts', ''));
-  for (const level of levels) select.append(new Option(`${effortLabel(level)} thinking`, level));
-  const unsupported = Boolean(S.sel.effort && !levels.includes(S.sel.effort));
-  if (unsupported) select.append(new Option(`${effortLabel(S.sel.effort)} · unsupported by this selection`, S.sel.effort));
-  select.value = S.sel.effort;
-  select.setAttribute('aria-invalid', String(unsupported));
-  $('effort-note').textContent = unsupported
-    ? 'This effort is not supported by every selected setup. Choose another effort or narrow the models.'
-    : levels.length ? 'Only efforts supported by every selected setup are offered. Preset values stay visible above.'
-      : selectionView(currentExp(), S.sel).targets.length ? 'These setups share no adjustable effort level. Keep their preset values, or narrow the models.' : 'Select a model to see its supported thinking efforts.';
+function setupRows() {
+  const catalog = new Map((S.catalog?.setups ?? []).map(setup => [pairKey(setup), setup]));
+  return selectionView(currentExp(), S.sel).targets.map(row => ({ ...catalog.get(pairKey(row)), ...row }));
+}
+
+function setOptions(select, choices, placeholder = '') {
+  const previous = select.value;
+  select.replaceChildren(selectButton(), ...(placeholder ? [new Option(placeholder, '')] : []),
+    ...choices.map(([value, label]) => new Option(label, value)));
+  if (choices.some(([value]) => value === previous)) select.value = previous;
+  select.disabled = !choices.length;
+}
+
+function renderSetupPicker() {
+  const available = S.catalog?.setups ?? [];
+  const harness = $('setup-harness');
+  const provider = $('setup-provider');
+  const model = $('setup-model');
+  const effort = $('setup-new-effort');
+  const options = values => [...new Set(values)].sort().map(value => [value, value]);
+  setOptions(harness, options(available.map(setup => setup.harness)));
+  const inHarness = available.filter(setup => setup.harness === harness.value);
+  setOptions(provider, options(inHarness.map(setup => setup.provider)));
+  const inProvider = inHarness.filter(setup => setup.provider === provider.value);
+  setOptions(model, inProvider.map(setup => [setup.model, `${setup.display_name} ? ${setup.model_id}`]));
+  const setup = inProvider.find(setup => setup.model === model.value);
+  const used = setup ? setupRows().filter(row => pairKey(row) === pairKey(setup)).map(row => row.effort) : [];
+  const levels = setup ? targetLevels(setup).filter(level => !used.includes(level)) : [];
+  setOptions(effort, levels.map(level => [level, effortLabel(level)]));
+  $('setup-picker-note').textContent = !setup ? '' : effort.disabled
+    ? targetLevels(setup).length ? 'All verified efforts for this setup are included.' : 'The registry has no verified effort levels for this model on this harness.'
+    : '';
+  $('add-setup').disabled = !currentExp() || !levels.length;
+  return setup;
+}
+
+function renderSetups() {
+  const rows = setupRows();
+  const host = $('setup-list');
+  host.replaceChildren();
+  if (!rows.length) {
+    const note = document.createElement('p');
+    note.className = 'selection-note';
+    note.textContent = 'Add a model setup to continue.';
+    host.append(note);
+  }
+  rows.forEach((row, index) => {
+    const card = document.createElement('div');
+    card.className = 'setup-row';
+    card.innerHTML = `<div class="row-text"><h3 id="setup-name-${index}">${esc(row.display_name || row.model)}</h3><p>${esc([row.harness, row.provider, row.model_id].filter(Boolean).join(' ? '))}</p></div>
+      <div><label id="setup-label-${index}" for="setup-effort-${index}">Thinking effort</label><select id="setup-effort-${index}" data-row-effort="${index}" aria-labelledby="setup-name-${index} setup-label-${index}"></select></div>
+      <button type="button" class="btn quiet small" data-remove-setup="${index}" aria-label="Remove ${esc(row.display_name || row.model)} on ${esc(row.harness)} at ${esc(effortLabel(row.effort || 'default'))}">Remove</button>`;
+    const select = card.querySelector('select');
+    const levels = targetLevels(row);
+    const choices = levels.map(level => [level, effortLabel(level)]);
+    if (!levels.includes(row.effort)) choices.unshift([row.effort || 'default', effortLabel(row.effort || 'default')]);
+    setOptions(select, choices);
+    select.value = row.effort || 'default';
+    select.disabled = !levels.length || (levels.length === 1 && levels[0] === row.effort);
+    host.append(card);
+  });
+  $('setups-count').textContent = plural(rows.length, 'setup');
+  $('restore-setups').disabled = !currentExp();
+  $('clear-setups').disabled = !rows.length;
+  const shared = effortLevels(currentExp(), { ...S.sel, customTargets: rows }).filter(level => level !== 'unavailable');
+  const bulk = $('effort-select');
+  setOptions(bulk, shared.map(level => [level, effortLabel(level)]), 'Choose a shared effort');
+  bulk.value = '';
+  $('effort-note').textContent = shared.length
+    ? 'Only levels shared by every setup are available. Matching setups merge when they use the same effort.'
+    : rows.length ? 'These setups share no adjustable effort level. Use the individual controls above.' : 'Add a model to see its thinking efforts.';
+  renderSetupPicker();
+}
+
+function updateSetups(rows, focusId) {
+  S.sel = { ...S.sel, effort: '', customTargets: rows };
+  renderSetups();
+  if (focusId) $(focusId)?.focus();
+  countCalls();
 }
 
 function renderPreparation() {
@@ -638,7 +697,7 @@ function prepareOneCall(experiment) {
   renderExperimentOptions();
   pickExp({ reset: false });
   showView('run');
-  $('model-chips').querySelector('[aria-pressed="true"]')?.focus({ preventScroll: true });
+  $('setups-h').scrollIntoView({ block: 'nearest' });
 }
 
 async function loadRerun(id) {
@@ -770,8 +829,36 @@ $('exp-select').addEventListener('change', (e) => {
 });
 $('suite-select').addEventListener('change', event => chooseFamily(event.target.value));
 $('effort-select').addEventListener('change', event => {
-  S.sel.effort = event.target.value;
+  if (event.target.value) updateSetups(applySharedEffort(setupRows(), event.target.value), 'effort-select');
+});
+for (const id of ['setup-harness', 'setup-provider', 'setup-model']) {
+  $(id).addEventListener('change', renderSetupPicker);
+}
+$('add-setup').addEventListener('click', () => {
+  const setup = renderSetupPicker();
+  if ($('add-setup').disabled) return;
+  const rows = setupRows();
+  updateSetups([...rows, { ...setup, effort: $('setup-new-effort').value }], `setup-effort-${rows.length}`);
+});
+$('restore-setups').addEventListener('click', () => {
+  S.sel = { ...initialSelection(currentExp()), cases: S.sel.cases, repeats: S.sel.repeats };
+  clearPreparation();
+  renderSetups();
   countCalls();
+});
+$('clear-setups').addEventListener('click', () => updateSetups([], 'setup-harness'));
+$('setup-list').addEventListener('change', event => {
+  const index = Number(event.target.dataset.rowEffort);
+  const rows = setupRows().map((row, i) => i === index ? { ...row, effort: event.target.value } : row);
+  updateSetups(rows, event.target.id);
+});
+$('setup-list').addEventListener('click', event => {
+  const button = event.target.closest('[data-remove-setup]');
+  if (!button) return;
+  const index = Number(button.dataset.removeSetup);
+  const rows = setupRows().filter((_, i) => i !== index);
+  updateSetups(rows);
+  ($('setup-list').querySelector(`[data-remove-setup="${Math.min(index, rows.length - 1)}"]`) || $('setup-harness')).focus();
 });
 $('quick-try-btn').addEventListener('click', () => prepareOneCall(initialExperiment(S.catalog?.experiments || [], null)));
 $('one-call-btn').addEventListener('click', () => prepareOneCall(currentExp()));
@@ -785,40 +872,18 @@ document.addEventListener('click', (e) => {
   }
   const action = e.target.closest('[data-select]');
   if (action) {
-    const set = S.sel[action.dataset.select];
-    const keys = action.dataset.select === 'models' ? modelsOf(currentExp(), S.sel.harness) : caseIds(currentExp());
-    for (const key of keys) {
-      if (action.dataset.selection === 'all') set.add(key);
-      else set.delete(key);
-    }
+    S.sel.cases = new Set(action.dataset.selection === 'all' ? caseIds(currentExp()) : []);
     renderChips();
     countCalls();
     return;
   }
-  const chip = e.target.closest('.mchip');
+  const chip = e.target.closest('[data-case].mchip');
   if (!chip) return;
-  if (chip.dataset.harness !== undefined) {
-    S.sel.harness = chip.dataset.harness;
-    renderChips();
-    $('harness-chips').querySelector(`[data-harness="${CSS.escape(S.sel.harness)}"]`)?.focus();
-  } else {
-    const on = chip.getAttribute('aria-pressed') !== 'true';
-    chip.setAttribute('aria-pressed', String(on));
-    const set = chip.dataset.model ? S.sel.models : S.sel.cases;
-    const key = chip.dataset.model || chip.dataset.case;
-    if (on) set.add(key);
-    else set.delete(key);
-  }
+  const on = chip.getAttribute('aria-pressed') !== 'true';
+  chip.setAttribute('aria-pressed', String(on));
+  if (on) S.sel.cases.add(chip.dataset.case);
+  else S.sel.cases.delete(chip.dataset.case);
   countCalls();
-});
-$('harness-chips').addEventListener('keydown', (event) => {
-  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
-  const chips = [...$('harness-chips').querySelectorAll('[data-harness]')];
-  const current = chips.indexOf(document.activeElement);
-  if (current < 0) return;
-  event.preventDefault();
-  const next = event.key === 'Home' ? 0 : event.key === 'End' ? chips.length - 1 : (current + (['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1) + chips.length) % chips.length;
-  chips[next].click();
 });
 $('repeats').addEventListener('input', (e) => {
   S.sel.repeats = e.target.value.trim();

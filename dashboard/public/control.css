@@ -158,6 +158,24 @@ input.short { width: 140px; font-family: var(--mono); font-size: 13px; }
 .selection-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .selection-actions { display: flex; flex: none; gap: 4px; }
 .selection-actions .btn { box-shadow: inset 0 0 0 1px var(--border-ctl); }
+.setup-list, .setup-actions, .setup-picker { display: grid; gap: 12px; }
+.setup-actions { display: flex; flex-wrap: wrap; margin-top: 14px; }
+.setup-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.setup-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(9rem, .55fr) auto;
+  gap: 12px;
+  align-items: end;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-ctl);
+}
+.setup-row .row-text { align-self: center; overflow-wrap: anywhere; }
+.setup-row label, .setup-picker label { display: block; margin-bottom: 5px; }
+.setup-row select, .setup-picker select { width: 100%; min-width: 0; }
+@media (max-width: 600px) {
+  .setup-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .setup-row .row-text { grid-column: 1 / -1; }
+}
 .config-details { color: var(--muted); font-size: 13px; line-height: 20px; }
 .config-details summary { cursor: pointer; padding-block: 4px; }
 .config-details dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 14px; margin-block: 12px 0; }

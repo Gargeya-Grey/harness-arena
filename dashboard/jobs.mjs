@@ -11,6 +11,7 @@ import { paths, findRunDir, loadYamlFile, loadSuite, loadCases, loadRegistry, re
 import { loadAdapters } from '../lab/adapters/index.mjs';
 import { isoNow } from '../lab/lib/fsutil.mjs';
 import { planExperiment } from '../lab/commands/run.mjs';
+import { setupCatalog } from '../lab/lib/setup-catalog.mjs';
 
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'lab', 'cli.mjs');
 const MAX_LINES = 5000;
@@ -41,7 +42,7 @@ export function buildArgs(root, body) {
   if (command === 'run' && body.resume != null) {
     // Continue a stopped run: only its missing rows run (node lab run --resume).
     const id = String(body.resume);
-    if (body.experiment) throw bad('Give an experiment or a run to resume, not both');
+    if (body.experiment || 'targets' in body) throw bad('Give an experiment or a run to resume, not both');
     if (!RUN_ID.test(id) || !findRunDir(root, id)) throw bad(`No run with id "${id.slice(0, 80)}"`);
     return ['run', '--resume', id];
   }
@@ -67,6 +68,13 @@ export function buildArgs(root, body) {
       args.push('--repeats', String(n));
     }
     if (body.dry_run) args.push('--dry-run');
+    if ('targets' in body) {
+      if ('models' in body || 'harness' in body || 'effort' in body) throw bad('Use either explicit setups or the harness, models and effort filters');
+      let plan;
+      try { plan = planExperiment(root, abs, { targets: body.targets, cases: cases.length ? cases : undefined }); }
+      catch (error) { throw bad(error.message); }
+      args.push('--targets', JSON.stringify(plan.experiment.targets));
+    }
     if (body.effort !== undefined && body.effort !== '') {
       try { planExperiment(root, abs, { harness: body.harness, models: models.length ? models : undefined, cases: cases.length ? cases : undefined, effort: body.effort }); }
       catch (error) { throw bad(error.message); }
@@ -102,12 +110,13 @@ export function catalog(root) {
     // Reported below.
   }
   const files = fs.existsSync(p.experiments) ? fs.readdirSync(p.experiments).filter((name) => FILE.test(name)).sort() : [];
+  const adapters = loadAdapters(root);
   for (const file of files) {
     const entry = { file, id: file.replace(/\.ya?ml$/, ''), problems: [] };
     try {
       const doc = loadYamlFile(path.join(p.experiments, file)) || {};
       const resolved = resolveExperiment(doc, registry, { requireExplicitEffort: requiresExplicitEffort(root) });
-      entry.problems.push(...resolved.problems, ...targetProblems(resolved.targets.filter((t) => t.harness), registry, loadAdapters(root)));
+      entry.problems.push(...resolved.problems, ...targetProblems(resolved.targets.filter((t) => t.harness), registry, adapters));
       Object.assign(entry, {
         id: doc.id || entry.id,
         description: doc.description || '',
@@ -117,7 +126,7 @@ export function catalog(root) {
         access: doc.access || 'answer',
         user_config: doc.user_config || 'loaded',
         targets: resolved.targets.map((t) => ({ model: t.model, display_name: registry[t.model]?.display_name || t.model, harness: t.harness, effort: t.effort ?? null,
-          effort_levels: loadAdapters(root)[t.harness]?.supports_effort ? registry[t.model]?.effort_levels ?? [] : [] })),
+          effort_levels: adapters[t.harness]?.supports_effort ? registry[t.model]?.effort_levels ?? [] : [] })),
         cases: Array.isArray(doc.cases) ? doc.cases : null,
       });
       try {
@@ -135,7 +144,7 @@ export function catalog(root) {
   let models = [];
   const problems = [];
   try {
-    harnesses = Object.values(loadAdapters(root)).map((a) => ({ name: a.name, declared: Boolean(a.declared) }));
+    harnesses = Object.values(adapters).map((a) => ({ name: a.name, declared: Boolean(a.declared) }));
   } catch (error) {
     problems.push(error.message);
   }
@@ -158,7 +167,7 @@ export function catalog(root) {
     } catch (error) { problems.push(`Test library ${dir.name}: ${error.message}`); }
   }
   suites.sort((a, b) => Object.keys(familyTitles).indexOf(a.id) - Object.keys(familyTitles).indexOf(b.id));
-  return { experiments, harnesses, models, suites, problems };
+  return { experiments, harnesses, models, suites, problems, setups: [...setupCatalog(root, registry, adapters).values()] };
 }
 
 function killTree(child) {
